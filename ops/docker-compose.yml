@@ -1,0 +1,68 @@
+# Local observability stack for helios.
+#
+# Usage (Linux, default):
+#   export HELIOS_API_TOKEN=<the token helios is running with>
+#   docker compose -f ops/docker-compose.yml up
+#
+# Both containers run on `network_mode: host` — they share the host's network
+# namespace, so Prometheus can scrape helios on 127.0.0.1:18080 (or whatever
+# HELIOS_HOST you set) without crossing the docker bridge. This sidesteps
+# host firewalls (UFW / iptables FORWARD) that often block container ->
+# host-port traffic on Linux.
+#
+# macOS / Windows users: host networking is not host-equivalent on Docker
+# Desktop. Drop `network_mode: host` from both services, restore
+# `extra_hosts: [host.docker.internal:host-gateway]` on prometheus, and set
+# HELIOS_HOST=host.docker.internal:8080. Add the published `ports:` blocks
+# back so Grafana / Prometheus are reachable from the host browser.
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: helios-prometheus
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HELIOS_API_TOKEN: ${HELIOS_API_TOKEN:?HELIOS_API_TOKEN must be exported in the shell before running docker compose up}
+      # 127.0.0.1 (loopback) reaches the host process directly under host networking.
+      HELIOS_HOST: ${HELIOS_HOST:-127.0.0.1:8080}
+    volumes:
+      # Mount as a TEMPLATE (read-only). The entrypoint resolves
+      # __HELIOS_HOST__ into a writable copy at the runtime config path.
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml.tmpl:ro
+      - prometheus-data:/prometheus
+    entrypoint: [/bin/sh, -c]
+    command:
+      - |
+        set -e
+        printf '%s' "$$HELIOS_API_TOKEN" > /etc/prometheus/token
+        printf 'helios scrape target: %s\n' "$$HELIOS_HOST"
+        sed "s|__HELIOS_HOST__|$$HELIOS_HOST|g" \
+          /etc/prometheus/prometheus.yml.tmpl > /etc/prometheus/prometheus.yml
+        exec /bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --web.console.libraries=/usr/share/prometheus/console_libraries \
+          --web.console.templates=/usr/share/prometheus/consoles
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: helios-grafana
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  prometheus-data:
+  grafana-data:
