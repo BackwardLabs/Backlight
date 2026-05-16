@@ -1,0 +1,153 @@
+{
+  "title": "helios v1",
+  "uid": "helios-v1",
+  "schemaVersion": 38,
+  "version": 1,
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {"from": "now-30m", "to": "now"},
+  "templating": {"list": []},
+  "annotations": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Queue depth (cases waiting)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {"refId": "A", "expr": "helios_queue_depth"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "green"},
+              {"value": 5, "color": "yellow"},
+              {"value": 20, "color": "red"}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "background",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Cases by terminal outcome (lifetime)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 18, "x": 6, "y": 0},
+      "targets": [
+        {"refId": "A", "expr": "sum by (outcome)(helios_case_outcome_total)", "legendFormat": "{{outcome}}"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "unit": "short"
+        }
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "State transitions per minute",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {"refId": "A", "expr": "sum by (state)(rate(helios_case_state_total[1m])) * 60", "legendFormat": "{{state}}"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "stacking": {"mode": "normal"}},
+          "unit": "short"
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right"}}
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "lumoskit duration (p50 / p95 / p99)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.50, sum by (le)(rate(helios_lumoskit_duration_seconds_bucket[5m])))", "legendFormat": "p50"},
+        {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le)(rate(helios_lumoskit_duration_seconds_bucket[5m])))", "legendFormat": "p95"},
+        {"refId": "C", "expr": "histogram_quantile(0.99, sum by (le)(rate(helios_lumoskit_duration_seconds_bucket[5m])))", "legendFormat": "p99"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 0},
+          "unit": "s"
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right"}}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Handoff attempts (per minute, by result)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 14},
+      "targets": [
+        {"refId": "A", "expr": "sum by (result)(rate(helios_handoff_attempt_total[1m])) * 60", "legendFormat": "{{result}}"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "stacking": {"mode": "normal"}},
+          "unit": "short"
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right"}}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Notification attempts (per minute, by channel + result)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 14},
+      "targets": [
+        {"refId": "A", "expr": "sum by (channel, result)(rate(helios_notification_attempt_total[1m])) * 60", "legendFormat": "{{channel}}/{{result}}"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "stacking": {"mode": "normal"}},
+          "unit": "short"
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right"}}
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Cases by current state (totals)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 21},
+      "targets": [
+        {"refId": "A", "expr": "sum by (state)(helios_case_state_total)", "legendFormat": "{{state}}", "format": "table", "instant": true}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short"}
+      },
+      "options": {"showHeader": true}
+    }
+  ]
+}
