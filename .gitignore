@@ -1,0 +1,49 @@
+# --- editor / OS noise -------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- backup files ------------------------------------------------------------
+*.bak
+*.orig
+*.rej
+
+# --- runtime data ------------------------------------------------------------
+# helios writes its SQLite DB and per-case lumoskit output roots under
+# whatever HELIOS_DB_PATH / HELIOS_OUTPUT_ROOT point at. Conventionally
+# those land in ./var/ during local development.
+/var/
+/outputs/
+*.db
+*.db-shm
+*.db-wal
+
+# --- secrets -----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- ops-stack runtime state -------------------------------------------------
+ops/prometheus-data/
+ops/grafana-data/
+
+# --- agent / tooling state (codex, ouroboros, omx) ---------------------------
+# These are runtime artefacts of the local AI tooling that built helios; they
+# are user-machine specific and contain no project content worth versioning.
+.codex_*
+.ouroboros/
+.omx/
+
+# --- Go --------------------------------------------------------------------
+# Built binaries can land in repo root if `go build` is run without -o.
+/helios
+/helios-*
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# --- python / scripts cache --------------------------------------------------
+__pycache__/
+*.pyc
