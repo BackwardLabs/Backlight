@@ -22,6 +22,8 @@ func NewServer(cfg *config.Config, st *store.Store, dispatcher *handoff.Dispatch
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", uiHandler)
+	mux.HandleFunc("GET /ui", uiHandler)
 	mux.HandleFunc("GET /healthz", healthHandler)
 
 	protected := http.NewServeMux()
