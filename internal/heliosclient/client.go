@@ -100,6 +100,52 @@ func (c *Client) GetCase(ctx context.Context, caseID string) (*api.CaseDetailRes
 	return &out, nil
 }
 
+// ListArtifacts fetches GET /cases/{case_id}/artifacts.
+func (c *Client) ListArtifacts(ctx context.Context, caseID string) (*api.ArtifactListResponse, error) {
+	caseID = strings.TrimSpace(caseID)
+	if caseID == "" {
+		return nil, fmt.Errorf("case_id is required")
+	}
+	if strings.Contains(caseID, "/") {
+		return nil, fmt.Errorf("case_id must not contain slash")
+	}
+	u := c.urlFor("/cases/" + url.PathEscape(caseID) + "/artifacts")
+	var out api.ArtifactListResponse
+	if err := c.doJSON(ctx, http.MethodGet, u.String(), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ReadArtifact fetches GET /cases/{case_id}/artifacts/{path}.
+func (c *Client) ReadArtifact(ctx context.Context, caseID string, path string, maxBytes int64) (*api.ArtifactReadResponse, error) {
+	caseID = strings.TrimSpace(caseID)
+	path = strings.TrimSpace(path)
+	if caseID == "" {
+		return nil, fmt.Errorf("case_id is required")
+	}
+	if path == "" {
+		return nil, fmt.Errorf("path is required")
+	}
+	if strings.Contains(caseID, "/") {
+		return nil, fmt.Errorf("case_id must not contain slash")
+	}
+	if strings.Contains(path, "/") {
+		return nil, fmt.Errorf("path must not contain slash")
+	}
+	u := c.urlFor("/cases/" + url.PathEscape(caseID) + "/artifacts/" + url.PathEscape(path))
+	if maxBytes > 0 {
+		q := u.Query()
+		q.Set("max_bytes", strconv.FormatInt(maxBytes, 10))
+		u.RawQuery = q.Encode()
+	}
+	var out api.ArtifactReadResponse
+	if err := c.doJSON(ctx, http.MethodGet, u.String(), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) doJSON(ctx context.Context, method, requestURL string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method, requestURL, nil)
 	if err != nil {

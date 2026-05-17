@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,11 +31,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	reader, err := artifacts.NewReader(cfg.OutputBase, cfg.MaxBytes)
-	if err != nil {
-		logger.Error("artifact reader init failed", "err", err)
-		os.Exit(2)
-	}
 	client, closeClient, err := buildClient(ctx, cfg)
 	if err != nil {
 		logger.Error("mcp client init failed", "err", err)
@@ -41,6 +38,15 @@ func main() {
 	}
 	if closeClient != nil {
 		defer closeClient()
+	}
+
+	var reader mcpserver.ArtifactReader
+	if cfg.OutputBase != "" {
+		reader, err = artifacts.NewReader(cfg.OutputBase, cfg.MaxBytes)
+		if err != nil {
+			logger.Error("artifact reader init failed", "err", err)
+			os.Exit(2)
+		}
 	}
 
 	logger.Info("helios-mcp starting", "source", cfg.Source(), "base_url", cfg.HeliosBaseURL, "bridge_db", cfg.BridgeDBPath, "output_base", cfg.OutputBase, "max_bytes", cfg.MaxBytes)
@@ -62,10 +68,10 @@ type config struct {
 
 func loadConfig() (*config, error) {
 	cfg := &config{
-		HeliosBaseURL:  os.Getenv("HELIOS_BASE_URL"),
+		HeliosBaseURL:  firstNonEmpty(os.Getenv("HELIOS_BASE_URL"), baseURLFromListenAddr(os.Getenv("HELIOS_LISTEN_ADDR"))),
 		HeliosAPIToken: os.Getenv("HELIOS_API_TOKEN"),
 		BridgeDBPath:   os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH"),
-		OutputBase:     os.Getenv("HELIOS_OUTPUT_BASE"),
+		OutputBase:     outputBaseFromEnv(os.Getenv("HELIOS_OUTPUT_BASE"), os.Getenv("HELIOS_OUTPUT_ROOT"), os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH")),
 		MaxBytes:       envInt64("HELIOS_MCP_MAX_BYTES", artifacts.DefaultMaxBytes),
 		HTTPTimeout:    time.Duration(envInt64("HELIOS_MCP_HTTP_TIMEOUT_SECONDS", 30)) * time.Second,
 	}
@@ -77,8 +83,8 @@ func loadConfig() (*config, error) {
 			return nil, fmt.Errorf("HELIOS_API_TOKEN is required unless HELIOS_MCP_BRIDGE_DB_PATH is set")
 		}
 	}
-	if cfg.OutputBase == "" {
-		return nil, fmt.Errorf("HELIOS_OUTPUT_BASE is required")
+	if cfg.BridgeDBPath != "" && cfg.OutputBase == "" {
+		return nil, fmt.Errorf("HELIOS_OUTPUT_BASE or HELIOS_OUTPUT_ROOT is required for bridge mode")
 	}
 	return cfg, nil
 }
@@ -113,4 +119,37 @@ func envInt64(key string, def int64) int64 {
 		}
 	}
 	return def
+}
+
+func outputBaseFromEnv(explicitBase, outputRoot, bridgeDBPath string) string {
+	if explicitBase = strings.TrimSpace(explicitBase); explicitBase != "" {
+		return explicitBase
+	}
+	if outputRoot = strings.TrimSpace(outputRoot); outputRoot != "" {
+		return outputRoot
+	}
+	if bridgeDBPath = strings.TrimSpace(bridgeDBPath); bridgeDBPath != "" {
+		return filepath.Join(filepath.Dir(bridgeDBPath), "outputs")
+	}
+	return ""
+}
+
+func baseURLFromListenAddr(listenAddr string) string {
+	listenAddr = strings.TrimSpace(listenAddr)
+	if listenAddr == "" {
+		return ""
+	}
+	if strings.HasPrefix(listenAddr, ":") {
+		return "http://127.0.0.1" + listenAddr
+	}
+	return "http://" + listenAddr
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

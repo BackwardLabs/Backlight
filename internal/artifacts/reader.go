@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/UPside-Lumos-V2/helios/internal/api"
 )
 
 const DefaultMaxBytes int64 = 1 << 20 // 1 MiB
@@ -22,6 +20,12 @@ type Reader struct {
 	OutputBase string
 	MaxBytes   int64
 	Allowed    map[string]struct{}
+}
+
+// CaseRef is the minimal case metadata needed to locate case artifacts.
+type CaseRef struct {
+	CaseID     string
+	OutputRoot *string
 }
 
 // FileInfo describes one allowed artifact under a case output root.
@@ -40,7 +44,15 @@ type ReadResult struct {
 
 func NewReader(outputBase string, maxBytes int64) (*Reader, error) {
 	if strings.TrimSpace(outputBase) == "" {
-		return nil, fmt.Errorf("HELIOS_OUTPUT_BASE is required")
+		return nil, fmt.Errorf("HELIOS_OUTPUT_BASE or HELIOS_OUTPUT_ROOT is required")
+	}
+	outputBase, err := filepath.Abs(outputBase)
+	if err != nil {
+		return nil, fmt.Errorf("resolve output base: %w", err)
+	}
+	outputBase = filepath.Clean(outputBase)
+	if isFilesystemRoot(outputBase) {
+		return nil, fmt.Errorf("output base must not be filesystem root")
 	}
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBytes
@@ -63,7 +75,7 @@ func (r *Reader) AllowedPaths() []string {
 }
 
 // List reports which allowlisted artifacts currently exist for a case.
-func (r *Reader) List(c api.CaseSummary) ([]FileInfo, error) {
+func (r *Reader) List(c CaseRef) ([]FileInfo, error) {
 	root, err := r.validOutputRoot(c)
 	if err != nil {
 		return nil, err
@@ -85,7 +97,7 @@ func (r *Reader) List(c api.CaseSummary) ([]FileInfo, error) {
 
 // Read reads one exact allowlisted artifact for a case. perCallMax may lower the
 // configured reader cap, but cannot raise it.
-func (r *Reader) Read(c api.CaseSummary, rel string, perCallMax int64) (*ReadResult, error) {
+func (r *Reader) Read(c CaseRef, rel string, perCallMax int64) (*ReadResult, error) {
 	root, err := r.validOutputRoot(c)
 	if err != nil {
 		return nil, err
@@ -114,7 +126,7 @@ func (r *Reader) Read(c api.CaseSummary, rel string, perCallMax int64) (*ReadRes
 	return &ReadResult{Path: rel, Size: int64(len(data)), Text: string(data)}, nil
 }
 
-func (r *Reader) validOutputRoot(c api.CaseSummary) (string, error) {
+func (r *Reader) validOutputRoot(c CaseRef) (string, error) {
 	if c.OutputRoot == nil || strings.TrimSpace(*c.OutputRoot) == "" {
 		return "", fmt.Errorf("case %s has no output_root", c.CaseID)
 	}
@@ -159,4 +171,11 @@ func isWithin(base, candidate string) bool {
 		return false
 	}
 	return rel == "." || (rel != "" && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel))
+}
+
+func isFilesystemRoot(path string) bool {
+	clean := filepath.Clean(path)
+	volume := filepath.VolumeName(clean)
+	root := volume + string(filepath.Separator)
+	return clean == root
 }

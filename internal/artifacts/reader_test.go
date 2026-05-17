@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/UPside-Lumos-V2/helios/internal/api"
 )
 
 func TestReaderAllowsOnlyTopLevelProductArtifacts(t *testing.T) {
@@ -60,6 +58,13 @@ func TestReaderRejectsOutputRootOutsideBase(t *testing.T) {
 	}
 }
 
+func TestReaderRejectsFilesystemRootAsBase(t *testing.T) {
+	root := filepath.VolumeName(os.TempDir()) + string(filepath.Separator)
+	if _, err := NewReader(root, 0); err == nil {
+		t.Fatal("NewReader accepted filesystem root as output base; want rejected")
+	}
+}
+
 func TestReaderRejectsSymlinkEscape(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "case_1")
@@ -100,6 +105,6 @@ func TestReaderMaxBytes(t *testing.T) {
 	}
 }
 
-func caseWithRoot(root string) api.CaseSummary {
-	return api.CaseSummary{CaseID: "case_1", OutputRoot: &root}
+func caseWithRoot(root string) CaseRef {
+	return CaseRef{CaseID: "case_1", OutputRoot: &root}
 }

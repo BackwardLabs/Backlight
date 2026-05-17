@@ -40,9 +40,9 @@ flowchart LR
     helios -->|"outcome and failure events"| notify
     prometheus -->|"GET /metrics"| helios
     mcp -->|"stdio MCP tools"| helios_mcp
-    helios_mcp -->|"GET /cases"| helios
+    helios_mcp -->|"GET /cases + artifacts"| helios
     helios_mcp -->|"or bridge DB"| mcp_bridge
-    helios_mcp -->|"allowlisted files only"| outputs
+    helios_mcp -->|"bridge-mode allowlisted files only"| outputs
 ```
 
 ### Boundary summary
@@ -142,7 +142,7 @@ MCP support is a local read-only gateway for assistant clients.
 Direct mode:
 
 ```text
-MCP client -> helios-mcp stdio process -> Helios HTTP API + allowlisted output files
+MCP client -> helios-mcp stdio process -> Helios HTTP API artifact endpoints
 ```
 
 Indexed mode:
