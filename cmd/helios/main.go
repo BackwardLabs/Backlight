@@ -73,6 +73,7 @@ func main() {
 		Store:       st,
 		Client:      httpClient,
 		URLs:        cfg.DownstreamURLs,
+		BearerToken: cfg.DownstreamBearer,
 		MaxAttempts: cfg.HandoffRetryMaxAttempts,
 		BackoffBase: time.Duration(cfg.HandoffRetryBackoffBaseSeconds) * time.Second,
 		BackoffMax:  time.Duration(cfg.HandoffRetryBackoffMaxSeconds) * time.Second,

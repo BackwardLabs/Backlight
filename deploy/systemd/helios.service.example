@@ -1,0 +1,25 @@
+[Unit]
+Description=Helios orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=helios
+Group=helios
+WorkingDirectory=/srv/helios
+EnvironmentFile=/srv/helios/env/helios.env
+ExecStart=/srv/helios/bin/helios
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Conservative hardening while preserving writes to SQLite and output roots.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/srv/helios/data /srv/helios/logs
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

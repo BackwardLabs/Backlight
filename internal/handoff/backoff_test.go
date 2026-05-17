@@ -1,7 +1,10 @@
 package handoff
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -28,6 +31,25 @@ func TestBackoff_ExponentialUpToCeiling(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("backoff(%d) = %v, want %v", tc.completedAttempt, got, tc.want)
 		}
+	}
+}
+
+func TestPostOnceSendsBearerToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer bridge-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	d := &Dispatcher{Client: ts.Client(), BearerToken: "bridge-token"}
+	status, err := d.postOnce(context.Background(), ts.URL, []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", status, http.StatusNoContent)
 	}
 }
 

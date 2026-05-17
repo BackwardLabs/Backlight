@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "helios": {
+      "command": "/srv/helios/bin/helios-mcp",
+      "env": {
+        "HELIOS_BASE_URL": "http://127.0.0.1:8080",
+        "HELIOS_API_TOKEN": "replace-with-a-read-only-or-operator-token",
+        "HELIOS_OUTPUT_BASE": "/srv/helios/data/outputs",
+        "HELIOS_MCP_MAX_BYTES": "1048576",
+        "HELIOS_MCP_HTTP_TIMEOUT_SECONDS": "30"
+      }
+    }
+  }
+}

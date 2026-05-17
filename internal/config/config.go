@@ -16,6 +16,7 @@ type Config struct {
 	LumoskitBin      string
 	WorkerPollMillis int
 	DownstreamURLs   []string
+	DownstreamBearer string
 	OperatorWebhook  string
 	TelegramBotToken string
 	TelegramChatID   string
@@ -39,6 +40,7 @@ func Load() (*Config, error) {
 		LumoskitBin:                    envDefault("HELIOS_LUMOSKIT_BIN", "bin/lumoskit"),
 		WorkerPollMillis:               envInt("HELIOS_WORKER_POLL_MILLIS", 1000),
 		DownstreamURLs:                 splitCSV(os.Getenv("HELIOS_DOWNSTREAM_WEBHOOK_URLS")),
+		DownstreamBearer:               os.Getenv("HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN"),
 		OperatorWebhook:                os.Getenv("OPERATOR_NOTIFY_WEBHOOK_URL"),
 		TelegramBotToken:               os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramChatID:                 os.Getenv("TELEGRAM_CHAT_ID"),

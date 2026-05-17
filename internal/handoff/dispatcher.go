@@ -35,6 +35,7 @@ type Dispatcher struct {
 	Store       *store.Store
 	Client      *http.Client
 	URLs        []string
+	BearerToken string
 	MaxAttempts int
 	BackoffBase time.Duration
 	BackoffMax  time.Duration
@@ -227,6 +228,9 @@ func (d *Dispatcher) postOnce(ctx context.Context, url string, body []byte) (int
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "helios/1")
+	if d.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+d.BearerToken)
+	}
 	resp, err := d.Client.Do(req)
 	if err != nil {
 		return 0, err

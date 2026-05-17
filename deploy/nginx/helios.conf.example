@@ -1,0 +1,77 @@
+# Example production Nginx reverse proxy for Helios.
+#
+# Install:
+#   sudo cp deploy/nginx/helios.conf.example /etc/nginx/sites-available/helios.conf
+#   sudo ln -s /etc/nginx/sites-available/helios.conf /etc/nginx/sites-enabled/helios.conf
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# Replace every helios.example.com and certificate path before enabling.
+# Keep the Helios process itself bound to 127.0.0.1:8080.
+
+upstream helios_backend {
+    server 127.0.0.1:8080;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name helios.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name helios.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/helios.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/helios.example.com/privkey.pem;
+
+    # Helios request bodies are small JSON submissions. Keep this low unless the
+    # API surface changes to accept large uploads.
+    client_max_body_size 2m;
+
+    proxy_http_version 1.1;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    proxy_connect_timeout 10s;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Frame-Options "DENY" always;
+
+    # Optional but recommended if this host is permanently HTTPS-only.
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # Optional additional protection for the public HTML shell. The API still
+    # requires the Helios Bearer token; this only gates browser access to /ui.
+    # auth_basic "Helios";
+    # auth_basic_user_file /etc/nginx/helios.htpasswd;
+
+    location / {
+        proxy_pass http://helios_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    # Lighter health-check logging for load balancers / uptime monitors.
+    location = /healthz {
+        access_log off;
+        proxy_pass http://helios_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}

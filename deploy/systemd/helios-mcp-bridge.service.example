@@ -1,0 +1,27 @@
+[Unit]
+Description=Helios MCP handoff bridge
+After=network-online.target
+Wants=network-online.target
+Before=helios.service
+
+[Service]
+User=helios
+Group=helios
+WorkingDirectory=/srv/helios
+EnvironmentFile=/srv/helios/env/helios-mcp-bridge.env
+ExecStart=/srv/helios/bin/helios-mcp-bridge
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Bridge writes only its SQLite index. It reads no arbitrary case artifacts;
+# artifact reads happen in the stdio helios-mcp process started by the MCP client.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/srv/helios/data
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

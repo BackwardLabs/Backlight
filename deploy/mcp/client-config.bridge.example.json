@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "helios": {
+      "command": "/srv/helios/bin/helios-mcp",
+      "env": {
+        "HELIOS_MCP_BRIDGE_DB_PATH": "/srv/helios/data/helios-mcp-bridge.db",
+        "HELIOS_OUTPUT_BASE": "/srv/helios/data/outputs",
+        "HELIOS_MCP_MAX_BYTES": "1048576"
+      }
+    }
+  }
+}
