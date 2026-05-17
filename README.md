@@ -121,10 +121,13 @@ access.
 Two source modes are supported:
 
 - **Direct mode:** `helios-mcp` reads case metadata from the Helios API using
-  `HELIOS_BASE_URL` + `HELIOS_API_TOKEN`.
+  `HELIOS_BASE_URL` + `HELIOS_API_TOKEN`; Helios serves only allowlisted
+  artifacts from its own configured output root, so users do not configure
+  filesystem paths.
 - **Bridge-index mode:** Helios posts completed handoff payloads to
   `helios-mcp-bridge`; `helios-mcp` reads the bridge SQLite index using
-  `HELIOS_MCP_BRIDGE_DB_PATH`.
+  `HELIOS_MCP_BRIDGE_DB_PATH` and derives the output directory from the bridge
+  DB location unless explicitly overridden by an operator.
 
 For production bridge mode, keep `helios-mcp-bridge` bound to loopback, set
 `HELIOS_MCP_BRIDGE_TOKEN`, and grant the MCP client user read-only group access

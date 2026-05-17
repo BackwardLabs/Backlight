@@ -103,10 +103,10 @@ func (fakeArtifacts) AllowedPaths() []string {
 	return []string{"PoC.t.sol", "rca.md", "summary.json", "summary.md"}
 }
 
-func (fakeArtifacts) List(api.CaseSummary) ([]artifacts.FileInfo, error) {
+func (fakeArtifacts) List(artifacts.CaseRef) ([]artifacts.FileInfo, error) {
 	return []artifacts.FileInfo{{Path: "summary.md", Exists: true, Size: 5}}, nil
 }
 
-func (fakeArtifacts) Read(api.CaseSummary, string, int64) (*artifacts.ReadResult, error) {
+func (fakeArtifacts) Read(artifacts.CaseRef, string, int64) (*artifacts.ReadResult, error) {
 	return &artifacts.ReadResult{Path: "summary.md", Size: 5, Text: "hello"}, nil
 }

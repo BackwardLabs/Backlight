@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 
+	"github.com/UPside-Lumos-V2/helios/internal/artifacts"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 )
 
@@ -60,6 +61,19 @@ type CaseDetailResponse struct {
 	CaseEvents           []store.CaseEvent           `json:"case_events"`
 	HandoffAttempts      []store.HandoffAttempt      `json:"handoff_attempts"`
 	NotificationAttempts []store.NotificationAttempt `json:"notification_attempts"`
+}
+
+// ArtifactListResponse is GET /cases/{case_id}/artifacts.
+type ArtifactListResponse struct {
+	CaseID  string               `json:"case_id"`
+	Allowed []string             `json:"allowed"`
+	Files   []artifacts.FileInfo `json:"files"`
+}
+
+// ArtifactReadResponse is GET /cases/{case_id}/artifacts/{path}.
+type ArtifactReadResponse struct {
+	CaseID   string                `json:"case_id"`
+	Artifact *artifacts.ReadResult `json:"artifact"`
 }
 
 func toSummary(c *store.Case) CaseSummary {

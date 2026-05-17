@@ -65,7 +65,21 @@ sudo install -o helios -g helios -m 0600 deploy/env/helios.env.example /srv/heli
 sudo install -o helios -g helios -m 0600 deploy/mcp/helios-mcp-bridge.env.example /srv/helios/env/helios-mcp-bridge.env
 ```
 
-Edit `/srv/helios/env/helios.env` and replace every placeholder.
+Edit `/srv/helios/env/helios.env` and replace every placeholder. Put the
+lumoskit runtime env in this same file as well; Helios starts lumoskit as a
+child process and passes its complete environment through unchanged. Do not rely
+on a sibling `/srv/helios/.env` unless your service wrapper explicitly loads it.
+
+If you already have a lumoskit `.env`, merge only the needed key/value lines into
+`/srv/helios/env/helios.env` instead of copying the file into git:
+
+```bash
+sudo sh -c 'grep -E "^(CEFG_LIVE_RPC_URL|RPC_URL|ETH_RPC_URL|ALCHEMY_API_KEY|ETHERSCAN_API_KEY|OPENAI_API_KEY)=" /path/to/lumoskit/.env >> /srv/helios/env/helios.env'
+sudo chown helios:helios /srv/helios/env/helios.env
+sudo chmod 600 /srv/helios/env/helios.env
+```
+
+Extend the `grep -E` list if your lumoskit build expects additional keys.
 
 ## systemd
 
@@ -131,7 +145,7 @@ Phase 1 direct flow:
 ```text
 MCP client -> /srv/helios/bin/helios-mcp
            -> Helios HTTP API on HELIOS_BASE_URL
-           -> allowlisted files under HELIOS_OUTPUT_BASE
+           -> server-side allowlisted artifact reads
 ```
 
 Phase 2 indexed flow:
@@ -139,7 +153,7 @@ Phase 2 indexed flow:
 ```text
 Helios -> POST /handoff -> helios-mcp-bridge -> bridge SQLite index
 MCP client -> /srv/helios/bin/helios-mcp -> bridge SQLite index
-                                          -> allowlisted files under HELIOS_OUTPUT_BASE
+                                          -> allowlisted files next to the bridge DB
 ```
 
 Exposed tools:
@@ -160,7 +174,6 @@ Required MCP env:
 
 - `HELIOS_BASE_URL`, for example `http://127.0.0.1:8080`
 - `HELIOS_API_TOKEN`
-- `HELIOS_OUTPUT_BASE`, usually `/srv/helios/data/outputs`
 
 For bridge/indexed mode, replace `HELIOS_BASE_URL` and `HELIOS_API_TOKEN` with:
 
@@ -168,6 +181,9 @@ For bridge/indexed mode, replace `HELIOS_BASE_URL` and `HELIOS_API_TOKEN` with:
 
 Optional MCP env:
 
+- `HELIOS_OUTPUT_ROOT` / `HELIOS_OUTPUT_BASE`, bridge-mode or legacy
+  direct-file containment override. Usually leave unset in direct mode because
+  Helios serves artifacts server-side. `/` is rejected.
 - `HELIOS_MCP_MAX_BYTES`, default `1048576`
 - `HELIOS_MCP_HTTP_TIMEOUT_SECONDS`, default `30`
 

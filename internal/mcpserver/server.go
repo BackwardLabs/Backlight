@@ -24,11 +24,19 @@ type HeliosClient interface {
 	GetCase(ctx context.Context, caseID string) (*api.CaseDetailResponse, error)
 }
 
+// ArtifactClient is implemented by direct Helios HTTP clients. It lets MCP
+// avoid local filesystem path configuration in direct mode; Helios enforces the
+// artifact allowlist and output-root containment server-side.
+type ArtifactClient interface {
+	ListArtifacts(ctx context.Context, caseID string) (*api.ArtifactListResponse, error)
+	ReadArtifact(ctx context.Context, caseID string, path string, maxBytes int64) (*api.ArtifactReadResponse, error)
+}
+
 // ArtifactReader is the read-only product artifact gateway.
 type ArtifactReader interface {
 	AllowedPaths() []string
-	List(c api.CaseSummary) ([]artifacts.FileInfo, error)
-	Read(c api.CaseSummary, rel string, perCallMax int64) (*artifacts.ReadResult, error)
+	List(c artifacts.CaseRef) ([]artifacts.FileInfo, error)
+	Read(c artifacts.CaseRef, rel string, perCallMax int64) (*artifacts.ReadResult, error)
 }
 
 // Server handles newline-delimited JSON-RPC messages on stdin/stdout.
@@ -44,7 +52,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	if s.Client == nil {
 		return fmt.Errorf("mcp server missing Helios client")
 	}
-	if s.Artifacts == nil {
+	if _, ok := s.Client.(ArtifactClient); !ok && s.Artifacts == nil {
 		return fmt.Errorf("mcp server missing artifact reader")
 	}
 	if s.Logger == nil {
@@ -225,26 +233,36 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (toolResult,
 		if err := decodeArgs(params.Arguments, &args); err != nil {
 			return toolResult{}, err
 		}
+		if ac, ok := s.Client.(ArtifactClient); ok {
+			return jsonToolResult(ac.ListArtifacts(ctx, args.CaseID))
+		}
 		c, err := s.Client.GetCase(ctx, args.CaseID)
 		if err != nil {
 			return errorToolResult(err), nil
 		}
-		files, err := s.Artifacts.List(c.CaseSummary)
+		files, err := s.Artifacts.List(caseRef(c.CaseSummary))
 		return jsonToolResult(map[string]any{"case_id": args.CaseID, "allowed": s.Artifacts.AllowedPaths(), "files": files}, err)
 	case "helios.read_artifact":
 		var args readArtifactArgs
 		if err := decodeArgs(params.Arguments, &args); err != nil {
 			return toolResult{}, err
 		}
+		if ac, ok := s.Client.(ArtifactClient); ok {
+			return jsonToolResult(ac.ReadArtifact(ctx, args.CaseID, args.Path, int64(args.MaxBytes)))
+		}
 		c, err := s.Client.GetCase(ctx, args.CaseID)
 		if err != nil {
 			return errorToolResult(err), nil
 		}
-		res, err := s.Artifacts.Read(c.CaseSummary, args.Path, int64(args.MaxBytes))
+		res, err := s.Artifacts.Read(caseRef(c.CaseSummary), args.Path, int64(args.MaxBytes))
 		return jsonToolResult(map[string]any{"case_id": args.CaseID, "artifact": res}, err)
 	default:
 		return toolResult{}, fmt.Errorf("unknown tool %q", params.Name)
 	}
+}
+
+func caseRef(c api.CaseSummary) artifacts.CaseRef {
+	return artifacts.CaseRef{CaseID: c.CaseID, OutputRoot: c.OutputRoot}
 }
 
 func decodeArgs(raw json.RawMessage, out any) error {
