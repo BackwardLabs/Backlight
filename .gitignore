@@ -39,6 +39,7 @@ ops/grafana-data/
 # Built binaries can land in repo root if `go build` is run without -o.
 /helios
 /helios-*
+/dist/
 *.test
 *.out
 coverage.txt

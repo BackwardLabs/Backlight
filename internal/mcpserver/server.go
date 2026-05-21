@@ -138,7 +138,7 @@ func initializeResult() map[string]any {
 			"name":    "helios-mcp",
 			"version": "0.1.0",
 		},
-		"instructions": "Read-only Helios artifact gateway. Exposes case metadata and exactly four product artifacts: summary.json, summary.md, rca.md, and PoC.t.sol.",
+		"instructions": "Read-only Helios artifact gateway. Exposes case metadata and product artifacts: summary.json, summary.md, rca.md, PoC.t.sol, and Report.md.",
 	}
 }
 
@@ -173,7 +173,7 @@ func (s *Server) tools() []toolDef {
 		{
 			Name:        "helios.list_artifacts",
 			Title:       "List allowed case artifacts",
-			Description: "List existence and size for the four allowlisted product artifacts for a case.",
+			Description: "List existence and size for the allowlisted product artifacts for a case.",
 			InputSchema: schema(map[string]any{
 				"case_id": stringProp("Helios case id"),
 			}, []string{"case_id"}),
@@ -182,10 +182,10 @@ func (s *Server) tools() []toolDef {
 		{
 			Name:        "helios.read_artifact",
 			Title:       "Read allowed case artifact",
-			Description: "Read exactly one allowlisted artifact: summary.json, summary.md, rca.md, or PoC.t.sol.",
+			Description: "Read exactly one allowlisted artifact: summary.json, summary.md, rca.md, PoC.t.sol, or Report.md.",
 			InputSchema: schema(map[string]any{
 				"case_id":   stringProp("Helios case id"),
-				"path":      stringProp("One of: summary.json, summary.md, rca.md, PoC.t.sol"),
+				"path":      stringProp("One of: summary.json, summary.md, rca.md, PoC.t.sol, Report.md"),
 				"max_bytes": intProp("Optional per-call max bytes; can only lower the server cap"),
 			}, []string{"case_id", "path"}),
 			Annotations: readOnly,

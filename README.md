@@ -113,8 +113,9 @@ checked-in Dockerfile only packages Helios itself.
 ## Read-only MCP gateway
 
 MCP support is intentionally narrow: MCP clients can inspect Helios cases and
-read only the product-facing files `summary.json`, `summary.md`, `rca.md`, and
-`PoC.t.sol` from a case output root. The MCP server does not run `lumoskit`,
+read only the product-facing files `summary.json`, `summary.md`, `rca.md`,
+`PoC.t.sol`, and `Report.md` from a case output root. The MCP server does not
+run `lumoskit`,
 write files, trigger downstream webhooks, or expose arbitrary shell/filesystem
 access.
 
@@ -153,18 +154,58 @@ lightweight Helios console for manual analysis work:
 - submit `POST /cases` with `chain`, `tx_hash`, optional metadata, and
   `force_rerun`
 - poll `GET /cases` for queued/running/done/failed progress
-- inspect `GET /cases/{case_id}` events, output paths, handoff attempts, and
-  notifications
+- inspect `GET /cases/{case_id}` analysis result, events, output paths,
+  handoff attempts, and notifications
 - call `POST /cases/{case_id}/retry-handoff` when a completed case is retryable
 
 The HTML shell is public so a browser can load it without a pre-existing
 Authorization header. All data/actions still use the existing protected API and
 require the token entered in the UI.
 
+### Result payload example
+
+`state_transition` rows are still the audit log for state changes. The terminal
+`running → done` / `running → failed` transition now also carries the compact
+PoC/RCA result payload copied from `summary.json`, so operators can tell where
+the analysis stopped without opening artifacts first.
+
+Example `GET /cases/{case_id}` event payload for a partial result:
+
+```json
+{
+  "outcome": "partial",
+  "rule": "O2",
+  "summary_status": "partial",
+  "failure": {
+    "kind": "missing_profit_or_economic_oracle",
+    "message": "economic proof could not be verified"
+  },
+  "poc": {
+    "status": "unverified",
+    "proof_kind": "reachability_only",
+    "forge_build_status": "pass",
+    "forge_test_status": "pass",
+    "failure_kind": "missing_profit_or_economic_oracle"
+  },
+  "rca": {
+    "status": "blocked",
+    "blocker_code": "economic_proof_gap",
+    "blocker_reason": "proof_kind is reachability_only, expected economic_proof"
+  }
+}
+```
+
+In the browser UI this is summarized as **Analysis result** and the full JSON is
+still available in the Events table.
+
 ## Configuration
 
 All configuration is via env. Defaults match `seeds/v1.yaml` →
 `runtime_config_surface`.
+
+For local runs, Helios loads `.env` and `.env.local` from the current working
+directory before reading configuration. Existing process env values take
+precedence; `.env.local` can override `.env`.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
@@ -175,6 +216,7 @@ All configuration is via env. Defaults match `seeds/v1.yaml` →
 | `HELIOS_LUMOSKIT_BIN` | no | `bin/lumoskit` | child-process executable invoked per case |
 | `HELIOS_WORKER_POLL_MILLIS` | no | `1000` | worker poll cadence |
 | `HELIOS_MAX_CONCURRENT_LUMOSKIT` | no | `2` | parallel lumoskit ceiling |
+| `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` | no | `3` | linked rerun ceiling for `outcome=partial`; set `0` to disable |
 | `HELIOS_DOWNSTREAM_WEBHOOK_URLS` | no | empty | comma-separated webhook list (empty ⇒ `handoff_status=skipped`, case advances directly to `handed-off`) |
 | `HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN` | no | empty | optional Bearer token sent to downstream webhook targets, useful for `helios-mcp-bridge` |
 | `HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS` | no | `5` | per-URL retry ceiling |
@@ -187,6 +229,10 @@ All configuration is via env. Defaults match `seeds/v1.yaml` →
 | `HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS` | no | `5` | notification retry ceiling |
 | `HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | |
 | `HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | |
+| `GITHUB_TOKEN` / `GH_TOKEN` | no | empty | enables GitHub publish for verified LumosKit outputs; skipped when unset |
+| `HELIOS_GITHUB_PUBLISH_OWNER` | no | `UPside-Lumos-V2` | GitHub owner for product artifact publish |
+| `HELIOS_GITHUB_PUBLISH_REPO` | no | `Q1-2026` | GitHub repo for product artifact publish |
+| `HELIOS_GITHUB_PUBLISH_BRANCH` | no | `main` | GitHub branch for product artifact publish |
 
 Plus any RPC env vars (`CEFG_LIVE_RPC_URL`, `RPC_URL`, `ETH_RPC_URL`,
 `ALCHEMY_API_KEY`); helios passes these through unchanged to the spawned
@@ -197,7 +243,18 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
 - **State machine.** `queued → running → done → handed-off`. Engine failure
   is `running → failed` (outcome=`engine_error`, populated `failure_kind`).
   Handoff failure leaves `state=done` with `handoff_status=failed`; the case
-  can be re-driven via `POST /cases/{case_id}/retry-handoff`.
+  can be re-driven via `POST /cases/{case_id}/retry-handoff`. Terminal
+  `state_transition` payloads include the outcome rule plus the PoC/RCA subset
+  from `summary.json` when the summary is parseable.
+- **GitHub publish.** When `GITHUB_TOKEN` or `GH_TOKEN` is set, Helios publishes
+  verified product artifacts to `test/{YYYY-MM}/{Protocol}/` in the configured
+  Q1 repo. The publish step requires `PoC.t.sol` and `Report.md`; `Report.md`
+  becomes `README.md`, and date/protocol are derived from `Report.md` or
+  `summary.json`.
+- **Partial auto-rerun.** `outcome=partial` attempts are automatically retried
+  as linked child cases until `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` is
+  reached. Intermediate partial attempts skip downstream handoff and operator
+  notification; the final attempt follows the normal terminal flow.
 - **Lineage.** Each retry, automatic engine_error recovery, and force_rerun
   inserts a new case row linked via `parent_case_id` with
   `attempt_number+1` (the seed's case-per-attempt model). The

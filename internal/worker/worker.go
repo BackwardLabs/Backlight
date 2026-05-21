@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/UPside-Lumos-V2/helios/internal/githubpublish"
 	"github.com/UPside-Lumos-V2/helios/internal/handoff"
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
 	"github.com/UPside-Lumos-V2/helios/internal/metrics"
@@ -24,14 +25,16 @@ import (
 )
 
 type Worker struct {
-	Store            *store.Store
-	Runner           *lumoskit.Runner
-	Dispatcher       *handoff.Dispatcher // nil iff no downstream URLs are configured
-	Notifier         *notify.Notifier    // nil iff no operator channel is configured
-	OutputRootParent string
-	MaxConcurrent    int
-	PollInterval     time.Duration
-	Logger           *slog.Logger
+	Store                       *store.Store
+	Runner                      *lumoskit.Runner
+	Dispatcher                  *handoff.Dispatcher // nil iff no downstream URLs are configured
+	Notifier                    *notify.Notifier    // nil iff no operator channel is configured
+	GitHubPublisher             *githubpublish.Publisher
+	PartialAutoRerunMaxAttempts int
+	OutputRootParent            string
+	MaxConcurrent               int
+	PollInterval                time.Duration
+	Logger                      *slog.Logger
 
 	wg sync.WaitGroup
 }
@@ -135,13 +138,17 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 
 	runStart := time.Now()
 	res := w.Runner.Run(ctx, c.Chain, c.TxHash, *c.OutputRoot)
-	metrics.LumoskitDurationSeconds.Observe(time.Since(runStart).Seconds())
-	mapped := outcome.Map(outcome.Input{
+	runDuration := time.Since(runStart)
+	metrics.LumoskitDurationSeconds.Observe(runDuration.Seconds())
+	outcomeInput := outcome.Input{
 		ExitCode:       res.ExitCode,
 		SummaryBytes:   res.SummaryBytes,
 		SummaryMissing: res.SummaryMissing,
 		SummaryReadErr: res.SummaryReadErr,
-	})
+	}
+	mapped := outcome.Map(outcomeInput)
+	eventPayload := outcome.TerminalEventPayload(mapped, outcomeInput)
+	eventPayload["duration_ms"] = runDuration.Milliseconds()
 
 	if len(res.Stderr) > 0 && (mapped.Outcome == outcome.OutcomeEngineError) {
 		log.Warn("lumoskit stderr captured for engine_error case", "stderr_tail", string(res.Stderr))
@@ -149,11 +156,28 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 
 	switch mapped.State {
 	case outcome.StateDone:
-		if err := w.Store.MarkDone(ctx, c.CaseID, mapped.Outcome, w.downstreamConfigured()); err != nil {
+		if w.shouldAutoRerunPartial(mapped.Outcome, c.AttemptNumber) {
+			child, queued, err := w.Store.MarkDoneAndQueueAutoRerun(ctx, c.CaseID, mapped.Outcome, eventPayload, "partial_auto_rerun", w.PartialAutoRerunMaxAttempts)
+			if err != nil {
+				log.Error("auto rerun queue failed", "err", err, "outcome", mapped.Outcome)
+				return
+			}
+			if queued {
+				log.Info("partial auto rerun queued",
+					"parent_case_id", c.CaseID,
+					"child_case_id", child.CaseID,
+					"next_attempt_number", child.AttemptNumber,
+					"max_attempts", w.PartialAutoRerunMaxAttempts,
+				)
+				return
+			}
+		}
+		if err := w.Store.MarkDoneWithPayload(ctx, c.CaseID, mapped.Outcome, w.downstreamConfigured(), eventPayload); err != nil {
 			log.Error("mark done failed", "err", err, "outcome", mapped.Outcome)
 			return
 		}
 		log.Info("case complete", "state", mapped.State, "outcome", mapped.Outcome, "rule", mapped.Rule)
+		w.publishGitHub(ctx, c, mapped.Outcome)
 		// Trigger downstream fan-out asynchronously. With no URLs configured,
 		// MarkDone already advanced the case to handed-off (handoff_status=skipped).
 		if w.downstreamConfigured() {
@@ -171,7 +195,7 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 		if mapped.FailureKind != nil {
 			fk = *mapped.FailureKind
 		}
-		if err := w.Store.MarkFailed(ctx, c.CaseID, fk); err != nil {
+		if err := w.Store.MarkFailedWithPayload(ctx, c.CaseID, fk, eventPayload); err != nil {
 			log.Error("mark failed update failed", "err", err, "failure_kind", fk)
 			return
 		}
@@ -180,6 +204,53 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 	default:
 		log.Error("outcome mapping returned unexpected state", "state", mapped.State)
 	}
+}
+
+func (w *Worker) shouldAutoRerunPartial(mappedOutcome string, attemptNumber int) bool {
+	return mappedOutcome == outcome.OutcomePartial && w.PartialAutoRerunMaxAttempts > 0 && attemptNumber < w.PartialAutoRerunMaxAttempts
+}
+
+func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome string) {
+	if mappedOutcome != outcome.OutcomeVerified || w.GitHubPublisher == nil || !w.GitHubPublisher.Configured() || c.OutputRoot == nil {
+		return
+	}
+	publishCase := githubpublish.Case{
+		CaseID:     c.CaseID,
+		Chain:      c.Chain,
+		TxHash:     c.TxHash,
+		OutputRoot: *c.OutputRoot,
+	}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		res, err := w.GitHubPublisher.Publish(ctx, publishCase)
+		if err != nil {
+			w.Logger.Error("github publish failed", "case_id", publishCase.CaseID, "err", err)
+			if recordErr := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish_failed", map[string]any{
+				"published": false,
+				"error":     err.Error(),
+			}); recordErr != nil {
+				w.Logger.Error("record github publish failure event failed", "case_id", publishCase.CaseID, "err", recordErr)
+			}
+			return
+		}
+		if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish", map[string]any{
+			"published":   true,
+			"commit_sha":  res.CommitSHA,
+			"target_dir":  res.TargetDir,
+			"poc_url":     res.PoCURL,
+			"report_url":  res.ReportURL,
+			"commit_url":  res.CommitURL,
+			"target_urls": res.TargetURLs,
+		}); err != nil {
+			w.Logger.Error("record github publish event failed", "case_id", publishCase.CaseID, "err", err)
+		}
+		w.Logger.Info("github publish complete",
+			"case_id", publishCase.CaseID,
+			"commit_sha", res.CommitSHA,
+			"target_dir", res.TargetDir,
+		)
+	}()
 }
 
 // notifyOutcome fires the appropriate operator notification for an outcome.

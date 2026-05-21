@@ -12,6 +12,7 @@ import (
 
 	"github.com/UPside-Lumos-V2/helios/internal/api"
 	"github.com/UPside-Lumos-V2/helios/internal/config"
+	"github.com/UPside-Lumos-V2/helios/internal/githubpublish"
 	"github.com/UPside-Lumos-V2/helios/internal/handoff"
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
 	"github.com/UPside-Lumos-V2/helios/internal/metrics"
@@ -80,16 +81,30 @@ func main() {
 		Notifier:    notifier,
 		Logger:      logger,
 	}
+	githubPublisher := githubpublish.New(githubpublish.Config{
+		Token:  cfg.GitHubToken,
+		Owner:  cfg.GitHubOwner,
+		Repo:   cfg.GitHubRepo,
+		Branch: cfg.GitHubBranch,
+	})
+	githubPublisher.Client = httpClient
+	logger.Info("github publisher configured",
+		"enabled", githubPublisher.Configured(),
+		"repo", cfg.GitHubOwner+"/"+cfg.GitHubRepo,
+		"branch", cfg.GitHubBranch,
+	)
 
 	w := &worker.Worker{
-		Store:            st,
-		Runner:           &lumoskit.Runner{Binary: cfg.LumoskitBin},
-		Dispatcher:       dispatcher,
-		Notifier:         notifier,
-		OutputRootParent: cfg.OutputRoot,
-		MaxConcurrent:    cfg.MaxConcurrent,
-		PollInterval:     time.Duration(cfg.WorkerPollMillis) * time.Millisecond,
-		Logger:           logger,
+		Store:                       st,
+		Runner:                      &lumoskit.Runner{Binary: cfg.LumoskitBin},
+		Dispatcher:                  dispatcher,
+		Notifier:                    notifier,
+		GitHubPublisher:             githubPublisher,
+		PartialAutoRerunMaxAttempts: cfg.PartialAutoRerunMaxAttempts,
+		OutputRootParent:            cfg.OutputRoot,
+		MaxConcurrent:               cfg.MaxConcurrent,
+		PollInterval:                time.Duration(cfg.WorkerPollMillis) * time.Millisecond,
+		Logger:                      logger,
 	}
 	w.Start(ctx)
 

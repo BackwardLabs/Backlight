@@ -13,7 +13,7 @@ import (
 
 const DefaultMaxBytes int64 = 1 << 20 // 1 MiB
 
-var defaultAllowlist = []string{"summary.json", "summary.md", "rca.md", "PoC.t.sol"}
+var defaultAllowlist = []string{"summary.json", "summary.md", "rca.md", "PoC.t.sol", "Report.md"}
 
 // Reader enforces exact-path allowlisting and output-root containment.
 type Reader struct {

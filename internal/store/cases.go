@@ -251,6 +251,21 @@ func appendEventTx(ctx context.Context, tx *sql.Tx, caseID string, fromState, to
 	return nil
 }
 
+// AppendCaseEvent records a non-state-machine event on a case timeline. It is
+// intended for durable side-effect evidence such as GitHub publish results.
+func (s *Store) AppendCaseEvent(ctx context.Context, caseID, eventType string, eventPayload map[string]any) error {
+	if eventPayload == nil {
+		eventPayload = map[string]any{}
+	}
+	payload, err := json.Marshal(eventPayload)
+	if err != nil {
+		return fmt.Errorf("marshal event payload: %w", err)
+	}
+	return s.Tx(ctx, func(tx *sql.Tx) error {
+		return appendEventTx(ctx, tx, caseID, nil, nil, eventType, payload, nowUTC())
+	})
+}
+
 func (s *Store) GetCase(ctx context.Context, caseID string) (*Case, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT case_id, chain, tx_hash, source, detected_at, metadata,
@@ -515,6 +530,14 @@ func (s *Store) ClaimNextQueued(ctx context.Context, outputRootParent string) (*
 // When downstreamConfigured=false the seed requires the case to advance
 // directly to handed-off (handoff_status=skipped) inside the same tx.
 func (s *Store) MarkDone(ctx context.Context, caseID, outcome string, downstreamConfigured bool) error {
+	return s.MarkDoneWithPayload(ctx, caseID, outcome, downstreamConfigured, nil)
+}
+
+// MarkDoneWithPayload is MarkDone plus an enriched event payload for the
+// running→done state_transition. The payload is intentionally stored in the
+// existing case_events JSON column so PoC/RCA diagnostics are visible without
+// changing the case state machine or schema.
+func (s *Store) MarkDoneWithPayload(ctx context.Context, caseID, outcome string, downstreamConfigured bool, eventPayload map[string]any) error {
 	advanced := false
 	err := s.Tx(ctx, func(tx *sql.Tx) error {
 		now := nowUTC()
@@ -528,7 +551,10 @@ func (s *Store) MarkDone(ctx context.Context, caseID, outcome string, downstream
 		); err != nil {
 			return fmt.Errorf("mark done update: %w", err)
 		}
-		payload, _ := json.Marshal(map[string]string{"outcome": outcome})
+		payload := terminalEventPayload(
+			map[string]any{"outcome": outcome},
+			eventPayload,
+		)
 		if err := appendEventTx(ctx, tx, caseID, ptr(StateRunning), ptr(StateDone), "state_transition", payload, now); err != nil {
 			return err
 		}
@@ -562,6 +588,129 @@ func (s *Store) MarkDone(ctx context.Context, caseID, outcome string, downstream
 		metrics.ObserveCaseStateTransition(StateHandedOff)
 	}
 	return nil
+}
+
+// MarkDoneAndQueueAutoRerun records a completed non-final attempt and queues a
+// fresh linked child attempt in the same transaction. The parent is marked as
+// handed-off/skipped so partial intermediate attempts never fan out downstream.
+func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome string, eventPayload map[string]any, reason string, maxAttempts int) (*Case, bool, error) {
+	if maxAttempts <= 0 {
+		return nil, false, nil
+	}
+	var child *Case
+	err := s.Tx(ctx, func(tx *sql.Tx) error {
+		parent, err := getCaseForUpdateTx(ctx, tx, caseID)
+		if err != nil {
+			return err
+		}
+		if parent == nil || parent.State != StateRunning || parent.AttemptNumber >= maxAttempts {
+			return nil
+		}
+		now := nowUTC()
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE cases
+			   SET state      = 'done',
+			       outcome    = ?,
+			       updated_at = ?
+			 WHERE case_id = ? AND state = 'running'`,
+			outcome, now, caseID,
+		); err != nil {
+			return fmt.Errorf("mark done before auto rerun: %w", err)
+		}
+		payload := terminalEventPayload(
+			map[string]any{
+				"outcome":                 outcome,
+				"auto_rerun_queued":       true,
+				"auto_rerun_reason":       reason,
+				"auto_rerun_max_attempts": maxAttempts,
+			},
+			eventPayload,
+		)
+		if err := appendEventTx(ctx, tx, caseID, ptr(StateRunning), ptr(StateDone), "state_transition", payload, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE cases
+			   SET state          = 'handed-off',
+			       handoff_status = 'skipped',
+			       updated_at     = ?
+			 WHERE case_id = ?`,
+			now, caseID,
+		); err != nil {
+			return fmt.Errorf("skip superseded attempt handoff: %w", err)
+		}
+		skipPayload, _ := json.Marshal(map[string]any{
+			"reason":            reason,
+			"auto_rerun_queued": true,
+		})
+		if err := appendEventTx(ctx, tx, caseID, ptr(StateDone), ptr(StateHandedOff), "state_transition", skipPayload, now); err != nil {
+			return err
+		}
+
+		metadata := parent.Metadata
+		if len(metadata) == 0 {
+			metadata = json.RawMessage("{}")
+		}
+		next, err := insertChildCaseTx(ctx, tx, NewID("case"), parent, parent.Source, parent.DetectedAt, metadata, false, now)
+		if err != nil {
+			return err
+		}
+		insertPayload, _ := json.Marshal(map[string]any{
+			"reason":            reason,
+			"parent_outcome":    outcome,
+			"parent_case_id":    parent.CaseID,
+			"max_attempts":      maxAttempts,
+			"auto_rerun_queued": true,
+			"previous_attempt":  parent.AttemptNumber,
+			"scheduled_attempt": parent.AttemptNumber + 1,
+		})
+		if err := appendEventTx(ctx, tx, next.CaseID, nil, ptr(StateQueued), "case_inserted", insertPayload, now); err != nil {
+			return err
+		}
+		child = next
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if child == nil {
+		return nil, false, nil
+	}
+	metrics.ObserveCaseStateTransition(StateDone)
+	metrics.ObserveCaseOutcome(outcome)
+	metrics.ObserveCaseStateTransition(StateHandedOff)
+	metrics.ObserveCaseStateTransition(StateQueued)
+	return child, true, nil
+}
+
+func terminalEventPayload(defaults, supplied map[string]any) json.RawMessage {
+	payload := make(map[string]any, len(defaults)+len(supplied))
+	for k, v := range supplied {
+		if v != nil {
+			payload[k] = v
+		}
+	}
+	for k, v := range defaults {
+		if _, ok := payload[k]; !ok {
+			payload[k] = v
+		}
+	}
+	out, _ := json.Marshal(payload)
+	return out
+}
+
+func getCaseForUpdateTx(ctx context.Context, tx *sql.Tx, caseID string) (*Case, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT case_id, chain, tx_hash, source, detected_at, metadata,
+		       state, outcome, failure_kind, output_root, summary_json_path,
+		       attempt_number, parent_case_id, force_rerun,
+		       handoff_status, notification_status, created_at, updated_at
+		FROM cases WHERE case_id = ?`, caseID)
+	c, err := scanCase(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return c, err
 }
 
 // RecordHandoffAttempt inserts a handoff_attempts row and appends a
@@ -777,6 +926,12 @@ func (s *Store) InitNotificationStatusDisabled(ctx context.Context) error {
 // and the supplied failure_kind. handoff_status is set to skipped in the same
 // SQLite transaction (engine_error cases never fan out).
 func (s *Store) MarkFailed(ctx context.Context, caseID, failureKind string) error {
+	return s.MarkFailedWithPayload(ctx, caseID, failureKind, nil)
+}
+
+// MarkFailedWithPayload is MarkFailed plus an enriched event payload for the
+// running→failed state_transition.
+func (s *Store) MarkFailedWithPayload(ctx context.Context, caseID, failureKind string, eventPayload map[string]any) error {
 	err := s.Tx(ctx, func(tx *sql.Tx) error {
 		now := nowUTC()
 		if _, err := tx.ExecContext(ctx, `
@@ -791,10 +946,13 @@ func (s *Store) MarkFailed(ctx context.Context, caseID, failureKind string) erro
 		); err != nil {
 			return fmt.Errorf("mark failed update: %w", err)
 		}
-		payload, _ := json.Marshal(map[string]string{
-			"outcome":      "engine_error",
-			"failure_kind": failureKind,
-		})
+		payload := terminalEventPayload(
+			map[string]any{
+				"outcome":      "engine_error",
+				"failure_kind": failureKind,
+			},
+			eventPayload,
+		)
 		return appendEventTx(ctx, tx, caseID, ptr(StateRunning), ptr(StateFailed), "state_transition", payload, now)
 	})
 	if err != nil {

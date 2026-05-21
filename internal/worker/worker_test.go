@@ -1,0 +1,272 @@
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/UPside-Lumos-V2/helios/internal/githubpublish"
+	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
+	"github.com/UPside-Lumos-V2/helios/internal/store"
+)
+
+func TestWorkerPublishesVerifiedProductArtifacts(t *testing.T) {
+	ctx := context.Background()
+	outputParent := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("1", 64), nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	github := newFakeGitHub(t)
+	defer github.server.Close()
+
+	publisher := githubpublish.New(githubpublish.Config{
+		Token:   "test-token",
+		APIBase: github.server.URL,
+	})
+	publisher.Client = github.server.Client()
+	w := &Worker{
+		Store:           st,
+		Runner:          &lumoskit.Runner{Binary: writePublishLumoskit(t, t.TempDir())},
+		GitHubPublisher: publisher,
+		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	w.process(ctx, c)
+	w.Wait()
+
+	github.mu.Lock()
+	defer github.mu.Unlock()
+	if github.updateSHA != "next-commit" {
+		t.Fatalf("github ref update sha = %q, want next-commit", github.updateSHA)
+	}
+	gotPaths := []string{github.treePaths[0], github.treePaths[1]}
+	wantPaths := []string{"test/2026-01/yETH/yETH.t.sol", "test/2026-01/yETH/README.md"}
+	if strings.Join(gotPaths, ",") != strings.Join(wantPaths, ",") {
+		t.Fatalf("published paths = %v, want %v", gotPaths, wantPaths)
+	}
+	events, err := st.CaseEvents(ctx, c.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawPublish, sawDuration bool
+	for _, event := range events {
+		var payload map[string]any
+		if len(event.Payload) > 0 {
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal event %s payload: %v", event.EventType, err)
+			}
+		}
+		if event.EventType == "state_transition" && event.FromState != nil && *event.FromState == store.StateRunning && event.ToState != nil && *event.ToState == store.StateDone {
+			if _, ok := payload["duration_ms"]; ok {
+				sawDuration = true
+			}
+		}
+		if event.EventType == "github_publish" {
+			sawPublish = true
+			if payload["published"] != true || payload["commit_sha"] != "next-commit" {
+				t.Fatalf("github publish payload = %#v", payload)
+			}
+			if !strings.Contains(payload["poc_url"].(string), "test/2026-01/yETH/yETH.t.sol") {
+				t.Fatalf("github publish poc_url = %#v", payload["poc_url"])
+			}
+			if !strings.Contains(payload["report_url"].(string), "test/2026-01/yETH/README.md") {
+				t.Fatalf("github publish report_url = %#v", payload["report_url"])
+			}
+			if !strings.Contains(payload["commit_url"].(string), "/commit/next-commit") {
+				t.Fatalf("github publish commit_url = %#v", payload["commit_url"])
+			}
+		}
+	}
+	if !sawDuration {
+		t.Fatalf("running done state_transition did not include duration_ms: %#v", events)
+	}
+	if !sawPublish {
+		t.Fatalf("github_publish event not found: %#v", events)
+	}
+}
+
+func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
+	ctx := context.Background()
+	outputParent := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("2", 64), nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Worker{
+		Store:                       st,
+		Runner:                      &lumoskit.Runner{Binary: writePartialLumoskit(t, t.TempDir())},
+		PartialAutoRerunMaxAttempts: 3,
+		Logger:                      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	w.process(ctx, c)
+
+	parent, err := st.GetCase(ctx, c.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parent.State != store.StateHandedOff || parent.HandoffStatus != "skipped" || parent.Outcome == nil || *parent.Outcome != "partial" {
+		t.Fatalf("parent after auto rerun = %+v", parent)
+	}
+	items, total, err := st.ListCases(ctx, store.CaseListFilter{TxHash: &c.TxHash, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("total cases = %d, want 2; items=%+v", total, items)
+	}
+	var child *store.Case
+	for i := range items {
+		if items[i].ParentCaseID != nil && *items[i].ParentCaseID == c.CaseID {
+			child = &items[i]
+		}
+	}
+	if child == nil || child.State != store.StateQueued || child.AttemptNumber != 2 {
+		t.Fatalf("auto rerun child = %+v", child)
+	}
+}
+
+type fakeGitHub struct {
+	server    *httptest.Server
+	mu        sync.Mutex
+	treePaths []string
+	updateSHA string
+}
+
+func newFakeGitHub(t *testing.T) *fakeGitHub {
+	t.Helper()
+	f := &fakeGitHub{}
+	blobCount := 0
+	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/ref/heads/main":
+			_, _ = w.Write([]byte(`{"object":{"sha":"base-commit"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/commits/base-commit":
+			_, _ = w.Write([]byte(`{"sha":"base-commit","tree":{"sha":"base-tree"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/blobs":
+			blobCount++
+			_, _ = w.Write([]byte(`{"sha":"blob-` + string(rune('0'+blobCount)) + `"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/trees":
+			var req struct {
+				Tree []struct {
+					Path string `json:"path"`
+				} `json:"tree"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			f.mu.Lock()
+			f.treePaths = nil
+			for _, entry := range req.Tree {
+				f.treePaths = append(f.treePaths, entry.Path)
+			}
+			f.mu.Unlock()
+			_, _ = w.Write([]byte(`{"sha":"next-tree"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/commits":
+			_, _ = w.Write([]byte(`{"sha":"next-commit","tree":{"sha":"next-tree"}}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/refs/heads/main":
+			var req struct {
+				SHA string `json:"sha"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			f.mu.Lock()
+			f.updateSHA = req.SHA
+			f.mu.Unlock()
+			_, _ = w.Write([]byte(`{"ref":"refs/heads/main"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return f
+}
+
+func writePublishLumoskit(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-lumoskit")
+	script := `#!/bin/sh
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-root) out="$2"; shift 2 ;;
+    --tx) shift 2 ;;
+    --chain) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out"
+cat > "$out/summary.json" <<'JSON'
+{"status":"pass","poc":{"status":"verified"}}
+JSON
+printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
+printf '%s\n' '# yETH Incident Report' 'Protocol: yETH' 'Date: 2026-01-25' > "$out/Report.md"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writePartialLumoskit(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-partial-lumoskit")
+	script := `#!/bin/sh
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-root) out="$2"; shift 2 ;;
+    --tx) shift 2 ;;
+    --chain) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out"
+cat > "$out/summary.json" <<'JSON'
+{"status":"partial","poc":{"status":"unverified","proof_kind":"reachability_only"},"rca":{"status":"blocked","blocker_code":"economic_proof_gap"}}
+JSON
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

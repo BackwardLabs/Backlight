@@ -37,6 +37,9 @@ func TestArtifactAPIReadsOnlyAllowlistedCaseFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(*c.OutputRoot, "summary.md"), []byte("# ok\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(*c.OutputRoot, "Report.md"), []byte("# report\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	h := NewServer(&config.Config{APIToken: "secret", OutputRoot: outputRoot}, st, nil).Handler()
 
@@ -53,6 +56,14 @@ func TestArtifactAPIReadsOnlyAllowlistedCaseFiles(t *testing.T) {
 	}
 	if body.Artifact == nil || body.Artifact.Text != "# ok\n" {
 		t.Fatalf("unexpected artifact body: %+v", body.Artifact)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/cases/"+c.CaseID+"/artifacts/Report.md", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET report artifact status = %d: %s", rr.Code, rr.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/cases/"+c.CaseID+"/artifacts/secret.md", nil)

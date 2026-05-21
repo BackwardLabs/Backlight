@@ -25,6 +25,21 @@ func TestUIRoutesArePublic(t *testing.T) {
 		if !strings.Contains(rr.Body.String(), "Helios Console") {
 			t.Fatalf("GET %s did not return the Helios Console page", path)
 		}
+		if !strings.Contains(rr.Body.String(), "Analysis result") {
+			t.Fatalf("GET %s did not include the analysis result section", path)
+		}
+		if !strings.Contains(rr.Body.String(), "Judgment") {
+			t.Fatalf("GET %s did not include the judgment section", path)
+		}
+		if !strings.Contains(rr.Body.String(), "Helios report") {
+			t.Fatalf("GET %s did not include the Helios report section", path)
+		}
+		if !strings.Contains(rr.Body.String(), `data-route="artifacts"`) {
+			t.Fatalf("GET %s did not include the artifacts route", path)
+		}
+		if !strings.Contains(rr.Body.String(), "Artifact preview") {
+			t.Fatalf("GET %s did not include the artifact preview section", path)
+		}
 	}
 }
 

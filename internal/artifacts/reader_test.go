@@ -15,6 +15,9 @@ func TestReaderAllowsOnlyTopLevelProductArtifacts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "summary.json"), []byte(`{"status":"pass"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "Report.md"), []byte("# Incident report\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, "artifacts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +37,13 @@ func TestReaderAllowsOnlyTopLevelProductArtifacts(t *testing.T) {
 	}
 	if got.Path != "summary.json" || got.Text == "" {
 		t.Fatalf("unexpected read result: %+v", got)
+	}
+	report, err := reader.Read(c, "Report.md", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Path != "Report.md" || report.Text != "# Incident report\n" {
+		t.Fatalf("unexpected report read result: %+v", report)
 	}
 
 	for _, path := range []string{"artifacts/secret.json", "../summary.json", "/tmp/summary.json"} {

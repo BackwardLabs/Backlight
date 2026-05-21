@@ -1,6 +1,7 @@
 package outcome
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -181,5 +182,80 @@ func TestMap_VerifiedAcceptsNonEngineFailureKind(t *testing.T) {
 	got := Map(in)
 	if got.Rule != "O1" {
 		t.Fatalf("expected O1 (non-engine failure kind tolerated), got rule=%s outcome=%s", got.Rule, got.Outcome)
+	}
+}
+
+func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
+	in := Input{ExitCode: 0, SummaryBytes: []byte(`{
+		"status":"partial",
+		"failure":{
+			"kind":"missing_profit_or_economic_oracle",
+			"message":"economic proof could not be verified"
+		},
+		"poc":{
+			"status":"unverified",
+			"proof_kind":"reachability_only",
+			"forge_build_status":"pass",
+			"forge_test_status":"pass",
+			"failure_kind":"missing_profit_or_economic_oracle"
+		},
+		"rca":{
+			"status":"blocked",
+			"blocker_code":"economic_proof_gap",
+			"blocker_reason":"proof_kind is reachability_only, expected economic_proof"
+		}
+	}`)}
+
+	mapped := Map(in)
+	payload := TerminalEventPayload(mapped, in)
+
+	var got map[string]any
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	if got["outcome"] != OutcomePartial {
+		t.Fatalf("outcome = %v, want %s", got["outcome"], OutcomePartial)
+	}
+	if got["rule"] != "O2" {
+		t.Fatalf("rule = %v, want O2", got["rule"])
+	}
+	if got["summary_status"] != "partial" {
+		t.Fatalf("summary_status = %v, want partial", got["summary_status"])
+	}
+	poc := got["poc"].(map[string]any)
+	if poc["status"] != "unverified" || poc["proof_kind"] != "reachability_only" || poc["forge_test_status"] != "pass" {
+		t.Fatalf("unexpected poc payload: %#v", poc)
+	}
+	rca := got["rca"].(map[string]any)
+	if rca["status"] != "blocked" || rca["blocker_code"] != "economic_proof_gap" {
+		t.Fatalf("unexpected rca payload: %#v", rca)
+	}
+	failure := got["failure"].(map[string]any)
+	if failure["kind"] != "missing_profit_or_economic_oracle" {
+		t.Fatalf("unexpected failure payload: %#v", failure)
+	}
+}
+
+func TestTerminalEventPayloadFallsBackToRuleForMissingSummary(t *testing.T) {
+	in := Input{ExitCode: 0, SummaryMissing: true}
+	mapped := Map(in)
+	payload := TerminalEventPayload(mapped, in)
+
+	if payload["outcome"] != OutcomeEngineError {
+		t.Fatalf("outcome = %v, want %s", payload["outcome"], OutcomeEngineError)
+	}
+	if payload["rule"] != "O6" {
+		t.Fatalf("rule = %v, want O6", payload["rule"])
+	}
+	if payload["failure_kind"] != FailureSummaryMissing {
+		t.Fatalf("failure_kind = %v, want %s", payload["failure_kind"], FailureSummaryMissing)
+	}
+	if _, ok := payload["poc"]; ok {
+		t.Fatalf("poc payload should be absent when summary is missing: %#v", payload)
 	}
 }

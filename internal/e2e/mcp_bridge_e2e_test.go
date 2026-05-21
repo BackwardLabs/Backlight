@@ -135,6 +135,7 @@ JSON
 printf '%s\n' 'phase2 bridge e2e summary' > "$out/summary.md"
 printf '%s\n' '# RCA' 'phase2 bridge e2e rca' > "$out/rca.md"
 printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
+printf '%s\n' '# Report' 'phase2 bridge e2e report' > "$out/Report.md"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

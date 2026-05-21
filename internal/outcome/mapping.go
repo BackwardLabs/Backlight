@@ -40,11 +40,22 @@ const (
 type Summary struct {
 	Status  string         `json:"status"` // pass | partial | fail
 	PoC     SummaryPoC     `json:"poc"`
+	RCA     SummaryRCA     `json:"rca"`
 	Failure SummaryFailure `json:"failure"`
 }
 
 type SummaryPoC struct {
-	Status string `json:"status"` // verified | unverified | missing
+	Status           string `json:"status"` // verified | unverified | missing
+	ProofKind        string `json:"proof_kind"`
+	ForgeBuildStatus string `json:"forge_build_status"`
+	ForgeTestStatus  string `json:"forge_test_status"`
+	FailureKind      string `json:"failure_kind"`
+}
+
+type SummaryRCA struct {
+	Status        string `json:"status"`
+	BlockerCode   string `json:"blocker_code"`
+	BlockerReason string `json:"blocker_reason"`
 }
 
 // SummaryFailure is "set" when Kind != "" (Go zero-value detection).
@@ -114,6 +125,96 @@ func Map(in Input) Result {
 	}
 	// O8
 	return engineError("O8", FailureLumoskitUnexpectedSummary)
+}
+
+// TerminalEventPayload builds the diagnostic payload stored on terminal
+// state_transition events. The state machine criteria stay in Map; this
+// function only copies the small operator-facing subset that explains which
+// outcome rule fired and where PoC/RCA blocked.
+func TerminalEventPayload(result Result, in Input) map[string]any {
+	payload := map[string]any{
+		"outcome": result.Outcome,
+	}
+	if result.Rule != "" {
+		payload["rule"] = result.Rule
+	}
+	if result.FailureKind != nil && *result.FailureKind != "" {
+		payload["failure_kind"] = *result.FailureKind
+	}
+
+	s, ok := parseSummaryForPayload(in)
+	if !ok {
+		return payload
+	}
+	if s.Status != "" {
+		payload["summary_status"] = s.Status
+	}
+	if poc := s.PoC.eventPayload(); len(poc) > 0 {
+		payload["poc"] = poc
+	}
+	if rca := s.RCA.eventPayload(); len(rca) > 0 {
+		payload["rca"] = rca
+	}
+	if failure := s.Failure.eventPayload(); len(failure) > 0 {
+		payload["failure"] = failure
+	}
+	return payload
+}
+
+func parseSummaryForPayload(in Input) (Summary, bool) {
+	if in.SummaryMissing || in.SummaryReadErr != nil || len(in.SummaryBytes) == 0 {
+		return Summary{}, false
+	}
+	var s Summary
+	if err := json.Unmarshal(in.SummaryBytes, &s); err != nil {
+		return Summary{}, false
+	}
+	return s, true
+}
+
+func (p SummaryPoC) eventPayload() map[string]string {
+	out := map[string]string{}
+	if p.Status != "" {
+		out["status"] = p.Status
+	}
+	if p.ProofKind != "" {
+		out["proof_kind"] = p.ProofKind
+	}
+	if p.ForgeBuildStatus != "" {
+		out["forge_build_status"] = p.ForgeBuildStatus
+	}
+	if p.ForgeTestStatus != "" {
+		out["forge_test_status"] = p.ForgeTestStatus
+	}
+	if p.FailureKind != "" {
+		out["failure_kind"] = p.FailureKind
+	}
+	return out
+}
+
+func (r SummaryRCA) eventPayload() map[string]string {
+	out := map[string]string{}
+	if r.Status != "" {
+		out["status"] = r.Status
+	}
+	if r.BlockerCode != "" {
+		out["blocker_code"] = r.BlockerCode
+	}
+	if r.BlockerReason != "" {
+		out["blocker_reason"] = r.BlockerReason
+	}
+	return out
+}
+
+func (f SummaryFailure) eventPayload() map[string]string {
+	out := map[string]string{}
+	if f.Kind != "" {
+		out["kind"] = f.Kind
+	}
+	if f.Message != "" {
+		out["message"] = f.Message
+	}
+	return out
 }
 
 func engineError(rule, kind string) Result {

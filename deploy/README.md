@@ -66,9 +66,11 @@ sudo install -o helios -g helios -m 0600 deploy/mcp/helios-mcp-bridge.env.exampl
 ```
 
 Edit `/srv/helios/env/helios.env` and replace every placeholder. Put the
-lumoskit runtime env in this same file as well; Helios starts lumoskit as a
-child process and passes its complete environment through unchanged. Do not rely
-on a sibling `/srv/helios/.env` unless your service wrapper explicitly loads it.
+lumoskit runtime env in this same file as well for systemd; Helios starts
+lumoskit as a child process and passes its complete environment through
+unchanged. For local runs, Helios also loads `.env` and `.env.local` from its
+working directory, without overriding variables already present in the process
+environment.
 
 If you already have a lumoskit `.env`, merge only the needed key/value lines into
 `/srv/helios/env/helios.env` instead of copying the file into git:
@@ -169,6 +171,7 @@ The only artifact paths exposed are:
 - `summary.md`
 - `rca.md`
 - `PoC.t.sol`
+- `Report.md`
 
 Required MCP env:
 
@@ -211,12 +214,26 @@ The downstream Bearer token is sent to every URL in
 local bridge, keep the bridge as the only downstream URL or use only trusted
 targets that are allowed to receive the same credential.
 
+To enable verified product-artifact publishing to GitHub, add these to the
+Helios env file:
+
+```bash
+GITHUB_TOKEN=<repo-write-token>
+HELIOS_GITHUB_PUBLISH_OWNER=UPside-Lumos-V2
+HELIOS_GITHUB_PUBLISH_REPO=Q1-2026
+HELIOS_GITHUB_PUBLISH_BRANCH=main
+```
+
+Helios publishes `PoC.t.sol` and `Report.md` only after LumosKit maps the case
+to `outcome=verified`; `Report.md` is copied to `README.md` under
+`test/{YYYY-MM}/{Protocol}/`.
+
 ### MCP filesystem permissions
 
 In bridge-index mode, the MCP client process needs read-only access to:
 
 - `/srv/helios/data/helios-mcp-bridge.db`
-- `/srv/helios/data/outputs/<case-id>/{summary.json,summary.md,rca.md,PoC.t.sol}`
+- `/srv/helios/data/outputs/<case-id>/{summary.json,summary.md,rca.md,PoC.t.sol,Report.md}`
 
 The systemd templates use `UMask=0027`, so files are owner/group readable but
 not world-readable. Run the MCP client as the `helios` user or add the operator

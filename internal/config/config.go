@@ -21,7 +21,12 @@ type Config struct {
 	TelegramBotToken string
 	TelegramChatID   string
 	TelegramAPIBase  string
+	GitHubToken      string
+	GitHubOwner      string
+	GitHubRepo       string
+	GitHubBranch     string
 
+	PartialAutoRerunMaxAttempts    int
 	HandoffRetryMaxAttempts        int
 	HandoffRetryBackoffBaseSeconds int
 	HandoffRetryBackoffMaxSeconds  int
@@ -31,6 +36,8 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	loadDotEnvFiles(".env", ".env.local")
+
 	c := &Config{
 		APIToken:                       os.Getenv("HELIOS_API_TOKEN"),
 		DBPath:                         os.Getenv("HELIOS_DB_PATH"),
@@ -45,6 +52,11 @@ func Load() (*Config, error) {
 		TelegramBotToken:               os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramChatID:                 os.Getenv("TELEGRAM_CHAT_ID"),
 		TelegramAPIBase:                os.Getenv("HELIOS_TELEGRAM_API_BASE"),
+		GitHubToken:                    firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
+		GitHubOwner:                    envDefault("HELIOS_GITHUB_PUBLISH_OWNER", "UPside-Lumos-V2"),
+		GitHubRepo:                     envDefault("HELIOS_GITHUB_PUBLISH_REPO", "Q1-2026"),
+		GitHubBranch:                   envDefault("HELIOS_GITHUB_PUBLISH_BRANCH", "main"),
+		PartialAutoRerunMaxAttempts:    envInt("HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS", 3),
 		HandoffRetryMaxAttempts:        envInt("HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS", 5),
 		HandoffRetryBackoffBaseSeconds: envInt("HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS", 2),
 		HandoffRetryBackoffMaxSeconds:  envInt("HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS", 300),
@@ -78,6 +90,15 @@ func envDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func envInt(key string, def int) int {
