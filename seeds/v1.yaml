@@ -1,7 +1,8 @@
 goal: Build helios v1 as a Go HTTP durable orchestrator that accepts suspicious transaction
   signals, stores cases in SQLite, runs lumoskit as a child process, classifies outcomes
-  from summary.json, fans out successful results, notifies operators, and exposes
-  operator APIs for case search and handoff retry
+  from summary.json, fans out successful results, starts verified-case product side
+  effects, notifies operators, and exposes operator APIs for case search and handoff
+  retry
 task_type: code
 brownfield_context:
   project_type: greenfield
@@ -16,6 +17,7 @@ constraints:
 - No external queue, Postgres, Redis, SQS, RabbitMQ, Kafka, polling ingress, CLI ingest, serverless, multi-instance, distributed locking, dashboard UI, SSE, WebSocket, or OpenTelemetry in v1
 - Must invoke lumoskit only as child process with --tx, --chain, --output-root
 - Must use caller-unique output root for every lumoskit attempt
+- HELIOS_OUTPUT_ROOT is the canonical fixed parent for LumosKit output roots; each worker attempt assigns output_root as HELIOS_OUTPUT_ROOT/<case_id>
 - Must read summary.json from chosen output root, including failure paths
 - RPC env vars are passed through unchanged to the spawned lumoskit child process; lumoskit owns RPC resolution per ADR-0018 and helios performs no RPC selection logic
 - Submission ingress is limited to POST /signals and POST /cases; operator endpoints (GET /cases, GET /cases/{case_id}, POST /cases/{case_id}/retry-handoff), /healthz, and /metrics are separate API surfaces and not considered submission ingress
@@ -34,6 +36,10 @@ constraints:
 - State machine is hand-rolled in Go and every state transition is written inside the same SQLite transaction as the matching case_events row
 - State tracks operational progress only; outcome tracks lumoskit quality result only; state=failed is reserved for engine failures and never used for handoff or notification failures
 - Downstream fan-out is configured direct HTTP webhooks only, loaded at startup from comma-separated env HELIOS_DOWNSTREAM_WEBHOOK_URLS
+- Verified GitHub product publish is optional and enabled only when GITHUB_TOKEN or GH_TOKEN is set; it runs only for outcome=verified, requires PoC.t.sol and Report.md in the case output root, writes to test/{YYYY-MM}/{Protocol}/ in the configured GitHub repo, publishes Report.md as README.md, and records github_publish or github_publish_failed case_events
+- GitHub publish failures are durable audit events only; they never rewrite state, outcome, failure_kind, handoff_status, notification_status, or queue a LumosKit rerun
+- Verified Pre-Lumos incident JSON generation is optional and enabled only when HELIOS_PRE_LUMOS_ENABLED=true; it requires HELIOS_PRE_LUMOS_SEED_ROOT and OPENAI_API_KEY at startup, runs only for outcome=verified, executes the vendored skills/pre-lumos bundle through the OpenAI Agents SDK, reads the case output root, writes <output_root>/pre-lumos.json and <output_root>/pre-lumos-status.json, merges rows by slug into seed/import_{YEAR}.json, and records pre_lumos_sync or pre_lumos_sync_failed case_events
+- Pre-Lumos sidecar failures are durable audit events only; they never rewrite state, outcome, failure_kind, handoff_status, notification_status, or queue a LumosKit rerun
 - engine_error cases set handoff_status=skipped in the same SQLite transaction that sets state=failed; no downstream URL is attempted for engine_error
 - handoff_status aggregation across configured downstream URLs is normative; handoff_status=succeeded if and only if every URL in HELIOS_DOWNSTREAM_WEBHOOK_URLS has at least one successful delivery; handoff_status=retrying while any URL remains within its retry budget; handoff_status=failed as soon as any single URL exhausts its retry budget; handoff_status=skipped when HELIOS_DOWNSTREAM_WEBHOOK_URLS is empty (state advances directly to handed-off on the same SQLite transaction that sets state=done) or when state=failed with outcome=engine_error
 - engine_error cases are not sent downstream; they only produce operator notifications
@@ -61,8 +67,10 @@ acceptance_criteria:
 - Dedup lookup for the dedup key (chain, tx_hash) returns the latest lineage leaf; if the leaf state is queued, running, done, or handed-off, no new row is inserted and status=existing is returned; if the leaf state is failed, a new linked case row is inserted with status=rerun_created; if no leaf exists, a new root case is inserted with status=new
 - Active manual case with force_rerun=true creates a new case row linked by parent_case_id with status=rerun_created without aborting the predecessor lumoskit attempt
 - Worker dispatches queued cases in FIFO order by created_at ASC with at most max_concurrent_lumoskit concurrent child processes (default 2)
-- Each running case spawns bin/lumoskit with --tx, --chain, and a unique --output-root derived from case_id, with all RPC-related env vars passed through unchanged
+- Each running case spawns bin/lumoskit with --tx, --chain, and a unique --output-root assigned as HELIOS_OUTPUT_ROOT/<case_id>, with all RPC-related env vars passed through unchanged
 - After lumoskit exits, helios reads summary.json under output_root and applies outcome mapping rules O5, O6, O7, O4, O1, O2, O3, O8 from constraints in that strict order; the first matching rule sets state, outcome, and failure_kind
+- A verified case with GitHub token configuration attempts product-artifact publish and appends either github_publish with target URLs/commit evidence or github_publish_failed with error evidence; this side effect is skipped for partial, unverified, and engine_error outcomes
+- A verified case with HELIOS_PRE_LUMOS_ENABLED=true attempts the Pre-Lumos Agent SDK sidecar and appends either pre_lumos_sync with output_path/status_path/target_files/slugs/row_count or pre_lumos_sync_failed with error/status evidence; this side effect is skipped for partial, unverified, and engine_error outcomes
 - verified, partial, and unverified cases are delivered to every URL in HELIOS_DOWNSTREAM_WEBHOOK_URLS and case handoff_status is aggregated per the constraint defining succeeded, retrying, failed, and skipped
 - engine_error cases skip downstream fan-out, set handoff_status=skipped, and produce operator notification only
 - Each handoff attempt is recorded as a handoff_attempts row with attempt_id, case_id, target_url, attempted_at, http_status, result, attempt_index_for_target, and error; failures are retried with exponential backoff bounded by HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS, HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS, and HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS
@@ -91,7 +99,7 @@ ontology_schema:
   - {name: state, type: string, required: true, description: "Operational state; enum of queued, running, done, handed-off, failed (persisted)"}
   - {name: outcome, type: string, required: false, description: "Lumoskit-derived classification; enum of verified, partial, unverified, engine_error; null while the case has not yet reached state=done or state=failed (persisted)"}
   - {name: failure_kind, type: string, required: false, description: "Failure category populated when outcome=engine_error; enum of summary_missing, summary_unreadable, host_restart, lumoskit_nonzero_exit, lumoskit_reported_engine_error, lumoskit_unexpected_summary_shape; null otherwise (persisted)"}
-  - {name: output_root, type: string, required: false, description: "Filesystem root assigned for this case_id lumoskit attempt; null until the worker assigns one (persisted)"}
+  - {name: output_root, type: string, required: false, description: "Filesystem root assigned for this case_id lumoskit attempt as HELIOS_OUTPUT_ROOT/<case_id>; null until the worker assigns one (persisted)"}
   - {name: summary_json_path, type: string, required: false, description: "Expected path to lumoskit summary.json under output_root, computed as soon as output_root is assigned; the value is kept populated even when summary.json is missing or unparseable so operators can locate the expected artifact for diagnosis; null only until output_root is assigned (persisted)"}
   - {name: attempt_number, type: number, required: true, description: "Position of this case in its lineage chain (1 for root, +1 per linked retry) (persisted)"}
   - {name: parent_case_id, type: string, required: false, description: "case_id of the predecessor in the lineage chain; null for root cases (attempt_number=1) (persisted)"}
@@ -103,7 +111,7 @@ ontology_schema:
   - name: case_events
     type: array
     required: true
-    description: 'Append-only state transition and audit events for this case (persisted). Each item is an object with the following required fields: event_id (string, unique), case_id (string, foreign key), from_state (string, nullable enum of queued, running, done, handed-off, failed; null only for the initial case_inserted event), to_state (string, required enum of queued, running, done, handed-off, failed for state-transition events; null for non-transition events such as handoff_attempted or notification_attempted), event_type (string, enum of case_inserted, state_transition, handoff_attempted, notification_attempted, restart_recovery), payload (object, optional), occurred_at (string, UTC ISO8601). Items are inserted in the same SQLite transaction as the corresponding state mutation.'
+    description: 'Append-only state transition and audit events for this case (persisted). Each item is an object with the following required fields: event_id (string, unique), case_id (string, foreign key), from_state (string, nullable enum of queued, running, done, handed-off, failed; null only for the initial case_inserted event), to_state (string, required enum of queued, running, done, handed-off, failed for state-transition events; null for non-transition events such as handoff_attempted, notification_attempted, github_publish, github_publish_failed, pre_lumos_sync, or pre_lumos_sync_failed), event_type (string, enum of case_inserted, state_transition, handoff_attempted, notification_attempted, restart_recovery, github_publish, github_publish_failed, pre_lumos_sync, pre_lumos_sync_failed), payload (object, optional), occurred_at (string, UTC ISO8601). Items are inserted in the same SQLite transaction as the corresponding state mutation when they are state mutations; side-effect audit events are appended durably without mutating case state.'
   - name: handoff_attempts
     type: array
     required: true
@@ -127,19 +135,19 @@ ontology_schema:
   - name: runtime_config_surface
     type: object
     required: false
-    description: 'Non-persisted reference schema for env vars consumed at process startup. Fields: HELIOS_API_TOKEN (required string, Bearer token), HELIOS_DB_PATH (required string), HELIOS_OUTPUT_ROOT (required string, parent directory under which per-case output_root is created), HELIOS_MAX_CONCURRENT_LUMOSKIT (optional integer default 2), HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS (optional integer default 3), HELIOS_DOWNSTREAM_WEBHOOK_URLS (optional comma-separated string), OPERATOR_NOTIFY_WEBHOOK_URL (optional string), TELEGRAM_BOT_TOKEN (optional string), TELEGRAM_CHAT_ID (optional string), HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS (optional integer default 5), HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS (optional integer default 2), HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS (optional integer default 300), HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS (optional integer default 5), HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS (optional integer default 2), HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS (optional integer default 300), GITHUB_TOKEN or GH_TOKEN (optional string enabling verified product artifact publish), HELIOS_GITHUB_PUBLISH_OWNER (optional string default UPside-Lumos-V2), HELIOS_GITHUB_PUBLISH_REPO (optional string default Q1-2026), HELIOS_GITHUB_PUBLISH_BRANCH (optional string default main), plus any RPC env vars passed through unchanged to lumoskit (CEFG_LIVE_RPC_URL, RPC_URL, ETH_RPC_URL, ALCHEMY_API_KEY).'
+    description: 'Non-persisted reference schema for env vars consumed at process startup. Fields: HELIOS_API_TOKEN (required string, Bearer token), HELIOS_DB_PATH (required string), HELIOS_OUTPUT_ROOT (required string, fixed parent directory under which per-case output_root is created as HELIOS_OUTPUT_ROOT/<case_id>), HELIOS_MAX_CONCURRENT_LUMOSKIT (optional integer default 2), HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS (optional integer default 3), HELIOS_DOWNSTREAM_WEBHOOK_URLS (optional comma-separated string), HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN (optional string), OPERATOR_NOTIFY_WEBHOOK_URL (optional string), TELEGRAM_BOT_TOKEN (optional string), TELEGRAM_CHAT_ID (optional string), HELIOS_TELEGRAM_API_BASE (optional string), HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS (optional integer default 5), HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS (optional integer default 2), HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS (optional integer default 300), HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS (optional integer default 5), HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS (optional integer default 2), HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS (optional integer default 300), GITHUB_TOKEN or GH_TOKEN (optional string enabling verified product artifact publish), HELIOS_GITHUB_PUBLISH_OWNER (optional string default UPside-Lumos-V2), HELIOS_GITHUB_PUBLISH_REPO (optional string default Q1-2026), HELIOS_GITHUB_PUBLISH_BRANCH (optional string default main), HELIOS_PRE_LUMOS_ENABLED (optional boolean default false), HELIOS_PRE_LUMOS_SEED_ROOT (required when Pre-Lumos is enabled), HELIOS_PRE_LUMOS_OPENAI_BASE_URL (optional string default http://127.0.0.1:10631/v1), HELIOS_PRE_LUMOS_PYTHON_BIN (optional string default python3), HELIOS_PRE_LUMOS_AGENT_SCRIPT (optional string default scripts/pre_lumos_agent.py), HELIOS_PRE_LUMOS_SKILL_DIR (optional string default skills/pre-lumos), HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOT and HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOTS (optional standalone sidecar inputs; Helios passes case output roots directly), HELIOS_PRE_LUMOS_YEAR (optional string), HELIOS_PRE_LUMOS_MODEL or OPENAI_MODEL (optional string), HELIOS_PRE_LUMOS_WEB_SEARCH (optional boolean default false), OPENAI_API_KEY (required when Pre-Lumos is enabled), plus any RPC env vars passed through unchanged to lumoskit (CEFG_LIVE_RPC_URL, RPC_URL, ETH_RPC_URL, ALCHEMY_API_KEY).'
 evaluation_principles:
 - {name: BoundaryAdherence, weight: 0.20, description: Keeps detection in hack-detector and trace acquisition, localization, lifting, PoC synthesis, and agent_poc gate in lumoskit while helios only orchestrates}
 - {name: OperationalSimplicity, weight: 0.18, description: Minimizes small-team operational burden through single process, SQLite, Docker volume, direct webhooks, and no external broker}
 - {name: DurabilityAndRecovery, weight: 0.18, description: Persists cases, events, handoff attempts, and notification attempts and recovers running work after restart with new linked cases and fresh output roots}
 - {name: IdempotencyCorrectness, weight: 0.14, description: Applies deterministic dedup based on the latest lineage leaf, parent_case_id chaining, and force_rerun behavior for repeated (chain, tx_hash) submissions without wasting lumoskit resources}
-- {name: OperatorActionability, weight: 0.14, description: Surfaces state, outcome, failure_kind, search APIs, retry-handoff, and notifications so operators know whether to rerun, inspect, or resend}
+- {name: OperatorActionability, weight: 0.14, description: Surfaces state, outcome, failure_kind, product side-effect events, search APIs, retry-handoff, and notifications so operators know whether to rerun, inspect, open GitHub/importer output, or resend}
 - {name: Observability, weight: 0.10, description: Provides structured logs, Prometheus metrics, health checks, and SQLite audit trails sufficient for v1 operations}
 - {name: ImplementationFocus, weight: 0.06, description: Delivers a first implementable surface without dashboard, advanced search, native chat integrations beyond Telegram, distributed tracing, or multi-instance complexity}
 exit_conditions:
 - name: SeedReady
   description: Specification captures all first-interview decisions needed to begin implementation
-  criteria: goal, constraints, API surface (including error paths and pagination response schema), state store, runtime, deployment, state machine, queue, retry, dedup, fan-out, notifications, observability, and out-of-scope boundaries are explicit
+  criteria: goal, constraints, API surface (including error paths and pagination response schema), state store, runtime, deployment, state machine, queue, retry, dedup, fan-out, verified product side effects, notifications, observability, and out-of-scope boundaries are explicit
 - name: BoundaryPreserved
   description: helios responsibilities remain separated from sibling repositories
   criteria: no detection logic and no lumoskit internal engine responsibilities are assigned to helios
@@ -151,8 +159,9 @@ exit_conditions:
   criteria: language, store, ingress, fan-out, deployment, state-machine strategy, observability, concurrency, retry, notifications, lineage model, outcome mapping precedence, multi-URL aggregation, dedup lookup, HTTP error paths, GET /cases response shape, and failure taxonomy are fixed
 metadata:
   seed_id: seed_ae1d905b65f9
-  version: 1.4.0
+  version: 1.5.0
   created_at: '2026-05-16T08:42:20.016317Z'
+  updated_at: '2026-05-21T00:00:00Z'
   ambiguity_score: 0.067
   qa_final_score: 0.88
   qa_threshold: 0.90

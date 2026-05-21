@@ -6,6 +6,8 @@ This directory contains deploy-time templates for the first production shape:
 operator browser -> Nginx TLS proxy -> Helios on 127.0.0.1:8080
                                       -> SQLite DB + output roots
                                       -> lumoskit child process
+                                      -> optional GitHub product publish
+                                      -> optional Pre-Lumos incident JSON sidecar
                                       -> downstream webhooks / notifications
                                       -> optional local MCP bridge index
                                       -> Prometheus scrape of /metrics
@@ -24,6 +26,8 @@ against the same SQLite database.
 - Outcome mapping from lumoskit exit code + `summary.json`.
 - Downstream webhook fan-out with bounded retry.
 - Optional downstream Bearer token via `HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN`.
+- Optional verified-case GitHub publish for `PoC.t.sol` and `Report.md` as `README.md`.
+- Optional verified-case Pre-Lumos Agent SDK sidecar for `pre-lumos.json` and `seed/import_{YEAR}.json`.
 - Operator webhook / Telegram notifications with bounded retry.
 - `/metrics` for Prometheus and `/ui` for the browser console.
 
@@ -35,12 +39,14 @@ against the same SQLite database.
 - TLS termination and optional network/basic-auth gating in Nginx.
 - A hack-detector or other producer calling `POST /signals` with the Bearer token.
 - Downstream webhook receivers if `HELIOS_DOWNSTREAM_WEBHOOK_URLS` is non-empty.
+- A repo-write GitHub token if verified artifact publishing is enabled.
+- Python Agent SDK dependencies plus an OpenAI-compatible API endpoint if Pre-Lumos JSON generation is enabled.
 
 ## Server layout
 
 ```bash
 sudo useradd --system --home /srv/helios --shell /usr/sbin/nologin helios
-sudo mkdir -p /srv/helios/{bin,data/outputs,env,logs}
+sudo mkdir -p /srv/helios/{bin,data/outputs,data/pre-lumos-seed,data/uv-cache,env,logs,scripts,skills}
 sudo chown -R helios:helios /srv/helios
 sudo chmod 750 /srv/helios /srv/helios/data /srv/helios/data/outputs /srv/helios/logs
 sudo chmod 700 /srv/helios/env
@@ -61,6 +67,10 @@ sudo install -o helios -g helios -m 0755 dist/helios /srv/helios/bin/helios
 sudo install -o helios -g helios -m 0755 dist/helios-mcp /srv/helios/bin/helios-mcp
 sudo install -o helios -g helios -m 0755 dist/helios-mcp-bridge /srv/helios/bin/helios-mcp-bridge
 sudo install -o helios -g helios -m 0755 lumoskit /srv/helios/bin/lumoskit
+sudo install -o helios -g helios -m 0755 scripts/pre_lumos_agent.py /srv/helios/scripts/pre_lumos_agent.py
+sudo install -o helios -g helios -m 0755 scripts/pre_lumos_agent_uv.sh /srv/helios/scripts/pre_lumos_agent_uv.sh
+sudo install -o helios -g helios -m 0644 requirements-pre-lumos.txt /srv/helios/requirements-pre-lumos.txt
+sudo rsync -a --delete --chown=helios:helios skills/pre-lumos/ /srv/helios/skills/pre-lumos/
 sudo install -o helios -g helios -m 0600 deploy/env/helios.env.example /srv/helios/env/helios.env
 sudo install -o helios -g helios -m 0600 deploy/mcp/helios-mcp-bridge.env.example /srv/helios/env/helios-mcp-bridge.env
 ```
@@ -129,6 +139,7 @@ Then verify:
 
 - `/srv/helios/data/outputs/<case-id>/summary.json` exists.
 - `GET /cases/{case_id}` reaches `done` or `handed-off`, or reports a concrete `engine_error`.
+- For verified cases, `github_publish` and `pre_lumos_sync` events appear when those optional features are enabled.
 - Downstream webhook / Telegram notifications arrive if configured.
 - Prometheus target for `/metrics` is UP.
 
@@ -227,6 +238,29 @@ HELIOS_GITHUB_PUBLISH_BRANCH=main
 Helios publishes `PoC.t.sol` and `Report.md` only after LumosKit maps the case
 to `outcome=verified`; `Report.md` is copied to `README.md` under
 `test/{YYYY-MM}/{Protocol}/`.
+
+To enable Pre-Lumos importer JSON generation, install `uv` or provide a Python
+environment that already has `requirements-pre-lumos.txt` installed, then add:
+
+```bash
+OPENAI_API_KEY=<proxy-or-openai-key>
+UV_CACHE_DIR=/srv/helios/data/uv-cache
+HELIOS_PRE_LUMOS_ENABLED=true
+HELIOS_PRE_LUMOS_SEED_ROOT=/srv/helios/data/pre-lumos-seed
+HELIOS_PRE_LUMOS_OPENAI_BASE_URL=http://127.0.0.1:10631/v1
+HELIOS_PRE_LUMOS_PYTHON_BIN=scripts/pre_lumos_agent_uv.sh
+HELIOS_PRE_LUMOS_AGENT_SCRIPT=scripts/pre_lumos_agent.py
+HELIOS_PRE_LUMOS_SKILL_DIR=skills/pre-lumos
+HELIOS_PRE_LUMOS_WEB_SEARCH=false
+```
+
+Helios passes the verified case output root directly to the sidecar. The sidecar
+writes `<output_root>/pre-lumos.json`, `<output_root>/pre-lumos-status.json`,
+and merges rows by `slug` into
+`$HELIOS_PRE_LUMOS_SEED_ROOT/seed/import_{YEAR}.json`. Because the example
+systemd unit only grants writes under `/srv/helios/data` and `/srv/helios/logs`,
+keep `HELIOS_PRE_LUMOS_SEED_ROOT` under `/srv/helios/data` or extend
+`ReadWritePaths=`.
 
 ### MCP filesystem permissions
 

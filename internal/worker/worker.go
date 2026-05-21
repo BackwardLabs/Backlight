@@ -21,6 +21,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/metrics"
 	"github.com/UPside-Lumos-V2/helios/internal/notify"
 	"github.com/UPside-Lumos-V2/helios/internal/outcome"
+	"github.com/UPside-Lumos-V2/helios/internal/prelumos"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 )
 
@@ -30,6 +31,7 @@ type Worker struct {
 	Dispatcher                  *handoff.Dispatcher // nil iff no downstream URLs are configured
 	Notifier                    *notify.Notifier    // nil iff no operator channel is configured
 	GitHubPublisher             *githubpublish.Publisher
+	PreLumosRunner              *prelumos.Runner
 	PartialAutoRerunMaxAttempts int
 	OutputRootParent            string
 	MaxConcurrent               int
@@ -178,6 +180,7 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 		}
 		log.Info("case complete", "state", mapped.State, "outcome", mapped.Outcome, "rule", mapped.Rule)
 		w.publishGitHub(ctx, c, mapped.Outcome)
+		w.runPreLumos(ctx, c, mapped.Outcome)
 		// Trigger downstream fan-out asynchronously. With no URLs configured,
 		// MarkDone already advanced the case to handed-off (handoff_status=skipped).
 		if w.downstreamConfigured() {
@@ -249,6 +252,50 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 			"case_id", publishCase.CaseID,
 			"commit_sha", res.CommitSHA,
 			"target_dir", res.TargetDir,
+		)
+	}()
+}
+
+func (w *Worker) runPreLumos(ctx context.Context, c *store.Case, mappedOutcome string) {
+	if mappedOutcome != outcome.OutcomeVerified || w.PreLumosRunner == nil || !w.PreLumosRunner.Configured() || c.OutputRoot == nil {
+		return
+	}
+	preLumosCase := prelumos.Case{
+		CaseID:     c.CaseID,
+		OutputRoot: *c.OutputRoot,
+	}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		res, err := w.PreLumosRunner.Run(ctx, preLumosCase)
+		if err != nil {
+			w.Logger.Error("pre-lumos sync failed", "case_id", preLumosCase.CaseID, "err", err, "stderr_tail", string(res.Stderr))
+			if recordErr := w.Store.AppendCaseEvent(ctx, preLumosCase.CaseID, "pre_lumos_sync_failed", map[string]any{
+				"synced":      false,
+				"error":       err.Error(),
+				"exit_code":   res.ExitCode,
+				"status_path": res.StatusPath,
+				"output_path": res.OutputPath,
+			}); recordErr != nil {
+				w.Logger.Error("record pre-lumos failure event failed", "case_id", preLumosCase.CaseID, "err", recordErr)
+			}
+			return
+		}
+		if err := w.Store.AppendCaseEvent(ctx, preLumosCase.CaseID, "pre_lumos_sync", map[string]any{
+			"synced":       true,
+			"row_count":    res.RowCount,
+			"slugs":        res.Slugs,
+			"target_files": res.TargetFiles,
+			"status_path":  res.StatusPath,
+			"output_path":  res.OutputPath,
+			"dry_run":      res.DryRun,
+		}); err != nil {
+			w.Logger.Error("record pre-lumos event failed", "case_id", preLumosCase.CaseID, "err", err)
+		}
+		w.Logger.Info("pre-lumos sync complete",
+			"case_id", preLumosCase.CaseID,
+			"row_count", res.RowCount,
+			"target_files", res.TargetFiles,
 		)
 	}()
 }

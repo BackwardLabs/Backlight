@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 helios is the **orchestrator** in the [Lumos family](#lumos-family). It sits
 between an upstream detection system (hack-detector) and an analysis engine
 (LumosKit), runs the state machine that turns a detected suspicious transaction
-into a verified PoC + RCA bundle handed off to downstream agents.
+into a verified PoC + RCA bundle handed off to downstream agents, and starts
+verified-only product side effects such as GitHub publish and Pre-Lumos
+importer JSON generation.
 
 helios is **not** a generic workflow platform, not a security scanner, and does
 not perform detection or analysis itself. Those responsibilities belong to its
@@ -21,7 +23,7 @@ narrow, non-overlapping responsibilities:
 | Repo | Role | Canonical location |
 | --- | --- | --- |
 | `hack-detector` | Upstream detection — finds suspicious tx hashes on-chain | `github.com/UPside-Lumos-V2/hack-detector` |
-| **`helios`** | **Orchestrator — receives signals, dispatches engine runs, manages state, hands off to downstream agents** | this repo |
+| **`helios`** | **Orchestrator — receives signals, dispatches engine runs, manages state, records product side effects, hands off to downstream agents** | this repo |
 | `lumoskit` | Stateless CLI engine — turns a tx hash into a verified PoC + product bundle | sibling at `../lumoskit/` |
 
 The boundary between helios and lumoskit is fixed by
@@ -33,13 +35,15 @@ which inversely defines what helios is responsible for.
 
 Things that belong in **helios**:
 
-- State machine for incident lifecycle (received → queued → running → done → handed-off → failed)
+- State machine for incident lifecycle (queued → running → done → handed-off, or running → failed for engine errors)
 - Subprocess dispatch of `bin/lumoskit`
 - Concurrency control across multiple simultaneous cases
 - Retry policy / idempotency / dedup of repeated tx hashes
-- Notification delivery (Slack / Discord / email / webhook)
+- Notification delivery (operator webhook and Telegram; Slack/Discord/email go through webhook receivers)
 - Case tracking metadata store and search
 - Routing of `outputs/<case>/summary.json` to downstream consumers
+- Verified-only GitHub product publish for `PoC.t.sol` and `Report.md` as `README.md`
+- Verified-only Pre-Lumos Agent SDK sidecar orchestration using the vendored `skills/pre-lumos` bundle
 
 Things that belong in **lumoskit** (do not duplicate here):
 
@@ -69,7 +73,8 @@ stable subprocess engine contract. helios consumes it like this:
    - poc.status: "verified" | "unverified" | "missing"
    - failure.kind: present when status != "pass"
    - For engine errors: failure.kind == "engine_error" and failure.message has the original error string.
-5. helios routes the case (and `summary.json` URL/path) to downstream agents.
+5. For `outcome=verified`, helios may publish product artifacts to GitHub and run the Pre-Lumos sidecar, recording `github_publish` / `pre_lumos_sync` audit events.
+6. helios routes the case (and `summary.json` URL/path) to downstream agents.
 ```
 
 Notes:
@@ -84,21 +89,22 @@ Notes:
 - **Do not embed lumoskit as a library.** The engine contract is the subprocess
   surface; in-process embedding violates the contract boundary.
 
-## Implementation choices (open — first interview should resolve)
+## Implementation choices
 
-The following are deliberately unresolved at bootstrap. The first interview /
-design session in this repo should crystallize them:
+The v1 implementation contract is now captured in `seeds/v1.yaml`.
 
-- **Language / runtime** — Rust? Python? TypeScript? Go? Constraint: must spawn subprocesses, do HTTP/queue work, and be debuggable by a small team.
-- **State store** — Postgres? SQLite? In-memory only (with restart re-bootstrap)? Redis?
-- **Trigger ingress shape** — webhook from hack-detector? Polling? Message queue?
-- **Downstream fan-out** — direct webhook calls, queue publishing, or both?
-- **Deployment shape** — single binary, container, serverless?
-- **State machine library vs hand-rolled** — and how observable does it need to be?
+- Go single-process HTTP service.
+- SQLite durable state.
+- Standard-library HTTP stack.
+- SQLite-backed FIFO queue.
+- Hand-rolled state machine with every state transition recorded in `case_events`.
+- Direct downstream webhooks with bounded retry.
+- Optional verified-case GitHub publish and Pre-Lumos importer JSON side effects.
+- Single systemd/container process with persistent DB and output roots.
 
-These belong in an `ouroboros:interview` (or equivalent design session) in this
-repo, not in cross-repo memory. The product-charter-style decisions for helios
-itself have not been made yet — only the *boundary* with lumoskit has.
+When changing behavior, update `seeds/v1.yaml`, `README.md`, and
+`docs/architecture/overview.md` together so the workflow contract stays aligned
+with the implementation.
 
 ## Useful pointers (cross-repo)
 
@@ -111,14 +117,11 @@ itself have not been made yet — only the *boundary* with lumoskit has.
 
 This file captures durable architectural facts derived from cross-repo
 interviews already completed. It is intentionally short and skips
-implementation detail because the implementation has not started. When helios
-gains code, this file should grow sections for:
+implementation detail. For current behavior, start from:
 
-- Commands (build, test, run a single test)
-- Architecture invariants specific to the helios implementation
-- Conventions worth knowing
-
-Until then, the boundary above is the load-bearing content.
+- `README.md` for run/config/docs entry points.
+- `seeds/v1.yaml` for the durable workflow contract.
+- `docs/architecture/overview.md` for operator workflow diagrams.
 
 <!-- ooo:START -->
 <!-- ooo:VERSION:0.38.2 -->

@@ -17,6 +17,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
 	"github.com/UPside-Lumos-V2/helios/internal/metrics"
 	"github.com/UPside-Lumos-V2/helios/internal/notify"
+	"github.com/UPside-Lumos-V2/helios/internal/prelumos"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 	"github.com/UPside-Lumos-V2/helios/internal/worker"
 )
@@ -93,6 +94,23 @@ func main() {
 		"repo", cfg.GitHubOwner+"/"+cfg.GitHubRepo,
 		"branch", cfg.GitHubBranch,
 	)
+	preLumosRunner := &prelumos.Runner{
+		Enabled:       cfg.PreLumosEnabled,
+		PythonBin:     cfg.PreLumosPythonBin,
+		Script:        cfg.PreLumosAgentScript,
+		SkillDir:      cfg.PreLumosSkillDir,
+		SeedRoot:      cfg.PreLumosSeedRoot,
+		Year:          cfg.PreLumosYear,
+		Model:         cfg.PreLumosModel,
+		OpenAIBaseURL: cfg.PreLumosOpenAIBaseURL,
+		WebSearch:     cfg.PreLumosWebSearch,
+	}
+	logger.Info("pre-lumos agent configured",
+		"enabled", preLumosRunner.Configured(),
+		"seed_root_set", cfg.PreLumosSeedRoot != "",
+		"openai_base_url", cfg.PreLumosOpenAIBaseURL,
+		"web_search", cfg.PreLumosWebSearch,
+	)
 
 	w := &worker.Worker{
 		Store:                       st,
@@ -100,6 +118,7 @@ func main() {
 		Dispatcher:                  dispatcher,
 		Notifier:                    notifier,
 		GitHubPublisher:             githubPublisher,
+		PreLumosRunner:              preLumosRunner,
 		PartialAutoRerunMaxAttempts: cfg.PartialAutoRerunMaxAttempts,
 		OutputRootParent:            cfg.OutputRoot,
 		MaxConcurrent:               cfg.MaxConcurrent,

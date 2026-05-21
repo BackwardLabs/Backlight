@@ -2,7 +2,7 @@
 
 ## Source of truth
 - Status: Draft
-- Last refreshed: 2026-05-19
+- Last refreshed: 2026-05-21
 - Primary product surfaces: `GET /` and `GET /ui` Helios Console, protected API calls behind the browser shell, operator case-detail inspection.
 - Evidence reviewed:
   - `README.md` — product flow, Web UI workflow, configuration surface.
@@ -20,7 +20,7 @@
 ## Product goals
 - Goals:
   - Let operators submit or inspect tx-backed analysis cases quickly.
-  - Make queue, outcome, handoff, notification, and artifact state scannable.
+  - Make queue, outcome, handoff, notification, artifact, GitHub publish, and Pre-Lumos sync state scannable.
   - Preserve enough metadata context for hack-detector submissions and manual cases.
 - Non-goals:
   - Replace Grafana/Prometheus observability dashboards.
@@ -39,7 +39,7 @@
 - User jobs:
   - Submit a chain + tx hash to start analysis.
   - Scan recent cases and choose the next case needing attention.
-  - Inspect analysis result, events, metadata, handoff attempts, and notification attempts.
+  - Inspect analysis result, GitHub publish links, Pre-Lumos output paths, events, metadata, handoff attempts, and notification attempts.
   - Retry handoff only when a completed case is retryable.
 - Key contexts of use:
   - Local development at `127.0.0.1:18080/ui`.
@@ -55,7 +55,7 @@
   - Top command bar: product identity, connection token, health action.
   - Left command panel: submit case and status feedback.
   - Right work area: case list first, selected case detail second.
-  - Deep detail: analysis result before metadata/events/attempt logs.
+  - Deep detail: analysis result and product side-effect summary before metadata/events/attempt logs.
 
 ## Design principles
 - Principle 1: Operational density over marketing composition.
@@ -135,7 +135,7 @@
 ## Content voice
 - Tone: terse, operational, exact.
 - Terminology:
-  - Use "case", "analysis", "handoff", "notification", "outcome", "metadata", and "tx hash" consistently.
+  - Use "case", "analysis", "handoff", "notification", "outcome", "GitHub publish", "Pre-Lumos sync", "metadata", and "tx hash" consistently.
   - Distinguish Helios product UI from Grafana/Prometheus observability.
 - Microcopy rules:
   - Prefer labels and state names over explanatory paragraphs.

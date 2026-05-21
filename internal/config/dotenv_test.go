@@ -62,6 +62,33 @@ func TestDotEnvLocalOverridesDotEnvButNotProcessEnv(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsEnabledPreLumosWithoutSeedRoot(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	restoreEnv(t,
+		"HELIOS_API_TOKEN",
+		"HELIOS_DB_PATH",
+		"HELIOS_OUTPUT_ROOT",
+		"HELIOS_PRE_LUMOS_ENABLED",
+		"HELIOS_PRE_LUMOS_SEED_ROOT",
+		"OPENAI_API_KEY",
+	)
+	if err := os.WriteFile(filepath.Join(dir, ".env.local"), []byte(`
+HELIOS_API_TOKEN=api-token
+HELIOS_DB_PATH=/tmp/helios.db
+HELIOS_OUTPUT_ROOT=/tmp/helios-outputs
+HELIOS_PRE_LUMOS_ENABLED=true
+OPENAI_API_KEY=test-key
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load()
+	if err == nil || err.Error() != "HELIOS_PRE_LUMOS_SEED_ROOT is required when HELIOS_PRE_LUMOS_ENABLED=true" {
+		t.Fatalf("Load error = %v, want missing seed root", err)
+	}
+}
+
 func restoreEnv(t *testing.T, keys ...string) {
 	t.Helper()
 	type saved struct {

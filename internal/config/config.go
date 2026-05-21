@@ -8,23 +8,32 @@ import (
 )
 
 type Config struct {
-	APIToken         string
-	DBPath           string
-	OutputRoot       string
-	ListenAddr       string
-	MaxConcurrent    int
-	LumoskitBin      string
-	WorkerPollMillis int
-	DownstreamURLs   []string
-	DownstreamBearer string
-	OperatorWebhook  string
-	TelegramBotToken string
-	TelegramChatID   string
-	TelegramAPIBase  string
-	GitHubToken      string
-	GitHubOwner      string
-	GitHubRepo       string
-	GitHubBranch     string
+	APIToken              string
+	DBPath                string
+	OutputRoot            string
+	ListenAddr            string
+	MaxConcurrent         int
+	LumoskitBin           string
+	WorkerPollMillis      int
+	DownstreamURLs        []string
+	DownstreamBearer      string
+	OperatorWebhook       string
+	TelegramBotToken      string
+	TelegramChatID        string
+	TelegramAPIBase       string
+	GitHubToken           string
+	GitHubOwner           string
+	GitHubRepo            string
+	GitHubBranch          string
+	PreLumosEnabled       bool
+	PreLumosPythonBin     string
+	PreLumosAgentScript   string
+	PreLumosSkillDir      string
+	PreLumosSeedRoot      string
+	PreLumosYear          string
+	PreLumosModel         string
+	PreLumosOpenAIBaseURL string
+	PreLumosWebSearch     bool
 
 	PartialAutoRerunMaxAttempts    int
 	HandoffRetryMaxAttempts        int
@@ -56,6 +65,15 @@ func Load() (*Config, error) {
 		GitHubOwner:                    envDefault("HELIOS_GITHUB_PUBLISH_OWNER", "UPside-Lumos-V2"),
 		GitHubRepo:                     envDefault("HELIOS_GITHUB_PUBLISH_REPO", "Q1-2026"),
 		GitHubBranch:                   envDefault("HELIOS_GITHUB_PUBLISH_BRANCH", "main"),
+		PreLumosEnabled:                envBool("HELIOS_PRE_LUMOS_ENABLED", false),
+		PreLumosPythonBin:              envDefault("HELIOS_PRE_LUMOS_PYTHON_BIN", "python3"),
+		PreLumosAgentScript:            envDefault("HELIOS_PRE_LUMOS_AGENT_SCRIPT", "scripts/pre_lumos_agent.py"),
+		PreLumosSkillDir:               envDefault("HELIOS_PRE_LUMOS_SKILL_DIR", "skills/pre-lumos"),
+		PreLumosSeedRoot:               os.Getenv("HELIOS_PRE_LUMOS_SEED_ROOT"),
+		PreLumosYear:                   os.Getenv("HELIOS_PRE_LUMOS_YEAR"),
+		PreLumosModel:                  firstNonEmpty(os.Getenv("HELIOS_PRE_LUMOS_MODEL"), os.Getenv("OPENAI_MODEL")),
+		PreLumosOpenAIBaseURL:          envDefault("HELIOS_PRE_LUMOS_OPENAI_BASE_URL", "http://127.0.0.1:10631/v1"),
+		PreLumosWebSearch:              envBool("HELIOS_PRE_LUMOS_WEB_SEARCH", false),
 		PartialAutoRerunMaxAttempts:    envInt("HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS", 3),
 		HandoffRetryMaxAttempts:        envInt("HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS", 5),
 		HandoffRetryBackoffBaseSeconds: envInt("HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS", 2),
@@ -73,6 +91,14 @@ func Load() (*Config, error) {
 	}
 	if c.OutputRoot == "" {
 		return nil, errors.New("HELIOS_OUTPUT_ROOT is required")
+	}
+	if c.PreLumosEnabled {
+		if c.PreLumosSeedRoot == "" {
+			return nil, errors.New("HELIOS_PRE_LUMOS_SEED_ROOT is required when HELIOS_PRE_LUMOS_ENABLED=true")
+		}
+		if os.Getenv("OPENAI_API_KEY") == "" {
+			return nil, errors.New("OPENAI_API_KEY is required when HELIOS_PRE_LUMOS_ENABLED=true")
+		}
 	}
 	return c, nil
 }
@@ -105,6 +131,18 @@ func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v := strings.TrimSpace(strings.ToLower(os.Getenv(key))); v != "" {
+		switch v {
+		case "1", "true", "yes", "y", "on":
+			return true
+		case "0", "false", "no", "n", "off":
+			return false
 		}
 	}
 	return def
