@@ -26,7 +26,18 @@ child process working directory, so the binary can resolve its own
 
 ## 1. Sync git runtime trees
 
-Use immutable commits or tags for production, not a floating branch:
+Use immutable commits or tags for production, not a floating branch. The default remotes use GitHub SSH, so install a deploy key on the VM first:
+
+```bash
+sudo -u helios -H mkdir -p /srv/helios/.ssh
+sudo -u helios -H chmod 700 /srv/helios/.ssh
+sudo -u helios -H ssh-keyscan github.com >> /srv/helios/.ssh/known_hosts
+# copy a GitHub deploy key to /srv/helios/.ssh/id_ed25519, then:
+sudo chmod 600 /srv/helios/.ssh/id_ed25519
+sudo chown helios:helios /srv/helios/.ssh/id_ed25519 /srv/helios/.ssh/known_hosts
+```
+
+Then sync:
 
 ```bash
 sudo HELIOS_REF=<helios-sha-or-tag> \

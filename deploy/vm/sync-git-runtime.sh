@@ -9,8 +9,8 @@ Usage:
   sudo HELIOS_REF=<sha-or-tag> LUMOSKIT_REF=<sha-or-tag> deploy/vm/sync-git-runtime.sh
 
 Environment:
-  HELIOS_REPO=https://github.com/UPside-Lumos-V2/helios.git
-  LUMOSKIT_REPO=https://github.com/UPside-Lumos-V2/lumoskit.git
+  HELIOS_REPO=git@github.com:UPside-Lumos-V2/helios.git
+  LUMOSKIT_REPO=git@github.com:UPside-Lumos-V2/lumoskit.git
   HELIOS_REF=main
   LUMOSKIT_REF=main
   HELIOS_BASE_DIR=/srv/helios
@@ -35,8 +35,8 @@ fi
 
 base_dir="${HELIOS_BASE_DIR:-/srv/helios}"
 service_user="${HELIOS_SERVICE_USER:-helios}"
-helios_repo="${HELIOS_REPO:-https://github.com/UPside-Lumos-V2/helios.git}"
-lumoskit_repo="${LUMOSKIT_REPO:-https://github.com/UPside-Lumos-V2/lumoskit.git}"
+helios_repo="${HELIOS_REPO:-git@github.com:UPside-Lumos-V2/helios.git}"
+lumoskit_repo="${LUMOSKIT_REPO:-git@github.com:UPside-Lumos-V2/lumoskit.git}"
 helios_ref="${HELIOS_REF:-main}"
 lumoskit_ref="${LUMOSKIT_REF:-main}"
 restart_service="${HELIOS_RESTART_SERVICE:-false}"
