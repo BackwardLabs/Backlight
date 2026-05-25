@@ -7,7 +7,7 @@ Before=helios.service
 [Service]
 User=helios
 Group=helios
-WorkingDirectory=/srv/helios
+WorkingDirectory=/srv/helios/src/helios
 EnvironmentFile=/srv/helios/env/helios-mcp-bridge.env
 ExecStart=/srv/helios/bin/helios-mcp-bridge
 Restart=always

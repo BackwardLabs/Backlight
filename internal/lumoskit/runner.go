@@ -54,6 +54,27 @@ func (r *Runner) maxStderr() int {
 	return 64 << 10 // 64 KiB
 }
 
+func (r *Runner) command() (path string, dir string) {
+	path = r.bin()
+	if filepath.IsAbs(path) {
+		return path, lumoskitRootForBin(path)
+	}
+	if filepath.Dir(path) != "." {
+		if abs, err := filepath.Abs(path); err == nil {
+			return abs, lumoskitRootForBin(abs)
+		}
+	}
+	return path, ""
+}
+
+func lumoskitRootForBin(binary string) string {
+	binDir := filepath.Dir(binary)
+	if filepath.Base(binDir) != "bin" {
+		return ""
+	}
+	return filepath.Dir(binDir)
+}
+
 // Run dispatches a single lumoskit attempt. outputRoot MUST be unique per
 // attempt; the directory is created if it does not exist. The function
 // always returns a Result so the caller can map outcome even on errors.
@@ -71,11 +92,15 @@ func (r *Runner) Run(ctx context.Context, chain, txHash, outputRoot string) Resu
 		return res
 	}
 
-	cmd := exec.CommandContext(ctx, r.bin(),
+	binary, workingDir := r.command()
+	cmd := exec.CommandContext(ctx, binary,
 		"--tx", txHash,
 		"--chain", chain,
 		"--output-root", outputRoot,
 	)
+	if workingDir != "" {
+		cmd.Dir = workingDir
+	}
 	// Pass through the entire env (lumoskit owns RPC resolution per ADR-0018).
 	cmd.Env = os.Environ()
 	cmd.Stdout = io.Discard

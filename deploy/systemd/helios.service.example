@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 User=helios
 Group=helios
-WorkingDirectory=/srv/helios
+WorkingDirectory=/srv/helios/src/helios
 EnvironmentFile=/srv/helios/env/helios.env
 ExecStart=/srv/helios/bin/helios
 Restart=always
