@@ -36,6 +36,39 @@ Date: 2026-01-25
 	}
 }
 
+func TestBuildTargetSpecUsesReportBundleArtifacts(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "report_bundle", "poc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "report_bundle", "report"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "poc", "PoC.t.sol"), []byte("contract BundlePoC {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "report", "REPORT.md"), []byte(`# Bundle Protocol Incident Report
+
+Protocol: Bundle Protocol
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "report", "run_summary.json"), []byte(`{"status":"pass","poc":{"status":"verified"},"incident":{"timestamp":"2026-02-14T00:00:00Z"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	spec, err := buildTargetSpec(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Month != "2026-02" || spec.Protocol != "Bundle-Protocol" {
+		t.Fatalf("target spec = month %q protocol %q", spec.Month, spec.Protocol)
+	}
+	if string(spec.Files[0].Content) != "contract BundlePoC {}\n" {
+		t.Fatalf("unexpected PoC content: %q", string(spec.Files[0].Content))
+	}
+}
+
 func TestBuildTargetSpecRequiresReport(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "PoC.t.sol"), []byte("contract PoC {}\n"), 0o644); err != nil {

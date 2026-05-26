@@ -111,7 +111,11 @@ func buildTargetSpec(outputRoot string) (targetSpec, error) {
 	if outputRoot == "" {
 		return targetSpec{}, errors.New("output_root is required")
 	}
-	poc, err := os.ReadFile(filepath.Join(outputRoot, "PoC.t.sol"))
+	pocPath, err := findPoC(outputRoot)
+	if err != nil {
+		return targetSpec{}, err
+	}
+	poc, err := os.ReadFile(pocPath)
 	if err != nil {
 		return targetSpec{}, fmt.Errorf("read PoC.t.sol: %w", err)
 	}
@@ -123,15 +127,15 @@ func buildTargetSpec(outputRoot string) (targetSpec, error) {
 	if err != nil {
 		return targetSpec{}, fmt.Errorf("read Report.md: %w", err)
 	}
-	summary, _ := os.ReadFile(filepath.Join(outputRoot, "summary.json"))
+	summary, _ := readRunSummary(outputRoot)
 
 	month := incidentMonth(summary, report)
 	if month == "" {
-		return targetSpec{}, errors.New("could not derive incident YYYY-MM from summary.json or Report.md")
+		return targetSpec{}, errors.New("could not derive incident YYYY-MM from run summary or Report.md")
 	}
 	protocol := incidentProtocol(summary, report)
 	if protocol == "" {
-		return targetSpec{}, errors.New("could not derive protocol from summary.json or Report.md")
+		return targetSpec{}, errors.New("could not derive protocol from run summary or Report.md")
 	}
 	safeProtocol, err := safeSegment(protocol)
 	if err != nil {
@@ -149,9 +153,27 @@ func buildTargetSpec(outputRoot string) (targetSpec, error) {
 	}, nil
 }
 
+func findPoC(outputRoot string) (string, error) {
+	for _, rel := range []string{"PoC.t.sol", filepath.Join("report_bundle", "poc", "PoC.t.sol")} {
+		candidate := filepath.Join(outputRoot, rel)
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("PoC.t.sol is required for GitHub publish")
+}
+
 func findReport(outputRoot string) (string, error) {
-	for _, name := range []string{"Report.md", "REPORT.md", "REPORT.MD", "report.md"} {
-		candidate := filepath.Join(outputRoot, name)
+	for _, rel := range []string{
+		"Report.md",
+		"REPORT.md",
+		"REPORT.MD",
+		"report.md",
+		filepath.Join("report_bundle", "report", "REPORT.md"),
+		filepath.Join("report_bundle", "report", "Report.md"),
+	} {
+		candidate := filepath.Join(outputRoot, rel)
 		info, err := os.Stat(candidate)
 		if err == nil && !info.IsDir() {
 			return candidate, nil
@@ -346,6 +368,22 @@ func (p *Publisher) doJSON(ctx context.Context, client *http.Client, method, suf
 
 func (p *Publisher) apiURL(suffix string) string {
 	return fmt.Sprintf("%s/repos/%s/%s%s", p.Config.APIBase, url.PathEscape(p.Config.Owner), url.PathEscape(p.Config.Repo), suffix)
+}
+
+func readRunSummary(outputRoot string) ([]byte, error) {
+	for _, rel := range []string{
+		filepath.Join("report_bundle", "report", "run_summary.json"),
+		"summary.json",
+	} {
+		data, err := os.ReadFile(filepath.Join(outputRoot, rel))
+		if err == nil {
+			return data, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	return nil, os.ErrNotExist
 }
 
 var monthRe = regexp.MustCompile(`\b(20[0-9]{2})-(0[1-9]|1[0-2])(?:-[0-3][0-9])?\b`)

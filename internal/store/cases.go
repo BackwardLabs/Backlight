@@ -509,7 +509,7 @@ func (s *Store) ClaimNextQueued(ctx context.Context, outputRootParent string) (*
 		if err != nil {
 			return err
 		}
-		summaryPath := filepath.Join(outputRoot, "summary.json")
+		summaryPath := filepath.Join(outputRoot, "report_bundle", "report", "run_summary.json")
 		now := nowUTC()
 
 		res, err := tx.ExecContext(ctx, `

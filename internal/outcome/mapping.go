@@ -1,4 +1,4 @@
-// Package outcome maps a lumoskit child-process exit + its summary.json into
+// Package outcome maps a lumoskit child-process exit + its run summary into
 // the (state, outcome, failure_kind) triple defined by seeds/v1.yaml.
 //
 // The seed names eight rules (O1..O8). They MUST be evaluated in this strict
@@ -35,7 +35,7 @@ const (
 	FailureLumoskitUnexpectedSummary   = "lumoskit_unexpected_summary_shape"
 )
 
-// Summary mirrors the subset of lumoskit's summary.json that helios reads.
+// Summary mirrors the subset of lumoskit's run summary that helios reads.
 // Per ADR-0018 the engine always writes this file, including failure paths.
 type Summary struct {
 	Status  string         `json:"status"` // pass | partial | fail
@@ -65,7 +65,7 @@ type SummaryFailure struct {
 }
 
 // Input bundles what the lumoskit runner observed after the child process
-// exited. summaryBytes/summaryReadErr capture how the summary.json read went
+// exited. summaryBytes/summaryReadErr capture how the run summary read went
 // without coupling the mapping rules to the filesystem.
 type Input struct {
 	ExitCode       int
@@ -77,8 +77,8 @@ type Input struct {
 // Map applies rules O5..O8 in the seed's required precedence.
 //
 //	O5: exit != 0                                       → failed/engine_error/lumoskit_nonzero_exit
-//	O6: summary.json missing                            → failed/engine_error/summary_missing
-//	O7: summary.json unparseable                        → failed/engine_error/summary_unreadable
+//	O6: run summary missing                            → failed/engine_error/summary_missing
+//	O7: run summary unparseable                        → failed/engine_error/summary_unreadable
 //	O4: summary parseable + failure.kind == "engine_error"
 //	                                                    → failed/engine_error/lumoskit_reported_engine_error
 //	O1: status=pass + poc=verified                      → done/verified

@@ -4,7 +4,7 @@
 //   - spawns bin/lumoskit (no in-process embedding)
 //   - passes --tx, --chain, --output-root flags only
 //   - does NOT pass any --rpc-url; RPC env vars are inherited unchanged
-//   - reads <output-root>/summary.json after the process exits (any exit code)
+//   - reads the product run summary after the process exits (any exit code)
 package lumoskit
 
 import (
@@ -20,7 +20,7 @@ import (
 // Result captures everything the worker needs to apply outcome mapping.
 type Result struct {
 	ExitCode       int
-	SummaryPath    string // expected path; always populated, even when missing/unreadable
+	SummaryPath    string // selected expected path; always populated, even when missing/unreadable
 	SummaryBytes   []byte // raw bytes when read succeeded
 	SummaryMissing bool   // true iff the expected path does not exist after exit
 	SummaryReadErr error  // non-nil read errors other than missing
@@ -84,7 +84,7 @@ func lumoskitRootForBin(binary string) string {
 // cancelled on helios shutdown so in-flight cases unwind cleanly.
 func (r *Runner) Run(ctx context.Context, chain, txHash, outputRoot string) Result {
 	res := Result{
-		SummaryPath: filepath.Join(outputRoot, "summary.json"),
+		SummaryPath: preferredSummaryPath(outputRoot),
 	}
 
 	if err := os.MkdirAll(outputRoot, 0o755); err != nil {
@@ -122,9 +122,11 @@ func (r *Runner) Run(ctx context.Context, chain, txHash, outputRoot string) Resu
 	}
 	res.Stderr = stderrBuf.Bytes()
 
-	// Always try to read summary.json after the child exits, regardless of
-	// exit code. The seed mapping rules need both signals to classify O4/O7/O8.
-	data, readErr := os.ReadFile(res.SummaryPath)
+	// Always try to read the run summary after the child exits, regardless of
+	// exit code. New LumosKit writes the product summary under report_bundle;
+	// legacy top-level summary.json remains a compatibility fallback.
+	summaryPath, data, readErr := readSummary(outputRoot)
+	res.SummaryPath = summaryPath
 	switch {
 	case readErr == nil:
 		res.SummaryBytes = data
@@ -134,6 +136,35 @@ func (r *Runner) Run(ctx context.Context, chain, txHash, outputRoot string) Resu
 		res.SummaryReadErr = readErr
 	}
 	return res
+}
+
+func preferredSummaryPath(outputRoot string) string {
+	return filepath.Join(outputRoot, "report_bundle", "report", "run_summary.json")
+}
+
+func summaryCandidates(outputRoot string) []string {
+	return []string{
+		preferredSummaryPath(outputRoot),
+		filepath.Join(outputRoot, "summary.json"),
+	}
+}
+
+func readSummary(outputRoot string) (string, []byte, error) {
+	candidates := summaryCandidates(outputRoot)
+	var firstErr error
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return path, data, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return path, nil, err
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return candidates[0], nil, firstErr
 }
 
 // cappedBuffer keeps the LAST `cap` bytes written to it. Useful for stderr

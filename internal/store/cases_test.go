@@ -35,7 +35,7 @@ func TestClaimNextQueuedUsesIncidentSlugOutputRoot(t *testing.T) {
 	if claimed.OutputRoot == nil || *claimed.OutputRoot != wantRoot {
 		t.Fatalf("output_root = %v, want %s", claimed.OutputRoot, wantRoot)
 	}
-	wantSummary := filepath.Join(wantRoot, "summary.json")
+	wantSummary := filepath.Join(wantRoot, "report_bundle", "report", "run_summary.json")
 	if claimed.SummaryJSONPath == nil || *claimed.SummaryJSONPath != wantSummary {
 		t.Fatalf("summary_json_path = %v, want %s", claimed.SummaryJSONPath, wantSummary)
 	}
