@@ -100,11 +100,23 @@ ensure_clean() {
   fi
 }
 
+reset_lumoskit_deployed_binary_if_only_dirty() {
+  local dirty
+  dirty="$(run_git "${lumoskit_dir}" status --porcelain)"
+  if [[ "${dirty}" == " M bin/lumoskit" ]]; then
+    echo "==> Resetting locally installed LumosKit binary before git sync"
+    run_git "${lumoskit_dir}" checkout -- bin/lumoskit
+  fi
+}
+
 sync_checkout() {
   local name="$1"
   local dir="$2"
   local ref="$3"
 
+  if [[ "${dir}" == "${lumoskit_dir}" ]]; then
+    reset_lumoskit_deployed_binary_if_only_dirty
+  fi
   ensure_clean "${name}" "${dir}"
   echo "==> Fetching ${name}"
   run_git "${dir}" fetch --tags origin '+refs/heads/*:refs/remotes/origin/*'
