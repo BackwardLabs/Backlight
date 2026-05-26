@@ -102,14 +102,14 @@ func TestHeliosToBridgeToMCPReadArtifact(t *testing.T) {
 	}
 	mcp := &mcpserver.Server{Client: bridgeStore, Artifacts: reader, Logger: logger}
 	input := fmt.Sprintf(
-		"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"helios.read_artifact\",\"arguments\":{\"case_id\":%q,\"path\":\"summary.md\"}}}\n",
+		"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"helios.read_artifact\",\"arguments\":{\"case_id\":%q,\"path\":\"REPORT.md\"}}}\n",
 		caseID,
 	)
 	var out bytes.Buffer
 	if err := mcp.Serve(ctx, strings.NewReader(input), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "phase2 bridge e2e summary") {
+	if !strings.Contains(out.String(), "phase2 bridge e2e report") {
 		t.Fatalf("MCP read_artifact output did not contain artifact text:\n%s", out.String())
 	}
 }
@@ -128,14 +128,14 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-mkdir -p "$out"
+mkdir -p "$out/report_bundle/report" "$out/report_bundle/poc"
 cat > "$out/summary.json" <<'JSON'
 {"status":"pass","poc":{"status":"verified"},"failure":{}}
 JSON
 printf '%s\n' 'phase2 bridge e2e summary' > "$out/summary.md"
-printf '%s\n' '# RCA' 'phase2 bridge e2e rca' > "$out/rca.md"
-printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
-printf '%s\n' '# Report' 'phase2 bridge e2e report' > "$out/Report.md"
+printf '%s\n' '# RCA' 'phase2 bridge e2e rca' > "$out/RCA.md"
+printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/report_bundle/poc/PoC.t.sol"
+printf '%s\n' '# Report' 'phase2 bridge e2e report' > "$out/report_bundle/report/REPORT.md"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

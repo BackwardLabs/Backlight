@@ -13,13 +13,22 @@ import (
 
 const DefaultMaxBytes int64 = 1 << 20 // 1 MiB
 
-var defaultAllowlist = []string{"summary.json", "summary.md", "rca.md", "PoC.t.sol", "Report.md"}
+type artifactSpec struct {
+	PublicPath string
+	SourcePath string
+}
+
+var defaultArtifacts = []artifactSpec{
+	{PublicPath: "REPORT.md", SourcePath: "report_bundle/report/REPORT.md"},
+	{PublicPath: "RCA.md", SourcePath: "RCA.md"},
+	{PublicPath: "PoC.t.sol", SourcePath: "report_bundle/poc/PoC.t.sol"},
+}
 
 // Reader enforces exact-path allowlisting and output-root containment.
 type Reader struct {
 	OutputBase string
 	MaxBytes   int64
-	Allowed    map[string]struct{}
+	Allowed    map[string]string
 }
 
 // CaseRef is the minimal case metadata needed to locate case artifacts.
@@ -57,9 +66,9 @@ func NewReader(outputBase string, maxBytes int64) (*Reader, error) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBytes
 	}
-	allowed := make(map[string]struct{}, len(defaultAllowlist))
-	for _, path := range defaultAllowlist {
-		allowed[path] = struct{}{}
+	allowed := make(map[string]string, len(defaultArtifacts))
+	for _, artifact := range defaultArtifacts {
+		allowed[artifact.PublicPath] = artifact.SourcePath
 	}
 	return &Reader{OutputBase: outputBase, MaxBytes: maxBytes, Allowed: allowed}, nil
 }
@@ -145,13 +154,17 @@ func (r *Reader) validOutputRoot(c CaseRef) (string, error) {
 }
 
 func (r *Reader) safeFilePath(root, rel string) (string, error) {
-	if _, ok := r.Allowed[rel]; !ok {
+	sourceRel, ok := r.Allowed[rel]
+	if !ok {
 		return "", fmt.Errorf("artifact path %q is not allowlisted", rel)
 	}
 	if filepath.IsAbs(rel) || filepath.Clean(rel) != rel || strings.Contains(rel, string(filepath.Separator)) {
 		return "", fmt.Errorf("artifact path %q is not a safe relative file name", rel)
 	}
-	path := filepath.Join(root, rel)
+	if filepath.IsAbs(sourceRel) || filepath.Clean(sourceRel) != sourceRel {
+		return "", fmt.Errorf("artifact source path %q is not a safe relative file name", sourceRel)
+	}
+	path := filepath.Join(root, sourceRel)
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

@@ -42,6 +42,14 @@ func TestUIRoutesArePublic(t *testing.T) {
 		}
 		body := rr.Body.String()
 		for _, marker := range []string{
+			`var visibleArtifacts=["REPORT.md","RCA.md","PoC.t.sol"];`,
+			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol</span>",
+		} {
+			if !strings.Contains(body, marker) {
+				t.Fatalf("GET %s missing product artifact UI marker %q", path, marker)
+			}
+		}
+		for _, marker := range []string{
 			"overflow-x:hidden",
 			"max-width:min(1728px,100%)",
 			"grid-template-columns:minmax(220px,280px) minmax(0,1fr)",

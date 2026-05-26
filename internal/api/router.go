@@ -32,7 +32,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /cases", s.handleCreateCase)
 	protected.HandleFunc("GET /cases", s.handleListCases)
 	protected.HandleFunc("GET /cases/{case_id}/artifacts", s.handleListArtifacts)
-	protected.HandleFunc("GET /cases/{case_id}/artifacts/{artifact_path}", s.handleReadArtifact)
+	protected.HandleFunc("GET /cases/{case_id}/artifacts/{artifact_path...}", s.handleReadArtifact)
 	protected.HandleFunc("GET /cases/{case_id}", s.handleGetCase)
 	protected.HandleFunc("POST /cases/{case_id}/retry-handoff", s.handleRetryHandoff)
 

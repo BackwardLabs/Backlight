@@ -50,7 +50,7 @@ func TestToolsListExposesOnlyReadOnlyHeliosTools(t *testing.T) {
 
 func TestReadArtifactToolReturnsStructuredContent(t *testing.T) {
 	s := testServer()
-	args := json.RawMessage(`{"case_id":"case_1","path":"summary.md","max_bytes":128}`)
+	args := json.RawMessage(`{"case_id":"case_1","path":"REPORT.md","max_bytes":128}`)
 	params, err := json.Marshal(toolCallParams{Name: "helios.read_artifact", Arguments: args})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestReadArtifactToolReturnsStructuredContent(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("tool returned error: %+v", got.Content)
 	}
-	if len(got.Content) != 1 || !strings.Contains(got.Content[0].Text, `"summary.md"`) {
+	if len(got.Content) != 1 || !strings.Contains(got.Content[0].Text, `"REPORT.md"`) {
 		t.Fatalf("unexpected content: %+v", got.Content)
 	}
 	structured, ok := got.StructuredContent.(map[string]any)
@@ -71,7 +71,7 @@ func TestReadArtifactToolReturnsStructuredContent(t *testing.T) {
 		t.Fatalf("structured content type = %T", got.StructuredContent)
 	}
 	artifact, ok := structured["artifact"].(*artifacts.ReadResult)
-	if !ok || artifact.Path != "summary.md" || artifact.Text != "hello" {
+	if !ok || artifact.Path != "REPORT.md" || artifact.Text != "hello" {
 		t.Fatalf("unexpected artifact structured content: %#v", structured["artifact"])
 	}
 }
@@ -100,13 +100,13 @@ func (f fakeClient) GetCase(context.Context, string) (*api.CaseDetailResponse, e
 type fakeArtifacts struct{}
 
 func (fakeArtifacts) AllowedPaths() []string {
-	return []string{"PoC.t.sol", "Report.md", "rca.md", "summary.json", "summary.md"}
+	return []string{"REPORT.md", "RCA.md", "PoC.t.sol"}
 }
 
 func (fakeArtifacts) List(artifacts.CaseRef) ([]artifacts.FileInfo, error) {
-	return []artifacts.FileInfo{{Path: "summary.md", Exists: true, Size: 5}}, nil
+	return []artifacts.FileInfo{{Path: "REPORT.md", Exists: true, Size: 5}}, nil
 }
 
 func (fakeArtifacts) Read(artifacts.CaseRef, string, int64) (*artifacts.ReadResult, error) {
-	return &artifacts.ReadResult{Path: "summary.md", Size: 5, Text: "hello"}, nil
+	return &artifacts.ReadResult{Path: "REPORT.md", Size: 5, Text: "hello"}, nil
 }

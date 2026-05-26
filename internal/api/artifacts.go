@@ -40,7 +40,7 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReadArtifact(w http.ResponseWriter, r *http.Request) {
 	caseID := strings.TrimSpace(r.PathValue("case_id"))
 	artifactPath := strings.TrimSpace(r.PathValue("artifact_path"))
-	if caseID == "" || strings.Contains(caseID, "/") || artifactPath == "" || strings.Contains(artifactPath, "/") {
+	if caseID == "" || strings.Contains(caseID, "/") || artifactPath == "" {
 		http.NotFound(w, r)
 		return
 	}
