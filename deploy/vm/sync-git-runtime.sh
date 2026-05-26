@@ -178,6 +178,16 @@ if [[ -f "${base_dir}/env/lumoskit.env" ]]; then
   install -o root -g "${service_user}" -m 0640 "${base_dir}/env/lumoskit.env" "${lumoskit_dir}/.env"
 fi
 
+# LumosKit is checked out by the operator user, but helios executes its Python
+# runtime helpers from the service. Some executable scripts may be 0700 after
+# checkout or local edits, so grant the service group read/traverse access.
+chgrp -R "${service_user}" "${lumoskit_dir}/scripts"
+chmod -R g+rX "${lumoskit_dir}/scripts"
+if [[ -f "${lumoskit_dir}/requirements-agent-poc.txt" ]]; then
+  chgrp "${service_user}" "${lumoskit_dir}/requirements-agent-poc.txt"
+  chmod g+r "${lumoskit_dir}/requirements-agent-poc.txt"
+fi
+
 echo "==> Writing systemd unit"
 cat >"/etc/systemd/system/${service_name}" <<EOF
 [Unit]
