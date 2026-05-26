@@ -161,7 +161,9 @@ lightweight Helios console for manual analysis work:
 
 - save the local `HELIOS_API_TOKEN` in browser localStorage
 - submit `POST /cases` with `chain`, `tx_hash`, optional metadata, and
-  `force_rerun`
+  `force_rerun`; include metadata `protocol`/`protocol_name`/`project` when
+  available so the LumosKit output directory becomes readable, e.g.
+  `outputs/260526_eth_curve/`
 - poll `GET /cases` for queued/running/done/failed progress
 - inspect `GET /cases/{case_id}` analysis result, events, output paths,
   handoff attempts, and notifications
@@ -220,7 +222,7 @@ precedence; `.env.local` can override `.env`.
 | --- | --- | --- | --- |
 | `HELIOS_API_TOKEN` | yes | — | Bearer token for every endpoint except `/healthz` |
 | `HELIOS_DB_PATH` | yes | — | SQLite file path |
-| `HELIOS_OUTPUT_ROOT` | yes | — | fixed parent directory for per-case LumosKit `--output-root` directories |
+| `HELIOS_OUTPUT_ROOT` | yes | — | fixed parent directory for flat human-readable LumosKit `--output-root` directories (`<YYMMDD>_<chain-alias>_<protocol>[-N]`) |
 | `HELIOS_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
 | `HELIOS_LUMOSKIT_BIN` | no | `bin/lumoskit` | child-process executable invoked per case |
 | `HELIOS_WORKER_POLL_MILLIS` | no | `1000` | worker poll cadence |

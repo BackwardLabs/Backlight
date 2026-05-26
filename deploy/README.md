@@ -163,7 +163,7 @@ curl -X POST https://helios.example.com/cases \
 
 Then verify:
 
-- `/srv/helios/data/outputs/<case-id>/summary.json` exists.
+- `/srv/helios/data/outputs/260526_eth_curve/summary.json` exists.
 - `GET /cases/{case_id}` reaches `done` or `handed-off`, or reports a concrete `engine_error`.
 - For verified cases, `github_publish` and `pre_lumos_sync` events appear when those optional features are enabled.
 - Downstream webhook / Telegram notifications arrive if configured.
@@ -293,7 +293,7 @@ keep `HELIOS_PRE_LUMOS_SEED_ROOT` under `/srv/helios/data` or extend
 In bridge-index mode, the MCP client process needs read-only access to:
 
 - `/srv/helios/data/helios-mcp-bridge.db`
-- `/srv/helios/data/outputs/<case-id>/{summary.json,summary.md,rca.md,PoC.t.sol,Report.md}`
+- `/srv/helios/data/outputs/260526_eth_curve/{summary.json,summary.md,rca.md,PoC.t.sol,Report.md}`
 
 The systemd templates use `UMask=0027`, so files are owner/group readable but
 not world-readable. Run the MCP client as the `helios` user or add the operator

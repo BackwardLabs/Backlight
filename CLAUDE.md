@@ -65,7 +65,7 @@ Per `../lumoskit/docs/adr/0018-lumoskit-as-engine.md`, lumoskit exposes a
 stable subprocess engine contract. helios consumes it like this:
 
 ```text
-1. helios picks a unique --output-root for the case (e.g. outputs/<case-id>/).
+1. helios picks a unique human-readable --output-root for the case (e.g. outputs/260526_eth_curve/, with -2/-3 on collisions).
 2. helios spawns `bin/lumoskit --tx <hash> --chain <label> --output-root <path>` as a one-shot subprocess.
 3. helios waits on the subprocess. Exit code 0 = success, 1 = anything else.
 4. helios reads `<output-root>/summary.json`:

@@ -481,7 +481,10 @@ func (s *Store) ClaimNextQueued(ctx context.Context, outputRootParent string) (*
 			return err
 		}
 
-		outputRoot := filepath.Join(outputRootParent, c.CaseID)
+		outputRoot, err := uniqueOutputRootTx(ctx, tx, outputRootParent, c)
+		if err != nil {
+			return err
+		}
 		summaryPath := filepath.Join(outputRoot, "summary.json")
 		now := nowUTC()
 
