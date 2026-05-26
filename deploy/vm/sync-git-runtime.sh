@@ -90,6 +90,18 @@ run_git() {
   fi
 }
 
+run_in_worktree() {
+  local dir="$1"
+  shift
+  local owner
+  owner="$(git_user_for "${dir}")"
+  if [[ "${owner}" == "root" ]]; then
+    (cd "${dir}" && "$@")
+  else
+    sudo -u "${owner}" -H bash -c 'cd "$1" && shift && exec "$@"' bash "${dir}" "$@"
+  fi
+}
+
 ensure_clean() {
   local name="$1"
   local dir="$2"
@@ -151,16 +163,10 @@ sync_checkout "Helios" "${helios_dir}" "${helios_ref}"
 sync_checkout "LumosKit" "${lumoskit_dir}" "${lumoskit_ref}"
 
 echo "==> Building Helios"
-(
-  cd "${helios_dir}"
-  CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios ./cmd/helios
-)
+run_in_worktree "${helios_dir}" env CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios ./cmd/helios
 
 echo "==> Building LumosKit"
-(
-  cd "${lumoskit_dir}"
-  cargo build --release --bin lumoskit
-)
+run_in_worktree "${lumoskit_dir}" cargo build --release --bin lumoskit
 
 echo "==> Installing binaries"
 install -o root -g root -m 0755 "${helios_dir}/dist/helios" "${base_dir}/bin/helios"
