@@ -80,6 +80,25 @@ func TestClaimNextQueuedAddsNumericSuffixForIncidentSlugCollisions(t *testing.T)
 	}
 }
 
+func TestSubmitCaseUsesReadableCaseID(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	detectedAt := "2026-05-26T00:00:00Z"
+	metadata := json.RawMessage(`{"protocol":"Euler V2"}`)
+	c, _, err := s.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("d", 64), nil, &detectedAt, metadata, false)
+	if err != nil {
+		t.Fatalf("SubmitCase: %v", err)
+	}
+	if !strings.HasPrefix(c.CaseID, "case_260526_eth_euler_v2_a01_dddddddd_") {
+		t.Fatalf("case_id = %q, want readable incident prefix", c.CaseID)
+	}
+}
+
 func TestProtocolSlugNormalizesSeedExamples(t *testing.T) {
 	tests := map[string]string{
 		"Curve Finance":          "curve_finance",

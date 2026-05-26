@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/UPside-Lumos-V2/helios/internal/metrics"
 )
@@ -86,6 +87,29 @@ func NewID(prefix string) string {
 	return prefix + "_" + hex.EncodeToString(b[:])
 }
 
+func NewCaseID(c *Case) string {
+	var b [2]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("case_%s_a%02d_%s_%s", incidentOutputSlug(c), c.AttemptNumber, txIDToken(c.TxHash), hex.EncodeToString(b[:]))
+}
+
+func txIDToken(txHash string) string {
+	tx := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(txHash)), "0x")
+	if len(tx) >= 8 && allHex(tx[:8]) {
+		return tx[:8]
+	}
+	return "txunknown"
+}
+
+func allHex(s string) bool {
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return s != ""
+}
+
 // SubmitCase performs dedup-aware insert. Returns (case, dedupResult).
 // Caller passes parsed/validated chain, tx_hash, optional source/detected_at/metadata and force_rerun.
 // dedup contract (per seed): look up latest lineage leaf for (chain, tx_hash);
@@ -99,9 +123,8 @@ func (s *Store) SubmitCase(ctx context.Context, chain, txHash string, source, de
 	}
 
 	var (
-		result   string
-		outCase  *Case
-		insertID = NewID("case")
+		result  string
+		outCase *Case
 	)
 
 	err := s.Tx(ctx, func(tx *sql.Tx) error {
@@ -114,8 +137,7 @@ func (s *Store) SubmitCase(ctx context.Context, chain, txHash string, source, de
 		switch {
 		case leaf == nil:
 			// new root
-			c, err := insertCaseTx(ctx, tx, &Case{
-				CaseID:             insertID,
+			candidate := &Case{
 				Chain:              chain,
 				TxHash:             txHash,
 				Source:             source,
@@ -128,7 +150,9 @@ func (s *Store) SubmitCase(ctx context.Context, chain, txHash string, source, de
 				NotificationStatus: "pending",
 				CreatedAt:          now,
 				UpdatedAt:          now,
-			})
+			}
+			candidate.CaseID = NewCaseID(candidate)
+			c, err := insertCaseTx(ctx, tx, candidate)
 			if err != nil {
 				return err
 			}
@@ -141,7 +165,7 @@ func (s *Store) SubmitCase(ctx context.Context, chain, txHash string, source, de
 			return nil
 
 		case leaf.State == StateFailed:
-			child, err := insertChildCaseTx(ctx, tx, insertID, leaf, source, detectedAt, metadata, forceRerun, now)
+			child, err := insertChildCaseTx(ctx, tx, leaf, source, detectedAt, metadata, forceRerun, now)
 			if err != nil {
 				return err
 			}
@@ -159,7 +183,7 @@ func (s *Store) SubmitCase(ctx context.Context, chain, txHash string, source, de
 				result = DedupExisting
 				return nil
 			}
-			child, err := insertChildCaseTx(ctx, tx, insertID, leaf, source, detectedAt, metadata, true, now)
+			child, err := insertChildCaseTx(ctx, tx, leaf, source, detectedAt, metadata, true, now)
 			if err != nil {
 				return err
 			}
@@ -178,9 +202,8 @@ func (s *Store) SubmitCase(ctx context.Context, chain, txHash string, source, de
 	return outCase, result, nil
 }
 
-func insertChildCaseTx(ctx context.Context, tx *sql.Tx, caseID string, parent *Case, source, detectedAt *string, metadata json.RawMessage, forceRerun bool, now string) (*Case, error) {
+func insertChildCaseTx(ctx context.Context, tx *sql.Tx, parent *Case, source, detectedAt *string, metadata json.RawMessage, forceRerun bool, now string) (*Case, error) {
 	c := &Case{
-		CaseID:             caseID,
 		Chain:              parent.Chain,
 		TxHash:             parent.TxHash,
 		Source:             source,
@@ -195,6 +218,7 @@ func insertChildCaseTx(ctx context.Context, tx *sql.Tx, caseID string, parent *C
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
+	c.CaseID = NewCaseID(c)
 	return insertCaseTx(ctx, tx, c)
 }
 
@@ -654,7 +678,7 @@ func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome s
 		if len(metadata) == 0 {
 			metadata = json.RawMessage("{}")
 		}
-		next, err := insertChildCaseTx(ctx, tx, NewID("case"), parent, parent.Source, parent.DetectedAt, metadata, false, now)
+		next, err := insertChildCaseTx(ctx, tx, parent, parent.Source, parent.DetectedAt, metadata, false, now)
 		if err != nil {
 			return err
 		}
