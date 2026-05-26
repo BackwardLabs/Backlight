@@ -230,6 +230,51 @@ func TestAppendCaseEventPersistsSideEffectEvidence(t *testing.T) {
 	}
 }
 
+func TestRecoverRunningCasesUsesReadableChildCaseID(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	detectedAt := "2026-05-26T01:02:03Z"
+	metadata := json.RawMessage(`{"protocol":"Euler V2"}`)
+	root, _, err := s.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("e", 64), nil, &detectedAt, metadata, false)
+	if err != nil {
+		t.Fatalf("submit case: %v", err)
+	}
+	if _, err := s.ClaimNextQueued(ctx, t.TempDir()); err != nil {
+		t.Fatalf("claim case: %v", err)
+	}
+
+	recovered, err := s.RecoverRunningCases(ctx)
+	if err != nil {
+		t.Fatalf("recover running cases: %v", err)
+	}
+	if recovered != 1 {
+		t.Fatalf("recovered = %d, want 1", recovered)
+	}
+
+	items, _, err := s.ListCases(ctx, CaseListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list cases: %v", err)
+	}
+	var child *Case
+	for i := range items {
+		if items[i].ParentCaseID != nil && *items[i].ParentCaseID == root.CaseID {
+			child = &items[i]
+			break
+		}
+	}
+	if child == nil {
+		t.Fatal("recovery child not found")
+	}
+	if !strings.HasPrefix(child.CaseID, "case_260526_eth_euler_v2_a02_eeeeeeee_") {
+		t.Fatalf("recovery child case_id = %q, want readable incident prefix", child.CaseID)
+	}
+}
+
 func TestMarkDoneAndQueueAutoRerunStopsAtMaxAttempts(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, filepath.Join(t.TempDir(), "helios.db"))

@@ -864,27 +864,11 @@ func (s *Store) RecoverRunningCases(ctx context.Context) (int, error) {
 			if len(metadata) == 0 {
 				metadata = json.RawMessage("{}")
 			}
-			childID := NewID("case")
-			child := &Case{
-				CaseID:             childID,
-				Chain:              orphan.Chain,
-				TxHash:             orphan.TxHash,
-				Source:             orphan.Source,
-				DetectedAt:         orphan.DetectedAt,
-				Metadata:           metadata,
-				State:              StateQueued,
-				AttemptNumber:      orphan.AttemptNumber + 1,
-				ParentCaseID:       ptr(orphan.CaseID),
-				ForceRerun:         false,
-				HandoffStatus:      "pending",
-				NotificationStatus: "pending",
-				CreatedAt:          now,
-				UpdatedAt:          now,
-			}
-			if _, err := insertCaseTx(ctx, tx, child); err != nil {
+			child, err := insertChildCaseTx(ctx, tx, orphan, orphan.Source, orphan.DetectedAt, metadata, false, now)
+			if err != nil {
 				return fmt.Errorf("insert recovery child: %w", err)
 			}
-			return appendEventTx(ctx, tx, childID, nil, ptr(StateQueued), "restart_recovery", restartPayload, now)
+			return appendEventTx(ctx, tx, child.CaseID, nil, ptr(StateQueued), "restart_recovery", restartPayload, now)
 		})
 		if err != nil {
 			return recovered, err
