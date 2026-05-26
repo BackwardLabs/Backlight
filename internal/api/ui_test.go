@@ -40,6 +40,19 @@ func TestUIRoutesArePublic(t *testing.T) {
 		if !strings.Contains(rr.Body.String(), "Artifact preview") {
 			t.Fatalf("GET %s did not include the artifact preview section", path)
 		}
+		body := rr.Body.String()
+		for _, marker := range []string{
+			"overflow-x:hidden",
+			"max-width:min(1728px,100%)",
+			"grid-template-columns:minmax(220px,280px) minmax(0,1fr)",
+			"@media(max-width:980px)",
+			".table-wrap{max-width:100%;overflow-x:auto",
+			".verdict-main{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-12);margin-bottom:var(--space-12);flex-wrap:wrap;min-width:0}",
+		} {
+			if !strings.Contains(body, marker) {
+				t.Fatalf("GET %s missing responsive overflow marker %q", path, marker)
+			}
+		}
 	}
 }
 
