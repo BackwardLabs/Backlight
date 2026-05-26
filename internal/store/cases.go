@@ -710,6 +710,57 @@ func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome s
 	return child, true, nil
 }
 
+// MergeCaseMetadata shallow-merges new metadata into a case. Existing
+// non-empty protocol/project fields are kept so user-supplied labels win over
+// post-run inference.
+func (s *Store) MergeCaseMetadata(ctx context.Context, caseID string, inferred map[string]any) error {
+	if len(inferred) == 0 {
+		return nil
+	}
+	return s.Tx(ctx, func(tx *sql.Tx) error {
+		c, err := getCaseForUpdateTx(ctx, tx, caseID)
+		if err != nil {
+			return err
+		}
+		if c == nil {
+			return nil
+		}
+		merged := map[string]any{}
+		if len(c.Metadata) > 0 {
+			_ = json.Unmarshal(c.Metadata, &merged)
+		}
+		for key, value := range inferred {
+			if value == nil {
+				continue
+			}
+			if isProtocolMetadataKey(key) {
+				if existing, ok := merged[key].(string); ok && protocolSlug(existing) != "unknown" {
+					continue
+				}
+			}
+			merged[key] = value
+		}
+		data, err := json.Marshal(merged)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE cases SET metadata = ?, updated_at = ? WHERE case_id = ?`, string(data), nowUTC(), caseID)
+		if err != nil {
+			return fmt.Errorf("merge case metadata: %w", err)
+		}
+		return nil
+	})
+}
+
+func isProtocolMetadataKey(key string) bool {
+	switch compactKey(key) {
+	case "protocol", "protocolname", "project", "projectname":
+		return true
+	default:
+		return false
+	}
+}
+
 func terminalEventPayload(defaults, supplied map[string]any) json.RawMessage {
 	payload := make(map[string]any, len(defaults)+len(supplied))
 	for k, v := range supplied {

@@ -151,6 +151,7 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 	mapped := outcome.Map(outcomeInput)
 	eventPayload := outcome.TerminalEventPayload(mapped, outcomeInput)
 	eventPayload["duration_ms"] = runDuration.Milliseconds()
+	w.mergeIncidentMetadata(ctx, c)
 
 	if len(res.Stderr) > 0 && (mapped.Outcome == outcome.OutcomeEngineError) {
 		log.Warn("lumoskit stderr captured for engine_error case", "stderr_tail", string(res.Stderr))
@@ -206,6 +207,19 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 		w.notifyOutcome(ctx, c.CaseID, mapped.Outcome)
 	default:
 		log.Error("outcome mapping returned unexpected state", "state", mapped.State)
+	}
+}
+
+func (w *Worker) mergeIncidentMetadata(ctx context.Context, c *store.Case) {
+	if c.OutputRoot == nil {
+		return
+	}
+	metadata := inferIncidentMetadata(*c.OutputRoot)
+	if len(metadata) == 0 {
+		return
+	}
+	if err := w.Store.MergeCaseMetadata(ctx, c.CaseID, metadata); err != nil {
+		w.Logger.Warn("merge inferred incident metadata failed", "case_id", c.CaseID, "err", err)
 	}
 }
 

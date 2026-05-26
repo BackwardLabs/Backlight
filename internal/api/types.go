@@ -27,6 +27,7 @@ type SubmissionResponse struct {
 // CaseSummary is the GET /cases item shape (excludes sub-arrays).
 type CaseSummary struct {
 	CaseID             string          `json:"case_id"`
+	IncidentSlug       string          `json:"incident_slug"`
 	Chain              string          `json:"chain"`
 	TxHash             string          `json:"tx_hash"`
 	Source             *string         `json:"source"`
@@ -79,6 +80,7 @@ type ArtifactReadResponse struct {
 func toSummary(c *store.Case) CaseSummary {
 	return CaseSummary{
 		CaseID:             c.CaseID,
+		IncidentSlug:       store.IncidentSlug(c),
 		Chain:              c.Chain,
 		TxHash:             c.TxHash,
 		Source:             c.Source,

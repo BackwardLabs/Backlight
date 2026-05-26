@@ -64,6 +64,12 @@ func pathExists(path string) (bool, error) {
 	return false, fmt.Errorf("check output_root path: %w", err)
 }
 
+// IncidentSlug returns the display slug for a case. Unlike case_id, this may
+// improve after analysis enriches case metadata with a protocol label.
+func IncidentSlug(c *Case) string {
+	return incidentOutputSlug(c)
+}
+
 func incidentOutputSlug(c *Case) string {
 	return strings.Join([]string{
 		incidentDateToken(c),
