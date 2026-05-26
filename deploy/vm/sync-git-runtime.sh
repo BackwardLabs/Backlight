@@ -3,23 +3,27 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Sync Helios and LumosKit git checkouts on a VM.
+Sync, build, install, and optionally restart the single-VM Helios runtime.
 
 Usage:
-  sudo HELIOS_REF=<sha-or-tag> LUMOSKIT_REF=<sha-or-tag> deploy/vm/sync-git-runtime.sh
+  sudo HELIOS_REF=<sha-or-tag-or-branch> \
+    LUMOSKIT_REF=<sha-or-tag-or-branch> \
+    HELIOS_RESTART_SERVICE=true \
+    deploy/vm/sync-git-runtime.sh
 
-Environment:
-  HELIOS_REPO=git@github.com:UPside-Lumos-V2/helios.git
-  LUMOSKIT_REPO=git@github.com:UPside-Lumos-V2/lumoskit.git
-  HELIOS_REF=main
-  LUMOSKIT_REF=main
+Defaults:
+  WORKSPACE_DIR=/home/ubuntu/lumos
+  HELIOS_WORKTREE=$WORKSPACE_DIR/helios
+  LUMOSKIT_WORKTREE=$WORKSPACE_DIR/lumoskit
   HELIOS_BASE_DIR=/srv/helios
   HELIOS_SERVICE_USER=helios
+  HELIOS_SERVICE_NAME=helios.service
+  HELIOS_REF=main
+  LUMOSKIT_REF=main
   HELIOS_RESTART_SERVICE=false
 
-This script does not build Go or Rust. It uses git only to place the runtime
-source trees and the LumosKit committed binary/scripts on disk. Install the
-Helios binaries separately into /srv/helios/bin, for example from CI artifacts.
+This deployment uses the existing local git checkouts under /home/ubuntu/lumos.
+It does not clone into /srv/helios/src.
 USAGE
 }
 
@@ -33,136 +37,182 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
+workspace_dir="${WORKSPACE_DIR:-/home/ubuntu/lumos}"
+helios_dir="${HELIOS_WORKTREE:-${workspace_dir}/helios}"
+lumoskit_dir="${LUMOSKIT_WORKTREE:-${workspace_dir}/lumoskit}"
 base_dir="${HELIOS_BASE_DIR:-/srv/helios}"
 service_user="${HELIOS_SERVICE_USER:-helios}"
-helios_repo="${HELIOS_REPO:-git@github.com:UPside-Lumos-V2/helios.git}"
-lumoskit_repo="${LUMOSKIT_REPO:-git@github.com:UPside-Lumos-V2/lumoskit.git}"
+service_name="${HELIOS_SERVICE_NAME:-helios.service}"
 helios_ref="${HELIOS_REF:-main}"
 lumoskit_ref="${LUMOSKIT_REF:-main}"
 restart_service="${HELIOS_RESTART_SERVICE:-false}"
 
-if ! command -v git >/dev/null 2>&1; then
-  echo "git is required" >&2
-  exit 1
-fi
+need_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "$1 is required" >&2
+    exit 1
+  fi
+}
+
+need_cmd git
+need_cmd go
+need_cmd cargo
+need_cmd install
+need_cmd systemctl
 
 if ! id "${service_user}" >/dev/null 2>&1; then
   useradd --system --home "${base_dir}" --shell /usr/sbin/nologin "${service_user}"
 fi
 
-mkdir -p \
-  "${base_dir}/bin" \
-  "${base_dir}/src" \
-  "${base_dir}/data/outputs" \
-  "${base_dir}/data/pre-lumos-seed" \
-  "${base_dir}/data/uv-cache" \
-  "${base_dir}/env" \
-  "${base_dir}/logs"
-chmod 750 "${base_dir}" "${base_dir}/data" "${base_dir}/data/outputs" "${base_dir}/logs"
-chmod 700 "${base_dir}/env"
-
-sync_repo() {
-  local repo="$1"
-  local ref="$2"
-  local dir="$3"
-
-  if [[ ! -d "${dir}/.git" ]]; then
-    rm -rf "${dir}"
-    git clone "${repo}" "${dir}"
-  fi
-
-  git -C "${dir}" fetch --tags origin '+refs/heads/*:refs/remotes/origin/*'
-  if git -C "${dir}" rev-parse --verify --quiet "origin/${ref}" >/dev/null; then
-    git -C "${dir}" checkout --detach "origin/${ref}"
-  else
-    git -C "${dir}" checkout --detach "${ref}"
-  fi
-  git -C "${dir}" submodule update --init --recursive
-}
-
-echo "==> Syncing Helios ${helios_ref}"
-sync_repo "${helios_repo}" "${helios_ref}" "${base_dir}/src/helios"
-
-echo "==> Syncing LumosKit ${lumoskit_ref}"
-sync_repo "${lumoskit_repo}" "${lumoskit_ref}" "${base_dir}/src/lumoskit"
-
-if [[ ! -x "${base_dir}/src/lumoskit/bin/lumoskit" ]]; then
-  echo "missing executable ${base_dir}/src/lumoskit/bin/lumoskit" >&2
+if [[ ! -d "${helios_dir}/.git" ]]; then
+  echo "missing Helios git checkout: ${helios_dir}" >&2
   exit 1
 fi
 
-lumoskit_arch_mismatch=false
-if command -v file >/dev/null 2>&1; then
-  host_arch="$(uname -m)"
-  lumoskit_file="$(file -b "${base_dir}/src/lumoskit/bin/lumoskit")"
-  case "${host_arch}" in
-    aarch64|arm64)
-      if echo "${lumoskit_file}" | grep -qi 'x86-64'; then
-        cat >&2 <<EOF
-LumosKit binary architecture mismatch:
-  host: ${host_arch}
-  binary: ${lumoskit_file}
-
-Build or install a Linux ARM64 LumosKit binary, then place it at:
-  ${base_dir}/src/lumoskit/bin/lumoskit
-EOF
-        lumoskit_arch_mismatch=true
-      fi
-      ;;
-    x86_64|amd64)
-      if echo "${lumoskit_file}" | grep -Eqi 'aarch64|ARM64|ARM aarch64'; then
-        cat >&2 <<EOF
-LumosKit binary architecture mismatch:
-  host: ${host_arch}
-  binary: ${lumoskit_file}
-EOF
-        lumoskit_arch_mismatch=true
-      fi
-      ;;
-  esac
+if [[ ! -d "${lumoskit_dir}/.git" ]]; then
+  echo "missing LumosKit git checkout: ${lumoskit_dir}" >&2
+  exit 1
 fi
 
-ln -sfn "${base_dir}/src/lumoskit/bin/lumoskit" "${base_dir}/bin/lumoskit"
+git_user_for() {
+  stat -c '%U' "$1"
+}
 
-if [[ -f "${base_dir}/env/lumoskit.env" ]]; then
-  ln -sfn "${base_dir}/env/lumoskit.env" "${base_dir}/src/lumoskit/.env"
-else
-  echo "warning: ${base_dir}/env/lumoskit.env does not exist; LumosKit needs ALCHEMY_API_KEY in .env or inherited env for real runs" >&2
-fi
+run_git() {
+  local dir="$1"
+  shift
+  local owner
+  owner="$(git_user_for "${dir}")"
+  if [[ "${owner}" == "root" ]]; then
+    git -C "${dir}" "$@"
+  else
+    sudo -u "${owner}" git -C "${dir}" "$@"
+  fi
+}
 
-# Pre-Lumos defaults in deploy/env/helios.env.example resolve from the Helios
-# working directory, but these links make manual inspection under /srv/helios
-# convenient and preserve compatibility with older env files.
-ln -sfn "${base_dir}/src/helios/scripts" "${base_dir}/scripts"
-ln -sfn "${base_dir}/src/helios/skills" "${base_dir}/skills"
-
-chown -R "${service_user}:${service_user}" "${base_dir}/src" "${base_dir}/data" "${base_dir}/env" "${base_dir}/logs"
-
-cat <<EOF
-==> Synced runtime checkouts
-Helios:   ${base_dir}/src/helios @ $(git -C "${base_dir}/src/helios" rev-parse --short HEAD)
-LumosKit: ${base_dir}/src/lumoskit @ $(git -C "${base_dir}/src/lumoskit" rev-parse --short HEAD)
-
-Set in /srv/helios/env/helios.env:
-HELIOS_LUMOSKIT_BIN=${base_dir}/src/lumoskit/bin/lumoskit
-
-Set LumosKit runtime secrets in:
-${base_dir}/env/lumoskit.env
-EOF
-
-if [[ "${lumoskit_arch_mismatch}" == "true" ]]; then
-  cat >&2 <<EOF
-
-warning: LumosKit binary does not match this VM architecture.
-Replace ${base_dir}/src/lumoskit/bin/lumoskit with a native build before starting Helios.
-EOF
-fi
-
-if [[ "${restart_service}" == "true" ]]; then
-  if [[ "${lumoskit_arch_mismatch}" == "true" ]]; then
-    echo "refusing to restart helios.service while LumosKit binary architecture mismatches host" >&2
+ensure_clean() {
+  local name="$1"
+  local dir="$2"
+  if [[ -n "$(run_git "${dir}" status --porcelain)" ]]; then
+    echo "${name} checkout has local changes; commit or stash them first: ${dir}" >&2
+    run_git "${dir}" status --short >&2
     exit 1
   fi
-  systemctl daemon-reload || true
-  systemctl restart helios.service
+}
+
+sync_checkout() {
+  local name="$1"
+  local dir="$2"
+  local ref="$3"
+
+  ensure_clean "${name}" "${dir}"
+  echo "==> Fetching ${name}"
+  run_git "${dir}" fetch --tags origin '+refs/heads/*:refs/remotes/origin/*'
+
+  if run_git "${dir}" rev-parse --verify --quiet "origin/${ref}" >/dev/null; then
+    echo "==> Updating ${name} to origin/${ref}"
+    run_git "${dir}" checkout "${ref}"
+    run_git "${dir}" pull --ff-only origin "${ref}"
+  else
+    echo "==> Checking out ${name} ${ref}"
+    run_git "${dir}" checkout --detach "${ref}"
+  fi
+
+  run_git "${dir}" submodule update --init --recursive
+}
+
+mkdir -p \
+  "${base_dir}/bin" \
+  "${base_dir}/data/outputs" \
+  "${base_dir}/data/pre-lumos-seed" \
+  "${base_dir}/data/uv-cache" \
+  "${base_dir}/data/.svm" \
+  "${base_dir}/data/.local/share" \
+  "${base_dir}/env" \
+  "${base_dir}/logs"
+
+chmod 750 "${base_dir}/data" "${base_dir}/data/outputs" "${base_dir}/logs"
+chmod 750 "${base_dir}/data/.svm" "${base_dir}/data/.local" "${base_dir}/data/.local/share"
+chown -R "${service_user}:${service_user}" "${base_dir}/data" "${base_dir}/logs"
+
+sync_checkout "Helios" "${helios_dir}" "${helios_ref}"
+sync_checkout "LumosKit" "${lumoskit_dir}" "${lumoskit_ref}"
+
+echo "==> Building Helios"
+(
+  cd "${helios_dir}"
+  CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios ./cmd/helios
+)
+
+echo "==> Building LumosKit"
+(
+  cd "${lumoskit_dir}"
+  cargo build --release --bin lumoskit
+)
+
+echo "==> Installing binaries"
+install -o root -g root -m 0755 "${helios_dir}/dist/helios" "${base_dir}/bin/helios"
+install -o "$(git_user_for "${lumoskit_dir}")" -g "${service_user}" -m 0755 \
+  "${lumoskit_dir}/target/release/lumoskit" \
+  "${lumoskit_dir}/bin/lumoskit"
+
+if [[ -f "${base_dir}/env/lumoskit.env" ]]; then
+  install -o root -g "${service_user}" -m 0640 "${base_dir}/env/lumoskit.env" "${lumoskit_dir}/.env"
+fi
+
+echo "==> Writing systemd unit"
+cat >"/etc/systemd/system/${service_name}" <<EOF
+[Unit]
+Description=Helios orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=${service_user}
+Group=${service_user}
+WorkingDirectory=${helios_dir}
+EnvironmentFile=${base_dir}/env/helios.env
+ExecStart=${base_dir}/bin/helios
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=${base_dir}/data ${base_dir}/logs
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+mkdir -p "/etc/systemd/system/${service_name}.d"
+cat >"/etc/systemd/system/${service_name}.d/10-foundry-path.conf" <<EOF
+[Service]
+Environment="PATH=${base_dir}/.foundry/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+EOF
+cat >"/etc/systemd/system/${service_name}.d/20-foundry-cache.conf" <<EOF
+[Service]
+Environment="SVM_HOME=${base_dir}/data/.svm"
+Environment="XDG_DATA_HOME=${base_dir}/data/.local/share"
+EOF
+
+systemctl daemon-reload
+
+cat <<EOF
+==> Runtime installed
+Helios checkout:   ${helios_dir} @ $(run_git "${helios_dir}" rev-parse --short HEAD)
+LumosKit checkout: ${lumoskit_dir} @ $(run_git "${lumoskit_dir}" rev-parse --short HEAD)
+Helios binary:     ${base_dir}/bin/helios
+LumosKit binary:   ${lumoskit_dir}/bin/lumoskit
+Service:           ${service_name}
+
+Expected in ${base_dir}/env/helios.env:
+HELIOS_LUMOSKIT_BIN=${lumoskit_dir}/bin/lumoskit
+EOF
+
+if [[ "${restart_service}" == "true" ]]; then
+  echo "==> Restarting ${service_name}"
+  systemctl restart "${service_name}"
 fi

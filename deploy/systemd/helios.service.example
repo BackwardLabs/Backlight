@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 User=helios
 Group=helios
-WorkingDirectory=/srv/helios/src/helios
+WorkingDirectory=/home/ubuntu/lumos/helios
 EnvironmentFile=/srv/helios/env/helios.env
 ExecStart=/srv/helios/bin/helios
 Restart=always
@@ -14,7 +14,7 @@ RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=30
 
-# Conservative hardening while preserving writes to SQLite and output roots.
+# Conservative hardening while preserving writes to SQLite, outputs, and logs.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

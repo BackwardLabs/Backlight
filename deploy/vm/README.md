@@ -1,126 +1,127 @@
-# VM git-clone runtime deployment
+# VM runtime deployment
 
-For the first single-VM deployment, keep this simple:
+This VM uses local git checkouts under `/home/ubuntu/lumos` and keeps only
+service state, env files, logs, data, and the Helios service binary under
+`/srv/helios`.
 
 ```text
 VM
-  /srv/helios/bin/helios                 # Helios binary from CI/release
-  /srv/helios/src/helios                 # pinned git clone for deploy assets
-  /srv/helios/src/lumoskit               # pinned git clone; includes bin/lumoskit
+  /home/ubuntu/lumos/helios              # Helios git checkout and systemd WorkingDirectory
+  /home/ubuntu/lumos/lumoskit            # LumosKit git checkout and runtime repo root
+  /home/ubuntu/lumos/lumoskit/bin/lumoskit
+                                         # LumosKit binary used by Helios
+  /srv/helios/bin/helios                 # Helios binary used by systemd
   /srv/helios/data/helios.db             # SQLite
   /srv/helios/data/outputs/              # per-case LumosKit outputs
-  /srv/helios/env/helios.env             # short production env file
+  /srv/helios/data/.svm                  # Foundry solc cache writable by helios
+  /srv/helios/data/.local/share          # Foundry/XDG data writable by helios
+  /srv/helios/env/helios.env             # Helios env file
+  /srv/helios/logs/                      # service logs / operator logs
 ```
 
-This avoids copying a large custom bundle. LumosKit already keeps its Linux
-convenience binary in git, and its runtime Python/RCA files live next to that
-binary in the same repo. Helios points at that executable:
+Helios runs `/srv/helios/bin/helios` with:
+
+```ini
+WorkingDirectory=/home/ubuntu/lumos/helios
+EnvironmentFile=/srv/helios/env/helios.env
+```
+
+`HELIOS_LUMOSKIT_BIN` should point to the LumosKit checkout binary:
 
 ```dotenv
-HELIOS_LUMOSKIT_BIN=/srv/helios/src/lumoskit/bin/lumoskit
+HELIOS_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit
 ```
 
-Helios now runs a `bin/lumoskit` executable with the LumosKit repo root as the
-child process working directory, so the binary can resolve its own
-`scripts/run_agent_poc.py`, `scripts/run_rca.py`, and RCA instruction files.
+Helios starts LumosKit with the LumosKit repo root as the child process working
+directory, so `scripts/run_agent_poc.py`, `scripts/run_rca.py`, Python virtual
+envs, and `.env` resolve next to `bin/lumoskit`.
 
-## 1. Sync git runtime trees
+## 1. Sync, build, and restart
 
-Use immutable commits or tags for production, not a floating branch. The default remotes use GitHub SSH, so install a deploy key on the VM first:
+Use `deploy/vm/sync-git-runtime.sh` from the Helios checkout. It updates the
+existing local checkouts, builds both binaries on the VM, installs them to the
+paths used by systemd, writes the systemd unit/drop-ins, reloads systemd, and
+optionally restarts the service.
 
 ```bash
-sudo -u helios -H mkdir -p /srv/helios/.ssh
-sudo -u helios -H chmod 700 /srv/helios/.ssh
-sudo -u helios -H ssh-keyscan github.com >> /srv/helios/.ssh/known_hosts
-# copy a GitHub deploy key to /srv/helios/.ssh/id_ed25519, then:
-sudo chmod 600 /srv/helios/.ssh/id_ed25519
-sudo chown helios:helios /srv/helios/.ssh/id_ed25519 /srv/helios/.ssh/known_hosts
+cd /home/ubuntu/lumos/helios
+sudo HELIOS_REF=main \
+  LUMOSKIT_REF=main \
+  HELIOS_RESTART_SERVICE=true \
+  deploy/vm/sync-git-runtime.sh
 ```
 
-Then sync:
+For production, prefer immutable commit SHAs or tags:
 
 ```bash
 sudo HELIOS_REF=<helios-sha-or-tag> \
   LUMOSKIT_REF=<lumoskit-sha-or-tag> \
+  HELIOS_RESTART_SERVICE=true \
   deploy/vm/sync-git-runtime.sh
 ```
 
-The script does not build Go or Rust. It only places runtime files and the
-committed LumosKit binary on disk.
+Defaults:
 
-### Oracle Cloud Ampere A1 / ARM64 note
-
-Oracle's 4 OCPU / 24 GB shape is usually ARM64 (`aarch64`). The currently
-committed LumosKit convenience binary may be Linux x86-64, so verify before
-starting Helios:
-
-```bash
-uname -m
-file /srv/helios/src/lumoskit/bin/lumoskit
+```text
+WORKSPACE_DIR=/home/ubuntu/lumos
+HELIOS_WORKTREE=$WORKSPACE_DIR/helios
+LUMOSKIT_WORKTREE=$WORKSPACE_DIR/lumoskit
+HELIOS_BASE_DIR=/srv/helios
+HELIOS_SERVICE_USER=helios
+HELIOS_SERVICE_NAME=helios.service
+HELIOS_RESTART_SERVICE=false
 ```
 
-If the host is `aarch64` but `bin/lumoskit` is `x86-64`, replace it with a
-Linux ARM64 build:
+The script expects both checkouts to already exist. It does not clone into
+`/srv/helios/src`.
+
+## 2. Manual build/install
+
+The script performs these operations, but they are useful for debugging.
+
+Build Helios:
 
 ```bash
-cd /srv/helios/src/lumoskit
-cargo build --release -p lumoskit-cli
-sudo install -o helios -g helios -m 0755 target/release/lumoskit bin/lumoskit
+cd /home/ubuntu/lumos/helios
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios ./cmd/helios
+sudo install -o root -g root -m 0755 dist/helios /srv/helios/bin/helios
 ```
 
-For normal deploys, prefer producing that ARM64 LumosKit binary in CI and
-installing it over `bin/lumoskit` after the git sync.
-
-## 2. Install Helios binaries
-
-Install the Helios binaries produced by CI into `/srv/helios/bin`.
-On Oracle Ampere/ARM64, build Helios with `GOARCH=arm64`:
+Build LumosKit:
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/helios ./cmd/helios
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/helios-mcp ./cmd/helios-mcp
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/helios-mcp-bridge ./cmd/helios-mcp-bridge
+cd /home/ubuntu/lumos/lumoskit
+cargo build --release --bin lumoskit
+sudo install -o ubuntu -g helios -m 0755 \
+  target/release/lumoskit \
+  /home/ubuntu/lumos/lumoskit/bin/lumoskit
 ```
 
-Then install:
+Then restart:
 
 ```bash
-sudo install -o helios -g helios -m 0755 dist/helios /srv/helios/bin/helios
-sudo install -o helios -g helios -m 0755 dist/helios-mcp /srv/helios/bin/helios-mcp
-sudo install -o helios -g helios -m 0755 dist/helios-mcp-bridge /srv/helios/bin/helios-mcp-bridge
+sudo systemctl daemon-reload
+sudo systemctl restart helios
 ```
-
-If you do not have CI artifacts yet, building these three Helios binaries on the
-VM is acceptable for the very first bring-up, but it should not be the normal
-deploy path.
 
 ## 3. Env files
 
-Start from the short Helios example:
-
-```bash
-sudo install -o helios -g helios -m 0600 \
-  /srv/helios/src/helios/deploy/env/helios.env.example \
-  /srv/helios/env/helios.env
-```
-
-Required Helios values:
+Required Helios values in `/srv/helios/env/helios.env`:
 
 - `HELIOS_API_TOKEN`
 - `HELIOS_DB_PATH=/srv/helios/data/helios.db`
 - `HELIOS_OUTPUT_ROOT=/srv/helios/data/outputs`
-- `HELIOS_LUMOSKIT_BIN=/srv/helios/src/lumoskit/bin/lumoskit`
+- `HELIOS_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit`
 
 Set `GH_TOKEN` in `helios.env` when verified-case GitHub publishing should be
 enabled.
 
-Keep LumosKit runtime secrets in a separate file:
+Keep LumosKit runtime secrets next to the LumosKit checkout, or install that
+file from `/srv/helios/env/lumoskit.env`:
 
 ```bash
-sudo install -o helios -g helios -m 0600 \
-  /srv/helios/src/helios/deploy/env/lumoskit.env.example \
-  /srv/helios/env/lumoskit.env
-sudo ln -sfn /srv/helios/env/lumoskit.env /srv/helios/src/lumoskit/.env
+sudo install -o root -g helios -m 0640 /srv/helios/env/lumoskit.env \
+  /home/ubuntu/lumos/lumoskit/.env
 ```
 
 Required LumosKit value for real runs:
@@ -128,34 +129,48 @@ Required LumosKit value for real runs:
 - `ALCHEMY_API_KEY`
 
 `ETHERSCAN_API_KEY` and `OPENAI_API_KEY` are optional depending on which
-LumosKit stages/repair lanes you enable.
+LumosKit stages and repair lanes are enabled.
 
 ## 4. systemd
 
-The systemd templates use:
+The deployed unit should match the active VM layout:
 
 ```ini
-WorkingDirectory=/srv/helios/src/helios
+[Service]
+User=helios
+Group=helios
+WorkingDirectory=/home/ubuntu/lumos/helios
+EnvironmentFile=/srv/helios/env/helios.env
 ExecStart=/srv/helios/bin/helios
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/srv/helios/data /srv/helios/logs
+UMask=0027
 ```
 
-That keeps Helios deploy assets available from its repo clone while the
-LumosKit child process runs from the LumosKit repo root.
+Foundry must write compiler caches under `/srv/helios/data`, because the service
+uses `ProtectSystem=full`:
+
+```ini
+[Service]
+Environment="PATH=/srv/helios/.foundry/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="SVM_HOME=/srv/helios/data/.svm"
+Environment="XDG_DATA_HOME=/srv/helios/data/.local/share"
+```
 
 ## 5. Smoke test
 
 ```bash
 curl http://127.0.0.1:8080/healthz
 
-set -a
-. /srv/helios/env/helios.env
-set +a
+sudo bash -c 'set -a; . /srv/helios/env/helios.env; set +a; \
+  curl -H "Authorization: Bearer ${HELIOS_API_TOKEN}" \
+  http://127.0.0.1:8080/cases'
 
-curl -H "Authorization: Bearer $HELIOS_API_TOKEN" \
-  http://127.0.0.1:8080/cases
-
-sudo -u helios /srv/helios/src/lumoskit/bin/lumoskit \
-  --chain ethereum \
-  --tx 0x0000000000000000000000000000000000000000000000000000000000000001 \
-  --output-root /srv/helios/data/outputs/deploy-smoke
+sudo -u helios /home/ubuntu/lumos/lumoskit/bin/lumoskit --help
 ```
