@@ -279,7 +279,7 @@ func writeSignalContext(c *store.Case) error {
 }
 
 func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome string) {
-	if mappedOutcome != outcome.OutcomeVerified || w.GitHubPublisher == nil || !w.GitHubPublisher.Configured() || c.OutputRoot == nil {
+	if !shouldPublishGitHubOutcome(mappedOutcome) || w.GitHubPublisher == nil || !w.GitHubPublisher.Configured() || c.OutputRoot == nil {
 		return
 	}
 	publishCase := githubpublish.Case{
@@ -288,6 +288,7 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 		TxHash:       c.TxHash,
 		OutputRoot:   *c.OutputRoot,
 		IncidentSlug: store.IncidentSlug(c),
+		Outcome:      mappedOutcome,
 	}
 	w.wg.Add(1)
 	go func() {
@@ -308,6 +309,7 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 				"published":   false,
 				"skipped":     true,
 				"skip_reason": res.SkipReason,
+				"outcome":     mappedOutcome,
 			}); err != nil {
 				w.Logger.Error("record github publish skip event failed", "case_id", publishCase.CaseID, "err", err)
 			}
@@ -325,6 +327,7 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 			"report_url":  res.ReportURL,
 			"commit_url":  res.CommitURL,
 			"target_urls": res.TargetURLs,
+			"outcome":     mappedOutcome,
 		}); err != nil {
 			w.Logger.Error("record github publish event failed", "case_id", publishCase.CaseID, "err", err)
 		}
@@ -334,6 +337,10 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 			"target_dir", res.TargetDir,
 		)
 	}()
+}
+
+func shouldPublishGitHubOutcome(mappedOutcome string) bool {
+	return mappedOutcome == outcome.OutcomeVerified || mappedOutcome == outcome.OutcomePartial
 }
 
 func (w *Worker) runPreLumos(ctx context.Context, c *store.Case, mappedOutcome string) {

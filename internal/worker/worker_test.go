@@ -139,6 +139,83 @@ func TestWorkerPublishesVerifiedProductArtifacts(t *testing.T) {
 	}
 }
 
+func TestWorkerPublishesPartialProductArtifacts(t *testing.T) {
+	ctx := context.Background()
+	outputParent := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("4", 64), nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	github := newFakeGitHub(t)
+	defer github.server.Close()
+
+	publisher := githubpublish.New(githubpublish.Config{
+		Token:   "test-token",
+		APIBase: github.server.URL,
+	})
+	publisher.Client = github.server.Client()
+	w := &Worker{
+		Store:           st,
+		Runner:          &lumoskit.Runner{Binary: writePartialPublishLumoskit(t, t.TempDir())},
+		GitHubPublisher: publisher,
+		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	w.process(ctx, c)
+	w.Wait()
+
+	github.mu.Lock()
+	updateSHA := github.updateSHA
+	treePaths := append([]string(nil), github.treePaths...)
+	github.mu.Unlock()
+	if updateSHA != "next-commit" {
+		t.Fatalf("github ref update sha = %q, want next-commit", updateSHA)
+	}
+	wantPaths := []string{"test/2026-01/yETH/yETH.t.sol", "test/2026-01/yETH/README.md"}
+	if strings.Join(treePaths, ",") != strings.Join(wantPaths, ",") {
+		t.Fatalf("published paths = %v, want %v", treePaths, wantPaths)
+	}
+
+	updated, err := st.GetCase(ctx, c.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Outcome == nil || *updated.Outcome != "partial" {
+		t.Fatalf("case outcome = %+v, want partial", updated)
+	}
+	events, err := st.CaseEvents(ctx, c.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawPublish bool
+	for _, event := range events {
+		if event.EventType != "github_publish" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal github_publish payload: %v", err)
+		}
+		if payload["published"] == true && payload["outcome"] == "partial" {
+			sawPublish = true
+		}
+	}
+	if !sawPublish {
+		t.Fatalf("partial github_publish event not found: %#v", events)
+	}
+}
+
 func TestWorkerSkipsGenericGitHubPublishWithoutFailingCase(t *testing.T) {
 	ctx := context.Background()
 	outputParent := t.TempDir()
@@ -347,6 +424,33 @@ done
 mkdir -p "$out"
 cat > "$out/summary.json" <<'JSON'
 {"status":"pass","poc":{"status":"verified"}}
+JSON
+printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
+printf '%s\n' '# yETH Incident Report' 'Protocol: yETH' 'Date: 2026-01-25' > "$out/Report.md"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writePartialPublishLumoskit(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-partial-publish-lumoskit")
+	script := `#!/bin/sh
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-root) out="$2"; shift 2 ;;
+    --tx) shift 2 ;;
+    --chain) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out"
+cat > "$out/summary.json" <<'JSON'
+{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"partial","blocker_code":"missing_assumption"}}
 JSON
 printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
 printf '%s\n' '# yETH Incident Report' 'Protocol: yETH' 'Date: 2026-01-25' > "$out/Report.md"

@@ -48,6 +48,8 @@ type Case struct {
 	// When present, its protocol segment is preferred over generic report
 	// headings such as "LumosKit Run Report".
 	IncidentSlug string
+	// Outcome is the Helios outcome that made this artifact publishable.
+	Outcome string
 }
 
 type Result struct {
@@ -257,7 +259,11 @@ func (p *Publisher) commitFiles(ctx context.Context, c Case, spec targetSpec) (s
 }
 
 func commitMessage(c Case, spec targetSpec) string {
-	subject := fmt.Sprintf("Publish verified %s incident artifact bundle", spec.Protocol)
+	publishOutcome := strings.TrimSpace(c.Outcome)
+	if publishOutcome == "" {
+		publishOutcome = "verified"
+	}
+	subject := fmt.Sprintf("Publish %s %s incident artifact bundle", publishOutcome, spec.Protocol)
 	return fmt.Sprintf(`%s
 
 Constraint: Helios publishes from completed LumosKit product artifacts only

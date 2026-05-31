@@ -42,8 +42,8 @@ func TestUIRoutesArePublic(t *testing.T) {
 		}
 		body := rr.Body.String()
 		for _, marker := range []string{
-			`var visibleArtifacts=["PoC.t.sol","REPORT.md","RCA.md","attack_flow.md","multi_leg_reconciliation.md"];`,
-			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol, attack_flow.md, multi_leg_reconciliation.md</span>",
+			`var visibleArtifacts=["PoC.t.sol","REPORT.md","RCA.md"];`,
+			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol</span>",
 			`id="protocol"`,
 			"metadata.protocol=protocol",
 			"function loadCases(quiet)",
@@ -51,6 +51,11 @@ func TestUIRoutesArePublic(t *testing.T) {
 		} {
 			if !strings.Contains(body, marker) {
 				t.Fatalf("GET %s missing product artifact UI marker %q", path, marker)
+			}
+		}
+		for _, hidden := range []string{"attack_flow.md", "multi_leg_reconciliation.md"} {
+			if strings.Contains(body, hidden) {
+				t.Fatalf("GET %s unexpectedly exposes hidden artifact %q", path, hidden)
 			}
 		}
 		if strings.Contains(body, `onclick="readArtifact`) {
