@@ -9,11 +9,15 @@ import (
 func TestReaderExposesPrettyProductArtifactAliases(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "case_1")
-	if err := os.MkdirAll(filepath.Join(root, "report_bundle", "report"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "report_bundle", "poc"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, dir := range []string{
+		filepath.Join(root, "report_bundle", "report"),
+		filepath.Join(root, "report_bundle", "poc"),
+		filepath.Join(root, "report_bundle", "evidence"),
+		filepath.Join(root, "report_bundle", "visuals"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(root, "report_bundle", "report", "REPORT.md"), []byte("# Incident report\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -21,10 +25,40 @@ func TestReaderExposesPrettyProductArtifactAliases(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "RCA.md"), []byte("# RCA\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "report", "RCA.md"), []byte("# Bundle RCA\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "README.md"), []byte("# Bundle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "manifest.json"), []byte(`{"schema":"lumoskit-report-bundle-v1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "report", "run_summary.json"), []byte(`{"status":"pass"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "poc", "LumosPoCBase.sol"), []byte("abstract contract LumosPoCBase {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "evidence", "asset_deltas.json"), []byte(`[]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "visuals", "asset_deltas.dot"), []byte("digraph G {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "report_bundle", "poc", "PoC.t.sol"), []byte("contract PoC {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "artifacts"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "artifacts", "agent_poc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "artifacts", "agent_poc", "attack_flow.md"), []byte("# Attack Flow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "artifacts", "agent_poc", "multi_leg_reconciliation.md"), []byte("# Multi-leg Reconciliation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "artifacts", "agent_poc", "multi_leg_reconciliation.json"), []byte(`{"rows":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "summary.json"), []byte(`{"status":"pass"}`), 0o644); err != nil {
@@ -61,8 +95,44 @@ func TestReaderExposesPrettyProductArtifactAliases(t *testing.T) {
 	if poc.Path != "PoC.t.sol" || poc.Text != "contract PoC {}\n" {
 		t.Fatalf("unexpected PoC read result: %+v", poc)
 	}
+	attackFlow, err := reader.Read(c, "attack_flow.md", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attackFlow.Text != "# Attack Flow\n" {
+		t.Fatalf("unexpected attack flow: %+v", attackFlow)
+	}
+	reconciliation, err := reader.Read(c, "multi_leg_reconciliation.md", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciliation.Text != "# Multi-leg Reconciliation\n" {
+		t.Fatalf("unexpected reconciliation artifact: %+v", reconciliation)
+	}
 
-	for _, path := range []string{"summary.json", "summary.md", "rca.md", "Report.md", "report_bundle/report/REPORT.md", "report_bundle/poc/PoC.t.sol", "artifacts/secret.json", "../RCA.md", "/tmp/RCA.md"} {
+	bundleReadme, err := reader.Read(c, "report_bundle/README.md", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundleReadme.Text != "# Bundle\n" {
+		t.Fatalf("unexpected bundle README: %+v", bundleReadme)
+	}
+	runSummary, err := reader.Read(c, "report_bundle/report/run_summary.json", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runSummary.Text != `{"status":"pass"}` {
+		t.Fatalf("unexpected run summary: %+v", runSummary)
+	}
+	pocBase, err := reader.Read(c, "report_bundle/poc/LumosPoCBase.sol", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pocBase.Text != "abstract contract LumosPoCBase {}\n" {
+		t.Fatalf("unexpected PoC base: %+v", pocBase)
+	}
+
+	for _, path := range []string{"summary.json", "summary.md", "rca.md", "Report.md", "report_bundle/visuals/asset_deltas.png", "artifacts/secret.json", "../RCA.md", "/tmp/RCA.md"} {
 		if _, err := reader.Read(c, path, 0); err == nil {
 			t.Fatalf("Read(%q) succeeded; want rejected", path)
 		}

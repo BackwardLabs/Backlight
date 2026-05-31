@@ -1,0 +1,31 @@
+[Unit]
+Description=Helios remote MCP endpoint
+After=network-online.target helios.service
+Wants=network-online.target
+Requires=helios.service
+
+[Service]
+User=helios
+Group=helios
+WorkingDirectory=/home/ubuntu/lumos/helios
+EnvironmentFile=/srv/helios/env/helios.env
+Environment=HELIOS_BASE_URL=http://127.0.0.1:8080
+Environment=HELIOS_MCP_LISTEN_ADDR=127.0.0.1:8090
+Environment=HELIOS_MCP_PATH=/mcp
+ExecStart=/srv/helios/bin/helios-mcp
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Expose this service through a TLS reverse proxy; do not bind it directly to a
+# public interface without HTTPS. Bearer auth uses HELIOS_MCP_HTTP_TOKEN when set,
+# otherwise HELIOS_API_TOKEN from the EnvironmentFile.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadOnlyPaths=/srv/helios/data
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

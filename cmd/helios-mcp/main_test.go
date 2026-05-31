@@ -45,3 +45,42 @@ func TestOutputBaseExplicitEnvWins(t *testing.T) {
 		t.Fatalf("outputBaseFromEnv() = %q, want explicit base %q", got, explicit)
 	}
 }
+
+func TestLoadConfigHTTPModeUsesAPITokenForMCPAuth(t *testing.T) {
+	t.Setenv("HELIOS_BASE_URL", "http://127.0.0.1:8080")
+	t.Setenv("HELIOS_API_TOKEN", "api-token")
+	t.Setenv("HELIOS_MCP_LISTEN_ADDR", "127.0.0.1:8090")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MCPListenAddr != "127.0.0.1:8090" {
+		t.Fatalf("MCPListenAddr = %q", cfg.MCPListenAddr)
+	}
+	if cfg.MCPPath != "/mcp" {
+		t.Fatalf("MCPPath = %q, want /mcp", cfg.MCPPath)
+	}
+	if cfg.MCPHTTPToken != "api-token" {
+		t.Fatalf("MCPHTTPToken = %q, want API token fallback", cfg.MCPHTTPToken)
+	}
+}
+
+func TestLoadConfigHTTPModeAllowsSeparateMCPToken(t *testing.T) {
+	t.Setenv("HELIOS_BASE_URL", "http://127.0.0.1:8080")
+	t.Setenv("HELIOS_API_TOKEN", "api-token")
+	t.Setenv("HELIOS_MCP_LISTEN_ADDR", "127.0.0.1:8090")
+	t.Setenv("HELIOS_MCP_HTTP_TOKEN", "mcp-token")
+	t.Setenv("HELIOS_MCP_PATH", "mcp")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MCPHTTPToken != "mcp-token" {
+		t.Fatalf("MCPHTTPToken = %q, want MCP-specific token", cfg.MCPHTTPToken)
+	}
+	if cfg.MCPPath != "mcp" {
+		t.Fatalf("MCPPath = %q, want raw configured path", cfg.MCPPath)
+	}
+}

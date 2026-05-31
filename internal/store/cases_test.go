@@ -128,6 +128,57 @@ func TestProtocolFromMetadataFindsNestedProjectName(t *testing.T) {
 	}
 }
 
+func TestIncidentSlugPrefersExplicitMetadataSlug(t *testing.T) {
+	c := &Case{
+		Chain:     "bsc",
+		CreatedAt: "2026-05-26T00:00:00Z",
+		Metadata:  json.RawMessage(`{"protocol":"Unknown","incident_slug":"260526_bsc_fpc"}`),
+	}
+	if got, want := IncidentSlug(c), "260526_bsc_fpc"; got != want {
+		t.Fatalf("IncidentSlug = %q, want %q", got, want)
+	}
+}
+
+func TestSubmitCaseUsesExplicitIncidentSlugForImmutableNames(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	c, _, err := s.SubmitCase(ctx, "bsc", "0x"+strings.Repeat("4", 64), nil, nil, json.RawMessage(`{"incident_slug":"260526_bsc_fpc"}`), false)
+	if err != nil {
+		t.Fatalf("SubmitCase: %v", err)
+	}
+	if !strings.HasPrefix(c.CaseID, "case_260526_bsc_fpc_a01_44444444_") {
+		t.Fatalf("case_id = %q, want explicit incident slug", c.CaseID)
+	}
+	claimed, err := s.ClaimNextQueued(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("claim case: %v", err)
+	}
+	if claimed.OutputRoot == nil || filepath.Base(*claimed.OutputRoot) != "260526_bsc_fpc" {
+		t.Fatalf("output_root = %v, want explicit incident slug basename", claimed.OutputRoot)
+	}
+}
+
+func TestHasIncidentIdentity(t *testing.T) {
+	tests := map[string]bool{
+		`{"protocol":"FPC"}`:                      true,
+		`{"project":{"project_name":"Euler V2"}}`: true,
+		`{"incident_slug":"260526_bsc_fpc"}`:      true,
+		`{"protocol":"Unknown"}`:                  false,
+		`{"submitted_by":"helios-ui"}`:            false,
+		`{`:                                       false,
+	}
+	for raw, want := range tests {
+		if got := HasIncidentIdentity(json.RawMessage(raw)); got != want {
+			t.Fatalf("HasIncidentIdentity(%s) = %v, want %v", raw, got, want)
+		}
+	}
+}
+
 func TestMarkDoneWithPayloadPersistsAnalysisDiagnostics(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, filepath.Join(t.TempDir(), "helios.db"))

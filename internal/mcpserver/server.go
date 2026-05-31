@@ -138,7 +138,7 @@ func initializeResult() map[string]any {
 			"name":    "helios-mcp",
 			"version": "0.1.0",
 		},
-		"instructions": "Read-only Helios artifact gateway. Exposes case metadata and product artifacts: REPORT.md, RCA.md, and PoC.t.sol.",
+		"instructions": "Read-only Helios artifact gateway. Exposes case metadata and allowlisted report_bundle product artifacts.",
 	}
 }
 
@@ -182,10 +182,10 @@ func (s *Server) tools() []toolDef {
 		{
 			Name:        "helios.read_artifact",
 			Title:       "Read allowed case artifact",
-			Description: "Read exactly one allowlisted artifact: REPORT.md, RCA.md, or PoC.t.sol.",
+			Description: "Read exactly one allowlisted artifact, including canonical report_bundle files.",
 			InputSchema: schema(map[string]any{
 				"case_id":   stringProp("Helios case id"),
-				"path":      stringProp("One of: REPORT.md, RCA.md, PoC.t.sol"),
+				"path":      stringProp("Use helios.list_artifacts first. Examples: report_bundle/README.md, report_bundle/report/REPORT.md, report_bundle/report/run_summary.json, report_bundle/poc/PoC.t.sol, attack_flow.md, multi_leg_reconciliation.md"),
 				"max_bytes": intProp("Optional per-call max bytes; can only lower the server cap"),
 			}, []string{"case_id", "path"}),
 			Annotations: readOnly,

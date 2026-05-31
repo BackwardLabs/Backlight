@@ -11,7 +11,10 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -138,6 +141,10 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 		return
 	}
 
+	if err := writeSignalContext(c); err != nil {
+		log.Warn("write signal context failed", "err", err)
+	}
+
 	runStart := time.Now()
 	res := w.Runner.Run(ctx, c.Chain, c.TxHash, *c.OutputRoot)
 	runDuration := time.Since(runStart)
@@ -152,6 +159,11 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 	eventPayload := outcome.TerminalEventPayload(mapped, outcomeInput)
 	eventPayload["duration_ms"] = runDuration.Milliseconds()
 	w.mergeIncidentMetadata(ctx, c)
+	if refreshed, err := w.Store.GetCase(ctx, c.CaseID); err == nil && refreshed != nil {
+		c = refreshed
+	} else if err != nil {
+		log.Warn("refresh case after metadata merge failed", "err", err)
+	}
 
 	if len(res.Stderr) > 0 && (mapped.Outcome == outcome.OutcomeEngineError) {
 		log.Warn("lumoskit stderr captured for engine_error case", "stderr_tail", string(res.Stderr))
@@ -227,15 +239,55 @@ func (w *Worker) shouldAutoRerunPartial(mappedOutcome string, attemptNumber int)
 	return mappedOutcome == outcome.OutcomePartial && w.PartialAutoRerunMaxAttempts > 0 && attemptNumber < w.PartialAutoRerunMaxAttempts
 }
 
+type signalContextFile struct {
+	Schema     string          `json:"schema"`
+	CaseID     string          `json:"case_id"`
+	Chain      string          `json:"chain"`
+	TxHash     string          `json:"tx_hash"`
+	Source     *string         `json:"source"`
+	DetectedAt *string         `json:"detected_at"`
+	Metadata   json.RawMessage `json:"metadata"`
+	WrittenAt  string          `json:"written_at"`
+}
+
+func writeSignalContext(c *store.Case) error {
+	if c == nil || c.OutputRoot == nil {
+		return nil
+	}
+	metadata := c.Metadata
+	if len(metadata) == 0 {
+		metadata = json.RawMessage("{}")
+	}
+	payload := signalContextFile{
+		Schema:     "helios-signal-context-v1",
+		CaseID:     c.CaseID,
+		Chain:      c.Chain,
+		TxHash:     c.TxHash,
+		Source:     c.Source,
+		DetectedAt: c.DetectedAt,
+		Metadata:   metadata,
+		WrittenAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(*c.OutputRoot, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(*c.OutputRoot, "helios_signal_context.json"), append(data, '\n'), 0o644)
+}
+
 func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome string) {
 	if mappedOutcome != outcome.OutcomeVerified || w.GitHubPublisher == nil || !w.GitHubPublisher.Configured() || c.OutputRoot == nil {
 		return
 	}
 	publishCase := githubpublish.Case{
-		CaseID:     c.CaseID,
-		Chain:      c.Chain,
-		TxHash:     c.TxHash,
-		OutputRoot: *c.OutputRoot,
+		CaseID:       c.CaseID,
+		Chain:        c.Chain,
+		TxHash:       c.TxHash,
+		OutputRoot:   *c.OutputRoot,
+		IncidentSlug: store.IncidentSlug(c),
 	}
 	w.wg.Add(1)
 	go func() {
@@ -249,6 +301,20 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 			}); recordErr != nil {
 				w.Logger.Error("record github publish failure event failed", "case_id", publishCase.CaseID, "err", recordErr)
 			}
+			return
+		}
+		if res != nil && !res.Published {
+			if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish", map[string]any{
+				"published":   false,
+				"skipped":     true,
+				"skip_reason": res.SkipReason,
+			}); err != nil {
+				w.Logger.Error("record github publish skip event failed", "case_id", publishCase.CaseID, "err", err)
+			}
+			w.Logger.Info("github publish skipped",
+				"case_id", publishCase.CaseID,
+				"reason", res.SkipReason,
+			)
 			return
 		}
 		if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish", map[string]any{

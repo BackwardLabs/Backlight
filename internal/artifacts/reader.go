@@ -22,6 +22,21 @@ var defaultArtifacts = []artifactSpec{
 	{PublicPath: "REPORT.md", SourcePath: "report_bundle/report/REPORT.md"},
 	{PublicPath: "RCA.md", SourcePath: "RCA.md"},
 	{PublicPath: "PoC.t.sol", SourcePath: "report_bundle/poc/PoC.t.sol"},
+	{PublicPath: "attack_flow.md", SourcePath: "artifacts/agent_poc/attack_flow.md"},
+	{PublicPath: "multi_leg_reconciliation.md", SourcePath: "artifacts/agent_poc/multi_leg_reconciliation.md"},
+	{PublicPath: "multi_leg_reconciliation.json", SourcePath: "artifacts/agent_poc/multi_leg_reconciliation.json"},
+	{PublicPath: "report_bundle/README.md", SourcePath: "report_bundle/README.md"},
+	{PublicPath: "report_bundle/manifest.json", SourcePath: "report_bundle/manifest.json"},
+	{PublicPath: "report_bundle/report/REPORT.md", SourcePath: "report_bundle/report/REPORT.md"},
+	{PublicPath: "report_bundle/report/RCA.md", SourcePath: "report_bundle/report/RCA.md"},
+	{PublicPath: "report_bundle/report/report.json", SourcePath: "report_bundle/report/report.json"},
+	{PublicPath: "report_bundle/report/run_summary.json", SourcePath: "report_bundle/report/run_summary.json"},
+	{PublicPath: "report_bundle/poc/PoC.t.sol", SourcePath: "report_bundle/poc/PoC.t.sol"},
+	{PublicPath: "report_bundle/poc/LumosPoCBase.sol", SourcePath: "report_bundle/poc/LumosPoCBase.sol"},
+	{PublicPath: "report_bundle/evidence/asset_deltas.json", SourcePath: "report_bundle/evidence/asset_deltas.json"},
+	{PublicPath: "report_bundle/evidence/fund_flows.json", SourcePath: "report_bundle/evidence/fund_flows.json"},
+	{PublicPath: "report_bundle/visuals/asset_deltas.dot", SourcePath: "report_bundle/visuals/asset_deltas.dot"},
+	{PublicPath: "report_bundle/visuals/fund_flows.dot", SourcePath: "report_bundle/visuals/fund_flows.dot"},
 }
 
 // Reader enforces exact-path allowlisting and output-root containment.
@@ -158,11 +173,11 @@ func (r *Reader) safeFilePath(root, rel string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("artifact path %q is not allowlisted", rel)
 	}
-	if filepath.IsAbs(rel) || filepath.Clean(rel) != rel || strings.Contains(rel, string(filepath.Separator)) {
-		return "", fmt.Errorf("artifact path %q is not a safe relative file name", rel)
+	if filepath.IsAbs(rel) || filepath.Clean(rel) != rel {
+		return "", fmt.Errorf("artifact path %q is not a safe relative path", rel)
 	}
 	if filepath.IsAbs(sourceRel) || filepath.Clean(sourceRel) != sourceRel {
-		return "", fmt.Errorf("artifact source path %q is not a safe relative file name", sourceRel)
+		return "", fmt.Errorf("artifact source path %q is not a safe relative path", sourceRel)
 	}
 	path := filepath.Join(root, sourceRel)
 	resolved, err := filepath.EvalSymlinks(path)

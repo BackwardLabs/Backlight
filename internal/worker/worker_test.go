@@ -18,6 +18,40 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 )
 
+func TestWriteSignalContextIncludesCaseMetadata(t *testing.T) {
+	outputRoot := t.TempDir()
+	source := "hack-detector:twitter:TenArmorAlert"
+	detectedAt := "2026-05-18T03:58:43Z"
+	c := &store.Case{
+		CaseID:     "case_260518_arb_sea_a01_55555555_abcd",
+		Chain:      "arbitrum",
+		TxHash:     "0x" + strings.Repeat("5", 64),
+		Source:     &source,
+		DetectedAt: &detectedAt,
+		Metadata:   json.RawMessage(`{"protocol_name":"SEA","lumos_signal_id":"sig-1"}`),
+		OutputRoot: &outputRoot,
+	}
+
+	if err := writeSignalContext(c); err != nil {
+		t.Fatalf("write signal context: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outputRoot, "helios_signal_context.json"))
+	if err != nil {
+		t.Fatalf("read signal context: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("decode signal context: %v", err)
+	}
+	if got["schema"] != "helios-signal-context-v1" || got["case_id"] != c.CaseID || got["source"] != source {
+		t.Fatalf("signal context core fields = %#v", got)
+	}
+	metadata := got["metadata"].(map[string]any)
+	if metadata["protocol_name"] != "SEA" || metadata["lumos_signal_id"] != "sig-1" {
+		t.Fatalf("signal context metadata = %#v", metadata)
+	}
+}
+
 func TestWorkerPublishesVerifiedProductArtifacts(t *testing.T) {
 	ctx := context.Background()
 	outputParent := t.TempDir()
@@ -105,6 +139,79 @@ func TestWorkerPublishesVerifiedProductArtifacts(t *testing.T) {
 	}
 }
 
+func TestWorkerSkipsGenericGitHubPublishWithoutFailingCase(t *testing.T) {
+	ctx := context.Background()
+	outputParent := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "bsc", "0x"+strings.Repeat("3", 64), nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	github := newFakeGitHub(t)
+	defer github.server.Close()
+	publisher := githubpublish.New(githubpublish.Config{
+		Token:   "test-token",
+		APIBase: github.server.URL,
+	})
+	publisher.Client = github.server.Client()
+	w := &Worker{
+		Store:           st,
+		Runner:          &lumoskit.Runner{Binary: writeGenericPublishLumoskit(t, t.TempDir())},
+		GitHubPublisher: publisher,
+		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	w.process(ctx, c)
+	w.Wait()
+
+	github.mu.Lock()
+	requests := github.requests
+	github.mu.Unlock()
+	if requests != 0 {
+		t.Fatalf("GitHub requests = %d, want 0 for skipped generic publish", requests)
+	}
+	updated, err := st.GetCase(ctx, c.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Outcome == nil || *updated.Outcome != "verified" || updated.FailureKind != nil {
+		t.Fatalf("case after skipped publish = %+v", updated)
+	}
+	events, err := st.CaseEvents(ctx, c.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawSkip bool
+	for _, event := range events {
+		if event.EventType == "github_publish_failed" {
+			t.Fatalf("unexpected github publish failure event: %+v", event)
+		}
+		if event.EventType != "github_publish" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal github_publish payload: %v", err)
+		}
+		if payload["published"] == false && payload["skipped"] == true && payload["skip_reason"] != "" {
+			sawSkip = true
+		}
+	}
+	if !sawSkip {
+		t.Fatalf("github publish skip event not found: %#v", events)
+	}
+}
+
 func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
 	ctx := context.Background()
 	outputParent := t.TempDir()
@@ -159,6 +266,7 @@ func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
 type fakeGitHub struct {
 	server    *httptest.Server
 	mu        sync.Mutex
+	requests  int
 	treePaths []string
 	updateSHA string
 }
@@ -168,6 +276,9 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 	f := &fakeGitHub{}
 	blobCount := 0
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.requests++
+		f.mu.Unlock()
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			http.Error(w, "bad auth", http.StatusUnauthorized)
 			return
@@ -239,6 +350,33 @@ cat > "$out/summary.json" <<'JSON'
 JSON
 printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
 printf '%s\n' '# yETH Incident Report' 'Protocol: yETH' 'Date: 2026-01-25' > "$out/Report.md"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeGenericPublishLumoskit(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-generic-lumoskit")
+	script := `#!/bin/sh
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-root) out="$2"; shift 2 ;;
+    --tx) shift 2 ;;
+    --chain) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out"
+cat > "$out/summary.json" <<'JSON'
+{"status":"pass","poc":{"status":"verified"},"tx_timestamp":1779811222}
+JSON
+printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
+printf '%s\n' '# LumosKit Run Report — bsc 0x33333333…33333333' '- **Finding**: generic generated report heading' > "$out/Report.md"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

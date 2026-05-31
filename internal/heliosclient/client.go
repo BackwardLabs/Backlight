@@ -130,10 +130,10 @@ func (c *Client) ReadArtifact(ctx context.Context, caseID string, path string, m
 	if strings.Contains(caseID, "/") {
 		return nil, fmt.Errorf("case_id must not contain slash")
 	}
-	if strings.Contains(path, "/") {
-		return nil, fmt.Errorf("path must not contain slash")
+	if !safeArtifactPath(path) {
+		return nil, fmt.Errorf("path must be a clean relative artifact path")
 	}
-	u := c.urlFor("/cases/" + url.PathEscape(caseID) + "/artifacts/" + url.PathEscape(path))
+	u := c.urlFor("/cases/" + url.PathEscape(caseID) + "/artifacts/" + escapeArtifactPath(path))
 	if maxBytes > 0 {
 		q := u.Query()
 		q.Set("max_bytes", strconv.FormatInt(maxBytes, 10))
@@ -178,6 +178,37 @@ func (c *Client) urlFor(path string) *url.URL {
 	u.Path = strings.TrimRight(c.BaseURL.Path, "/") + path
 	u.RawQuery = ""
 	return &u
+}
+
+func safeArtifactPath(path string) bool {
+	return path != "" && !strings.HasPrefix(path, "/") && path == strings.Trim(path, "/") && path == cleanSlashPath(path) && !strings.HasPrefix(path, "../") && path != ".."
+}
+
+func cleanSlashPath(path string) string {
+	parts := strings.Split(path, "/")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			if len(clean) == 0 {
+				return ".."
+			}
+			clean = clean[:len(clean)-1]
+		default:
+			clean = append(clean, part)
+		}
+	}
+	return strings.Join(clean, "/")
+}
+
+func escapeArtifactPath(path string) string {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }
 
 func setIfNotEmpty(q url.Values, key, value string) {

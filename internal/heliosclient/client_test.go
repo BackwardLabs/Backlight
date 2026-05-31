@@ -62,3 +62,36 @@ func writeJSON(t *testing.T, w http.ResponseWriter, v any) {
 		t.Fatal(err)
 	}
 }
+
+func TestReadArtifactAllowsReportBundlePath(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cases/case_1/artifacts/report_bundle/report/run_summary.json" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		writeJSON(t, w, api.ArtifactReadResponse{})
+	}))
+	defer ts.Close()
+
+	c, err := New(ts.URL, "test-token", ts.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ReadArtifact(context.Background(), "case_1", "report_bundle/report/run_summary.json", 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadArtifactRejectsUnsafePath(t *testing.T) {
+	c, err := New("http://127.0.0.1:8080", "test-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"../secret", "report_bundle/../secret", "/report_bundle/README.md", "report_bundle/README.md/"} {
+		if _, err := c.ReadArtifact(context.Background(), "case_1", path, 0); err == nil {
+			t.Fatalf("ReadArtifact accepted unsafe path %q", path)
+		}
+	}
+}

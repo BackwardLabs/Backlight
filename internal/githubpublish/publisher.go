@@ -44,15 +44,21 @@ type Case struct {
 	Chain      string
 	TxHash     string
 	OutputRoot string
+	// IncidentSlug is the stable display slug, for example 260526_bsc_fpc.
+	// When present, its protocol segment is preferred over generic report
+	// headings such as "LumosKit Run Report".
+	IncidentSlug string
 }
 
 type Result struct {
-	CommitSHA  string   `json:"commit_sha"`
-	TargetDir  string   `json:"target_dir"`
-	PoCURL     string   `json:"poc_url"`
-	ReportURL  string   `json:"report_url"`
-	CommitURL  string   `json:"commit_url"`
-	TargetURLs []string `json:"target_urls"`
+	Published  bool     `json:"published"`
+	SkipReason string   `json:"skip_reason,omitempty"`
+	CommitSHA  string   `json:"commit_sha,omitempty"`
+	TargetDir  string   `json:"target_dir,omitempty"`
+	PoCURL     string   `json:"poc_url,omitempty"`
+	ReportURL  string   `json:"report_url,omitempty"`
+	CommitURL  string   `json:"commit_url,omitempty"`
+	TargetURLs []string `json:"target_urls,omitempty"`
 }
 
 type targetFile struct {
@@ -64,6 +70,20 @@ type targetSpec struct {
 	Month    string
 	Protocol string
 	Files    []targetFile
+}
+
+var errSkipPublish = errors.New("github publish skipped")
+
+func skipPublish(reason string) error {
+	return fmt.Errorf("%w: %s", errSkipPublish, reason)
+}
+
+func publishSkipReason(err error) string {
+	reason := strings.TrimSpace(strings.TrimPrefix(err.Error(), errSkipPublish.Error()+":"))
+	if reason == "" {
+		return "publish target is not specific enough"
+	}
+	return reason
 }
 
 func New(cfg Config) *Publisher {
@@ -82,8 +102,11 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if !p.Configured() {
 		return nil, errors.New("github publisher is not configured")
 	}
-	spec, err := buildTargetSpec(c.OutputRoot)
+	spec, err := buildTargetSpec(c.OutputRoot, c.IncidentSlug)
 	if err != nil {
+		if errors.Is(err, errSkipPublish) {
+			return &Result{Published: false, SkipReason: publishSkipReason(err)}, nil
+		}
 		return nil, err
 	}
 	commitSHA, err := p.commitFiles(ctx, c, spec)
@@ -94,6 +117,7 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	pocURL := p.githubBlobURL(spec.Files[0].Path)
 	reportURL := p.githubBlobURL(spec.Files[1].Path)
 	return &Result{
+		Published: true,
 		CommitSHA: commitSHA,
 		TargetDir: targetDir,
 		PoCURL:    pocURL,
@@ -106,7 +130,7 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	}, nil
 }
 
-func buildTargetSpec(outputRoot string) (targetSpec, error) {
+func buildTargetSpec(outputRoot, incidentSlug string) (targetSpec, error) {
 	outputRoot = strings.TrimSpace(outputRoot)
 	if outputRoot == "" {
 		return targetSpec{}, errors.New("output_root is required")
@@ -131,15 +155,21 @@ func buildTargetSpec(outputRoot string) (targetSpec, error) {
 
 	month := incidentMonth(summary, report)
 	if month == "" {
-		return targetSpec{}, errors.New("could not derive incident YYYY-MM from run summary or Report.md")
+		return targetSpec{}, skipPublish("could not derive incident YYYY-MM for GitHub target path")
 	}
-	protocol := incidentProtocol(summary, report)
+	protocol := protocolFromIncidentSlug(incidentSlug)
 	if protocol == "" {
-		return targetSpec{}, errors.New("could not derive protocol from run summary or Report.md")
+		protocol = incidentProtocol(summary, report)
+	}
+	if protocol == "" {
+		return targetSpec{}, skipPublish("could not derive a trustworthy protocol for GitHub target path")
 	}
 	safeProtocol, err := safeSegment(protocol)
 	if err != nil {
 		return targetSpec{}, fmt.Errorf("invalid protocol %q: %w", protocol, err)
+	}
+	if isGenericPublishProtocol(protocol) || isGenericPublishProtocol(safeProtocol) {
+		return targetSpec{}, skipPublish(fmt.Sprintf("generic protocol %q is not publishable", safeProtocol))
 	}
 
 	targetDir := path.Join("test", month, safeProtocol)
@@ -418,14 +448,11 @@ func monthFromJSON(v any) string {
 		switch x := node.(type) {
 		case map[string]any:
 			for k, val := range x {
-				kl := strings.ToLower(k)
-				if strings.Contains(kl, "created_at") {
+				if !isIncidentDateKey(k) {
 					continue
 				}
-				if strings.Contains(kl, "date") || strings.Contains(kl, "timestamp") || strings.Contains(kl, "time") {
-					if month := monthFromValue(val); month != "" {
-						return month
-					}
+				if month := monthFromValue(val); month != "" {
+					return month
 				}
 			}
 			for _, val := range x {
@@ -443,6 +470,14 @@ func monthFromJSON(v any) string {
 		return ""
 	}
 	return walk(v)
+}
+
+func isIncidentDateKey(key string) bool {
+	kl := strings.ToLower(strings.TrimSpace(key))
+	if strings.Contains(kl, "created_at") || strings.Contains(kl, "duration") || strings.Contains(kl, "elapsed") || strings.Contains(kl, "runtime") || strings.Contains(kl, "timeout") {
+		return false
+	}
+	return strings.Contains(kl, "date") || strings.Contains(kl, "timestamp") || kl == "time" || strings.HasSuffix(kl, "_time")
 }
 
 func monthFromValue(v any) string {
@@ -468,8 +503,30 @@ func monthFromUnix(n float64) string {
 	if seconds > 10_000_000_000 {
 		seconds = seconds / 1000
 	}
+	if seconds < 946684800 || seconds > 4102444800 {
+		return ""
+	}
 	return time.Unix(seconds, 0).UTC().Format("2006-01")
 }
+
+func protocolFromIncidentSlug(slug string) string {
+	slug = strings.TrimSpace(filepath.Base(slug))
+	if slug == "" {
+		return ""
+	}
+	parts := strings.Split(slug, "_")
+	if len(parts) < 3 {
+		return ""
+	}
+	protocol := strings.Join(parts[2:], "_")
+	protocol = slugCollisionSuffixRe.ReplaceAllString(protocol, "")
+	if protocol == "" || strings.EqualFold(protocol, "unknown") {
+		return ""
+	}
+	return protocol
+}
+
+var slugCollisionSuffixRe = regexp.MustCompile(`-\d+$`)
 
 var protocolLineRe = regexp.MustCompile(`(?im)^\s*@?protocol(?:\s+name)?\s*[:|-]\s*([A-Za-z0-9][A-Za-z0-9 ._/-]*)\s*$`)
 var headingRe = regexp.MustCompile(`(?m)^#\s+(.+?)\s*$`)
@@ -549,7 +606,43 @@ func cleanProtocol(s string) string {
 			s = strings.TrimSpace(s[:idx])
 		}
 	}
-	return strings.Trim(s, "`*_ ")
+	s = strings.Trim(s, "`*_ ")
+	if isGenericPublishProtocol(s) {
+		return ""
+	}
+	return s
+}
+
+func isGenericPublishProtocol(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return true
+	}
+	var compact strings.Builder
+	tokens := make([]string, 0, 4)
+	var token strings.Builder
+	flushToken := func() {
+		if token.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, token.String())
+		token.Reset()
+	}
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			compact.WriteRune(r)
+			token.WriteRune(r)
+		} else {
+			flushToken()
+		}
+	}
+	flushToken()
+	normalized := compact.String()
+	switch normalized {
+	case "unknown", "unknownprotocol", "protocol", "project", "incident", "incidentreport", "exploitreport", "report", "analysis", "summary", "run", "rootcause", "rootcauseanalysis", "lumos", "lumosrun", "lumosrunreport", "lumoskit", "lumoskitrun", "lumoskitrunreport":
+		return true
+	}
+	return len(tokens) > 0 && (tokens[0] == "lumos" || tokens[0] == "lumoskit")
 }
 
 func safeSegment(s string) (string, error) {

@@ -122,8 +122,8 @@ checked-in Dockerfile only packages Helios itself.
 ## Read-only MCP gateway
 
 MCP support is intentionally narrow: MCP clients can inspect Helios cases and
-read only the product-facing files `summary.json`, `summary.md`, `rca.md`,
-`PoC.t.sol`, and `Report.md` from a case output root. The MCP server does not
+read only the allowlisted product-facing report bundle files under `report_bundle/`
+from a case output root. The MCP server does not
 run `lumoskit`,
 write files, trigger downstream webhooks, or expose arbitrary shell/filesystem
 access.
@@ -150,8 +150,11 @@ go build -o dist/helios-mcp ./cmd/helios-mcp
 go build -o dist/helios-mcp-bridge ./cmd/helios-mcp-bridge
 ```
 
-Then configure an MCP client from `deploy/mcp/client-config.example.json` or
-`deploy/mcp/client-config.bridge.example.json`.
+Then configure a local stdio MCP client from `deploy/mcp/client-config.example.json` or
+`deploy/mcp/client-config.bridge.example.json`. For remote clients that should connect by URL,
+run `helios-mcp` in HTTP mode behind TLS by setting `HELIOS_MCP_LISTEN_ADDR`;
+the endpoint defaults to `/mcp` and uses bearer auth from `HELIOS_MCP_HTTP_TOKEN`
+(or `HELIOS_API_TOKEN` when the MCP-specific token is unset).
 
 ## Web UI
 
@@ -160,10 +163,11 @@ Open `http://127.0.0.1:18080/ui` when running with the local env from
 lightweight Helios console for manual analysis work:
 
 - save the local `HELIOS_API_TOKEN` in browser localStorage
-- submit `POST /cases` with `chain`, `tx_hash`, optional metadata, and
-  `force_rerun`; include metadata `protocol`/`protocol_name`/`project` when
-  available so the LumosKit output directory becomes readable, e.g.
-  `outputs/260526_eth_curve/`
+- submit `POST /cases` with `chain`, `tx_hash`, optional incident metadata,
+  and optional `force_rerun`; if `metadata.protocol`, `protocol_name`,
+  `project`, `display_name`, or `incident_slug` is absent, Helios makes a
+  best-effort preflight resolver pass before LumosKit and falls back to
+  `unknown` when it cannot identify a protocol, e.g. `outputs/260526_eth_curve/`
 - poll `GET /cases` for queued/running/done/failed progress
 - inspect `GET /cases/{case_id}` analysis result, events, output paths,
   handoff attempts, and notifications
@@ -270,8 +274,10 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
 - **GitHub publish.** When `GITHUB_TOKEN` or `GH_TOKEN` is set, Helios publishes
   verified product artifacts to `test/{YYYY-MM}/{Protocol}/` in the configured
   Q1 repo. The publish step requires `PoC.t.sol` and `Report.md`; `Report.md`
-  becomes `README.md`, and date/protocol are derived from `Report.md` or
-  `summary.json`.
+  becomes `README.md`, and date/protocol are derived from `incident_slug`,
+  `Report.md`, or `summary.json`. Missing date/protocol or generic fallback names such as `unknown`,
+  `lumos_*`, or `LumosKit-Run` skip GitHub publish without changing the case
+  outcome.
 - **Pre-Lumos incident JSON.** When `HELIOS_PRE_LUMOS_ENABLED=true` and
   `HELIOS_PRE_LUMOS_SEED_ROOT` is set, verified cases also run
   `scripts/pre_lumos_agent.py`. The runner loads the vendored

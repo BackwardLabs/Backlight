@@ -8,32 +8,36 @@ import (
 )
 
 type Config struct {
-	APIToken              string
-	DBPath                string
-	OutputRoot            string
-	ListenAddr            string
-	MaxConcurrent         int
-	LumoskitBin           string
-	WorkerPollMillis      int
-	DownstreamURLs        []string
-	DownstreamBearer      string
-	OperatorWebhook       string
-	TelegramBotToken      string
-	TelegramChatID        string
-	TelegramAPIBase       string
-	GitHubToken           string
-	GitHubOwner           string
-	GitHubRepo            string
-	GitHubBranch          string
-	PreLumosEnabled       bool
-	PreLumosPythonBin     string
-	PreLumosAgentScript   string
-	PreLumosSkillDir      string
-	PreLumosSeedRoot      string
-	PreLumosYear          string
-	PreLumosModel         string
-	PreLumosOpenAIBaseURL string
-	PreLumosWebSearch     bool
+	APIToken                string
+	DBPath                  string
+	OutputRoot              string
+	ListenAddr              string
+	MaxConcurrent           int
+	LumoskitBin             string
+	WorkerPollMillis        int
+	DownstreamURLs          []string
+	DownstreamBearer        string
+	OperatorWebhook         string
+	TelegramBotToken        string
+	TelegramChatID          string
+	TelegramAPIBase         string
+	GitHubToken             string
+	GitHubOwner             string
+	GitHubRepo              string
+	GitHubBranch            string
+	PreLumosEnabled         bool
+	PreLumosPythonBin       string
+	PreLumosAgentScript     string
+	PreLumosSkillDir        string
+	PreLumosSeedRoot        string
+	PreLumosYear            string
+	PreLumosModel           string
+	PreLumosOpenAIBaseURL   string
+	PreLumosWebSearch       bool
+	IncidentResolverEnabled bool
+	EtherscanAPIKey         string
+	EtherscanBaseURL        string
+	IncidentRPCURL          string
 
 	PartialAutoRerunMaxAttempts    int
 	HandoffRetryMaxAttempts        int
@@ -74,6 +78,10 @@ func Load() (*Config, error) {
 		PreLumosModel:                  firstNonEmpty(os.Getenv("HELIOS_PRE_LUMOS_MODEL"), os.Getenv("OPENAI_MODEL")),
 		PreLumosOpenAIBaseURL:          envDefault("HELIOS_PRE_LUMOS_OPENAI_BASE_URL", "http://127.0.0.1:10631/v1"),
 		PreLumosWebSearch:              envBool("HELIOS_PRE_LUMOS_WEB_SEARCH", false),
+		IncidentResolverEnabled:        envBool("HELIOS_INCIDENT_RESOLVER_ENABLED", true),
+		EtherscanAPIKey:                firstNonEmpty(os.Getenv("HELIOS_ETHERSCAN_API_KEY"), os.Getenv("ETHERSCAN_API_KEY")),
+		EtherscanBaseURL:               envDefault("HELIOS_ETHERSCAN_BASE_URL", "https://api.etherscan.io/v2/api"),
+		IncidentRPCURL:                 firstNonEmpty(os.Getenv("HELIOS_INCIDENT_RPC_URL"), os.Getenv("CEFG_LIVE_RPC_URL"), os.Getenv("RPC_URL"), os.Getenv("ETH_RPC_URL")),
 		PartialAutoRerunMaxAttempts:    envInt("HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS", 3),
 		HandoffRetryMaxAttempts:        envInt("HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS", 5),
 		HandoffRetryBackoffBaseSeconds: envInt("HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS", 2),

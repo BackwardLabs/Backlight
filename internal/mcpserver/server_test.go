@@ -100,7 +100,7 @@ func (f fakeClient) GetCase(context.Context, string) (*api.CaseDetailResponse, e
 type fakeArtifacts struct{}
 
 func (fakeArtifacts) AllowedPaths() []string {
-	return []string{"REPORT.md", "RCA.md", "PoC.t.sol"}
+	return []string{"REPORT.md", "RCA.md", "PoC.t.sol", "attack_flow.md", "multi_leg_reconciliation.md"}
 }
 
 func (fakeArtifacts) List(artifacts.CaseRef) ([]artifacts.FileInfo, error) {

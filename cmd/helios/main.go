@@ -14,6 +14,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/config"
 	"github.com/UPside-Lumos-V2/helios/internal/githubpublish"
 	"github.com/UPside-Lumos-V2/helios/internal/handoff"
+	"github.com/UPside-Lumos-V2/helios/internal/incidentresolver"
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
 	"github.com/UPside-Lumos-V2/helios/internal/metrics"
 	"github.com/UPside-Lumos-V2/helios/internal/notify"
@@ -105,11 +106,23 @@ func main() {
 		OpenAIBaseURL: cfg.PreLumosOpenAIBaseURL,
 		WebSearch:     cfg.PreLumosWebSearch,
 	}
+	incidentResolver := &incidentresolver.Resolver{
+		Enabled:          cfg.IncidentResolverEnabled,
+		EtherscanAPIKey:  cfg.EtherscanAPIKey,
+		EtherscanBaseURL: cfg.EtherscanBaseURL,
+		RPCURL:           cfg.IncidentRPCURL,
+		Client:           httpClient,
+	}
 	logger.Info("pre-lumos agent configured",
 		"enabled", preLumosRunner.Configured(),
 		"seed_root_set", cfg.PreLumosSeedRoot != "",
 		"openai_base_url", cfg.PreLumosOpenAIBaseURL,
 		"web_search", cfg.PreLumosWebSearch,
+	)
+	logger.Info("incident resolver configured",
+		"enabled", incidentResolver.Configured(),
+		"etherscan_key_set", cfg.EtherscanAPIKey != "",
+		"rpc_url_set", cfg.IncidentRPCURL != "",
 	)
 
 	w := &worker.Worker{
@@ -127,9 +140,11 @@ func main() {
 	}
 	w.Start(ctx)
 
+	apiServer := api.NewServer(cfg, st, dispatcher)
+	apiServer.Resolver = incidentResolver
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           api.NewServer(cfg, st, dispatcher).Handler(),
+		Handler:           apiServer.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

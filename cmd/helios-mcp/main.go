@@ -49,8 +49,26 @@ func main() {
 		}
 	}
 
-	logger.Info("helios-mcp starting", "source", cfg.Source(), "base_url", cfg.HeliosBaseURL, "bridge_db", cfg.BridgeDBPath, "output_base", cfg.OutputBase, "max_bytes", cfg.MaxBytes)
+	logger.Info("helios-mcp starting", "source", cfg.Source(), "base_url", cfg.HeliosBaseURL, "bridge_db", cfg.BridgeDBPath, "output_base", cfg.OutputBase, "max_bytes", cfg.MaxBytes, "listen_addr", cfg.MCPListenAddr, "mcp_path", cfg.MCPPath)
 	srv := &mcpserver.Server{Client: client, Artifacts: reader, Logger: logger}
+	if cfg.MCPListenAddr != "" {
+		httpSrv := &http.Server{
+			Addr:    cfg.MCPListenAddr,
+			Handler: srv.Handler(ctx, mcpserver.HTTPOptions{Path: cfg.MCPPath, BearerToken: cfg.MCPHTTPToken}),
+		}
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = httpSrv.Shutdown(shutdownCtx)
+		}()
+		logger.Info("helios-mcp http listening", "addr", cfg.MCPListenAddr, "path", cfg.MCPPath, "auth", cfg.MCPHTTPToken != "")
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed && ctx.Err() == nil {
+			logger.Error("mcp http server exited", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := srv.Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		logger.Error("mcp server exited", "err", err)
 		os.Exit(1)
@@ -64,6 +82,9 @@ type config struct {
 	OutputBase     string
 	MaxBytes       int64
 	HTTPTimeout    time.Duration
+	MCPListenAddr  string
+	MCPPath        string
+	MCPHTTPToken   string
 }
 
 func loadConfig() (*config, error) {
@@ -74,6 +95,9 @@ func loadConfig() (*config, error) {
 		OutputBase:     outputBaseFromEnv(os.Getenv("HELIOS_OUTPUT_BASE"), os.Getenv("HELIOS_OUTPUT_ROOT"), os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH")),
 		MaxBytes:       envInt64("HELIOS_MCP_MAX_BYTES", artifacts.DefaultMaxBytes),
 		HTTPTimeout:    time.Duration(envInt64("HELIOS_MCP_HTTP_TIMEOUT_SECONDS", 30)) * time.Second,
+		MCPListenAddr:  strings.TrimSpace(os.Getenv("HELIOS_MCP_LISTEN_ADDR")),
+		MCPPath:        envDefault("HELIOS_MCP_PATH", "/mcp"),
+		MCPHTTPToken:   firstNonEmpty(os.Getenv("HELIOS_MCP_HTTP_TOKEN"), os.Getenv("HELIOS_API_TOKEN")),
 	}
 	if cfg.BridgeDBPath == "" {
 		if cfg.HeliosBaseURL == "" {
@@ -85,6 +109,9 @@ func loadConfig() (*config, error) {
 	}
 	if cfg.BridgeDBPath != "" && cfg.OutputBase == "" {
 		return nil, fmt.Errorf("HELIOS_OUTPUT_BASE or HELIOS_OUTPUT_ROOT is required for bridge mode")
+	}
+	if cfg.MCPListenAddr != "" && cfg.MCPHTTPToken == "" {
+		return nil, fmt.Errorf("HELIOS_MCP_HTTP_TOKEN is required for HTTP mode unless HELIOS_API_TOKEN is set")
 	}
 	return cfg, nil
 }
@@ -143,6 +170,13 @@ func baseURLFromListenAddr(listenAddr string) string {
 		return "http://127.0.0.1" + listenAddr
 	}
 	return "http://" + listenAddr
+}
+
+func envDefault(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
 }
 
 func firstNonEmpty(values ...string) string {

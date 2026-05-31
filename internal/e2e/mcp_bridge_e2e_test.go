@@ -145,7 +145,7 @@ printf '%s\n' '# Report' 'phase2 bridge e2e report' > "$out/report_bundle/report
 
 func submitCase(t *testing.T, baseURL, token string) string {
 	t.Helper()
-	body := strings.NewReader(`{"chain":"ethereum","tx_hash":"0x0000000000000000000000000000000000000000000000000000000000000001"}`)
+	body := strings.NewReader(`{"chain":"ethereum","tx_hash":"0x0000000000000000000000000000000000000000000000000000000000000001","metadata":{"protocol":"bridge-e2e"}}`)
 	req, err := http.NewRequest(http.MethodPost, baseURL+"/cases", body)
 	if err != nil {
 		t.Fatal(err)

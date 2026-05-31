@@ -27,6 +27,26 @@ CREATE INDEX IF NOT EXISTS idx_cases_chain_tx ON cases(chain, tx_hash, attempt_n
 CREATE INDEX IF NOT EXISTS idx_cases_state    ON cases(state);
 CREATE INDEX IF NOT EXISTS idx_cases_created  ON cases(created_at DESC);
 
+CREATE TABLE IF NOT EXISTS incoming_signals (
+	lumos_signal_id   TEXT PRIMARY KEY,
+	incident_group_id TEXT NOT NULL,
+	case_id           TEXT NOT NULL,
+	chain             TEXT NOT NULL,
+	tx_hash           TEXT NOT NULL,
+	protocol_name     TEXT NOT NULL,
+	source            TEXT NOT NULL,
+	source_url        TEXT NOT NULL,
+	detected_at       TEXT NOT NULL,
+	metadata          TEXT NOT NULL DEFAULT '{}',
+	received_at       TEXT NOT NULL,
+	updated_at        TEXT NOT NULL,
+	FOREIGN KEY (case_id) REFERENCES cases(case_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_incoming_signals_case     ON incoming_signals(case_id, received_at);
+CREATE INDEX IF NOT EXISTS idx_incoming_signals_group    ON incoming_signals(incident_group_id, received_at);
+CREATE INDEX IF NOT EXISTS idx_incoming_signals_chain_tx ON incoming_signals(chain, tx_hash, received_at);
+
 CREATE TABLE IF NOT EXISTS case_events (
 	event_id     TEXT PRIMARY KEY,
 	case_id      TEXT NOT NULL,

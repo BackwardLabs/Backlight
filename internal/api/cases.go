@@ -19,8 +19,10 @@ func (s *Server) handleCreateCase(w http.ResponseWriter, r *http.Request) {
 		respondValidationErrors(w, errs)
 		return
 	}
+	ctx := ctxOrBackground(r)
+	metadata := s.enrichIncidentMetadata(ctx, req.Chain, req.TxHash, req.Metadata)
 	force := req.ForceRerun != nil && *req.ForceRerun
-	c, dedup, err := s.Store.SubmitCase(ctxOrBackground(r), req.Chain, req.TxHash, req.Source, req.DetectedAt, req.Metadata, force)
+	c, dedup, err := s.Store.SubmitCase(ctx, req.Chain, req.TxHash, req.Source, req.DetectedAt, metadata, force)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "store_error", err.Error(), nil)
 		return

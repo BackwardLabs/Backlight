@@ -78,6 +78,14 @@ func TestArtifactAPIReadsOnlyAllowlistedCaseFiles(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer secret")
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("report_bundle artifact status = %d: %s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/cases/"+c.CaseID+"/artifacts/artifacts/secret.json", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("non-product artifact status = %d, want 409", rr.Code)
 	}

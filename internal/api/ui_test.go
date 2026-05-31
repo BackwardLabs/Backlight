@@ -42,12 +42,22 @@ func TestUIRoutesArePublic(t *testing.T) {
 		}
 		body := rr.Body.String()
 		for _, marker := range []string{
-			`var visibleArtifacts=["REPORT.md","RCA.md","PoC.t.sol"];`,
-			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol</span>",
+			`var visibleArtifacts=["PoC.t.sol","REPORT.md","RCA.md","attack_flow.md","multi_leg_reconciliation.md"];`,
+			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol, attack_flow.md, multi_leg_reconciliation.md</span>",
+			`id="protocol"`,
+			"metadata.protocol=protocol",
+			"function loadCases(quiet)",
+			"data-artifact",
 		} {
 			if !strings.Contains(body, marker) {
 				t.Fatalf("GET %s missing product artifact UI marker %q", path, marker)
 			}
+		}
+		if strings.Contains(body, `onclick="readArtifact`) {
+			t.Fatalf("GET %s uses an inline artifact click handler", path)
+		}
+		if !strings.Contains(body, "function pickArtifact(files,name)") {
+			t.Fatalf("GET %s missing artifact label/path picker", path)
 		}
 		for _, marker := range []string{
 			"overflow-x:hidden",

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/UPside-Lumos-V2/helios/internal/config"
@@ -10,10 +12,15 @@ import (
 
 // Server is the helios HTTP surface. Worker/lumoskit/notify modules will be
 // wired through dependencies on this struct in later iterations.
+type IncidentMetadataResolver interface {
+	EnrichIncidentMetadata(ctx context.Context, chain, txHash string, metadata json.RawMessage) (json.RawMessage, error)
+}
+
 type Server struct {
 	Config     *config.Config
 	Store      *store.Store
 	Dispatcher *handoff.Dispatcher // nil when no downstream URLs are configured
+	Resolver   IncidentMetadataResolver
 }
 
 func NewServer(cfg *config.Config, st *store.Store, dispatcher *handoff.Dispatcher) *Server {

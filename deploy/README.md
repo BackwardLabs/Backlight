@@ -119,6 +119,18 @@ still inherit any process env through systemd, but the local-checkout deployment
 path defaults to LumosKit's own `.env` contract to avoid duplicating those keys in
 `helios.env`.
 
+Optional preflight incident naming can run before LumosKit when Helios has scan/RPC envs:
+
+```bash
+HELIOS_INCIDENT_RESOLVER_ENABLED=true
+ETHERSCAN_API_KEY=replace-with-etherscan-v2-key
+# Optional, used for ERC20 symbol/name calls on candidate addresses:
+HELIOS_INCIDENT_RPC_URL=https://...
+```
+
+If the resolver cannot identify a protocol, submission still proceeds with the
+normal `unknown` slug and later analysis may enrich `incident_slug`.
+
 ## systemd
 
 ```bash
@@ -157,7 +169,7 @@ curl -X POST https://helios.example.com/cases \
   -d '{
     "chain": "ethereum",
     "tx_hash": "0x0000000000000000000000000000000000000000000000000000000000000001",
-    "metadata": {"source": "prod-smoke"}
+    "metadata": {"source": "prod-smoke", "protocol": "curve"}
   }'
 ```
 
@@ -171,15 +183,19 @@ Then verify:
 
 ## MCP Phase 1/2: read-only artifact gateway + downstream bridge
 
-`helios-mcp` is a stdio MCP server. Do not run it as a public network service
-or as a standalone systemd daemon. The MCP client starts the binary and talks to
-it over stdin/stdout.
+`helios-mcp` supports two transports:
+
+- stdio, the default for local MCP clients. The MCP client starts the binary and
+  talks to it over stdin/stdout.
+- stateless Streamable HTTP, enabled with `HELIOS_MCP_LISTEN_ADDR`, for remote
+  MCP clients that should connect by URL. Put it behind TLS and bearer auth;
+  the HTTP endpoint defaults to `/mcp`.
 
 `helios-mcp-bridge` is the Phase 2 downstream receiver. It is a local HTTP
 service that receives Helios handoff payloads and stores a small SQLite index.
 Run this one under systemd if you want automatic MCP indexing.
 
-Phase 1 direct flow:
+Phase 1 direct flow (stdio):
 
 ```text
 MCP client -> /srv/helios/bin/helios-mcp
@@ -187,12 +203,21 @@ MCP client -> /srv/helios/bin/helios-mcp
            -> server-side allowlisted artifact reads
 ```
 
-Phase 2 indexed flow:
+Phase 2 indexed flow (stdio):
 
 ```text
 Helios -> POST /handoff -> helios-mcp-bridge -> bridge SQLite index
 MCP client -> /srv/helios/bin/helios-mcp -> bridge SQLite index
                                           -> allowlisted files next to the bridge DB
+```
+
+Remote HTTP flow:
+
+```text
+MCP client --url https://helios.example.com/mcp
+           -> reverse proxy TLS
+           -> helios-mcp HTTP mode on HELIOS_MCP_LISTEN_ADDR
+           -> Helios API or bridge index
 ```
 
 Exposed tools:
@@ -202,13 +227,21 @@ Exposed tools:
 - `helios.list_artifacts` -> existence/size for allowlisted case files
 - `helios.read_artifact` -> read one allowlisted case file
 
-The only artifact paths exposed are:
+The only artifact paths exposed are the text-oriented report bundle files:
 
-- `summary.json`
-- `summary.md`
-- `rca.md`
-- `PoC.t.sol`
-- `Report.md`
+- `REPORT.md`, `RCA.md`, and `PoC.t.sol` as convenience aliases
+- `report_bundle/README.md`
+- `report_bundle/manifest.json`
+- `report_bundle/report/REPORT.md`
+- `report_bundle/report/RCA.md`
+- `report_bundle/report/report.json`
+- `report_bundle/report/run_summary.json`
+- `report_bundle/poc/PoC.t.sol`
+- `report_bundle/poc/LumosPoCBase.sol`
+- `report_bundle/evidence/asset_deltas.json`
+- `report_bundle/evidence/fund_flows.json`
+- `report_bundle/visuals/asset_deltas.dot`
+- `report_bundle/visuals/fund_flows.dot`
 
 Required MCP env:
 
@@ -221,16 +254,28 @@ For bridge/indexed mode, replace `HELIOS_BASE_URL` and `HELIOS_API_TOKEN` with:
 
 Optional MCP env:
 
+- `HELIOS_MCP_LISTEN_ADDR`, enables HTTP mode, for example `127.0.0.1:8090`.
+- `HELIOS_MCP_PATH`, HTTP endpoint path, default `/mcp`.
+- `HELIOS_MCP_HTTP_TOKEN`, bearer token for HTTP mode. Defaults to
+  `HELIOS_API_TOKEN` when unset.
 - `HELIOS_OUTPUT_ROOT` / `HELIOS_OUTPUT_BASE`, bridge-mode or legacy
   direct-file containment override. Usually leave unset in direct mode because
   Helios serves artifacts server-side. `/` is rejected.
 - `HELIOS_MCP_MAX_BYTES`, default `1048576`
 - `HELIOS_MCP_HTTP_TIMEOUT_SECONDS`, default `30`
 
-Use `deploy/mcp/client-config.example.json` for direct mode or
-`deploy/mcp/client-config.bridge.example.json` for indexed mode. Keep the MCP
-binary on the same host as Helios/output storage unless you intentionally mount
-the output directory read-only to the MCP runtime.
+Use `deploy/mcp/client-config.example.json` for local stdio direct mode or
+`deploy/mcp/client-config.bridge.example.json` for local stdio indexed mode.
+For remote URL access with Codex:
+
+```bash
+codex mcp add helios \
+  --url https://helios.example.com/mcp \
+  --bearer-token-env-var HELIOS_MCP_HTTP_TOKEN
+```
+
+Keep the MCP binary on the same host as Helios/output storage unless you
+intentionally mount the output directory read-only to the MCP runtime.
 
 To enable Phase 2 indexing, set:
 
@@ -263,7 +308,9 @@ HELIOS_GITHUB_PUBLISH_BRANCH=main
 
 Helios publishes `PoC.t.sol` and `Report.md` only after LumosKit maps the case
 to `outcome=verified`; `Report.md` is copied to `README.md` under
-`test/{YYYY-MM}/{Protocol}/`.
+`test/{YYYY-MM}/{Protocol}/`. If the date/protocol is missing, or the only available protocol label is a
+generic fallback such as `unknown`, `lumos_*`, or `LumosKit-Run`, Helios records
+a skipped publish event instead of creating a GitHub commit or failing the case.
 
 To enable Pre-Lumos importer JSON generation, install `uv` or provide a Python
 environment that already has `requirements-pre-lumos.txt` installed, then add:

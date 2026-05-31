@@ -67,10 +67,84 @@ func pathExists(path string) (bool, error) {
 // IncidentSlug returns the display slug for a case. Unlike case_id, this may
 // improve after analysis enriches case metadata with a protocol label.
 func IncidentSlug(c *Case) string {
+	if slug := incidentSlugFromMetadata(c.Metadata); slug != "" {
+		return slug
+	}
 	return incidentOutputSlug(c)
 }
 
+// HasIncidentIdentity reports whether metadata can produce a non-generic
+// incident slug at case creation time. API callers use this to avoid creating
+// immutable case IDs and output roots with an "unknown" protocol segment.
+func HasIncidentIdentity(metadata json.RawMessage) bool {
+	if incidentSlugFromMetadata(metadata) != "" {
+		return true
+	}
+	return protocolSlug(protocolFromMetadata(metadata)) != "unknown"
+}
+
+func incidentSlugFromMetadata(metadata json.RawMessage) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var decoded any
+	if err := json.Unmarshal(metadata, &decoded); err != nil {
+		return ""
+	}
+	return incidentSlugFromValue(decoded)
+}
+
+func incidentSlugFromValue(v any) string {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, key := range []string{"incident_slug", "incidentSlug", "display_slug", "displaySlug"} {
+			if val, ok := x[key]; ok {
+				if s, ok := val.(string); ok {
+					return cleanIncidentSlug(s)
+				}
+			}
+		}
+		for key, val := range x {
+			normalized := compactKey(key)
+			if normalized == "incidentslug" || normalized == "displayslug" {
+				if s, ok := val.(string); ok {
+					return cleanIncidentSlug(s)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func cleanIncidentSlug(raw string) string {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" || strings.Contains(raw, "/") || strings.Contains(raw, "\\") {
+		return ""
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range raw {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	slug := strings.Trim(b.String(), "_")
+	if slug == "" || slug == "unknown" || isAddressLike(slug) {
+		return ""
+	}
+	return slug
+}
+
 func incidentOutputSlug(c *Case) string {
+	if slug := incidentSlugFromMetadata(c.Metadata); slug != "" {
+		return slug
+	}
 	return strings.Join([]string{
 		incidentDateToken(c),
 		chainAlias(c.Chain),
@@ -164,7 +238,7 @@ func protocolFromMetadata(metadata json.RawMessage) string {
 func protocolFromValue(v any) string {
 	switch x := v.(type) {
 	case map[string]any:
-		for _, key := range []string{"protocol", "protocol_name", "protocolName", "project", "project_name", "projectName"} {
+		for _, key := range []string{"protocol", "protocol_name", "protocolName", "project", "project_name", "projectName", "display_name", "displayName"} {
 			if val, ok := x[key]; ok {
 				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
 					return s
@@ -173,7 +247,7 @@ func protocolFromValue(v any) string {
 		}
 		for key, val := range x {
 			normalized := compactKey(key)
-			if normalized == "protocol" || normalized == "protocolname" || normalized == "project" || normalized == "projectname" {
+			if normalized == "protocol" || normalized == "protocolname" || normalized == "project" || normalized == "projectname" || normalized == "displayname" {
 				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
 					return s
 				}

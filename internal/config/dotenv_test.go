@@ -8,7 +8,7 @@ import (
 
 func TestLoadReadsDotEnvLocal(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir)
+	testChdir(t, dir)
 	restoreEnv(t,
 		"HELIOS_API_TOKEN",
 		"HELIOS_DB_PATH",
@@ -41,7 +41,7 @@ HELIOS_GITHUB_PUBLISH_BRANCH=feature/test
 
 func TestDotEnvLocalOverridesDotEnvButNotProcessEnv(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir)
+	testChdir(t, dir)
 	restoreEnv(t, "GH_TOKEN", "HELIOS_GITHUB_PUBLISH_REPO")
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("GH_TOKEN=base-token\nHELIOS_GITHUB_PUBLISH_REPO=base-repo\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestDotEnvLocalOverridesDotEnvButNotProcessEnv(t *testing.T) {
 
 func TestLoadRejectsEnabledPreLumosWithoutSeedRoot(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir)
+	testChdir(t, dir)
 	restoreEnv(t,
 		"HELIOS_API_TOKEN",
 		"HELIOS_DB_PATH",
@@ -87,6 +87,20 @@ OPENAI_API_KEY=test-key
 	if err == nil || err.Error() != "HELIOS_PRE_LUMOS_SEED_ROOT is required when HELIOS_PRE_LUMOS_ENABLED=true" {
 		t.Fatalf("Load error = %v, want missing seed root", err)
 	}
+}
+
+func testChdir(t *testing.T, dir string) {
+	t.Helper()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(old)
+	})
 }
 
 func restoreEnv(t *testing.T, keys ...string) {
