@@ -44,6 +44,10 @@ func TestUIRoutesArePublic(t *testing.T) {
 		for _, marker := range []string{
 			`var visibleArtifacts=["PoC.t.sol","REPORT.md","RCA.md"];`,
 			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol</span>",
+			`id="artifactText" class="artifact-preview plain-preview"`,
+			"function renderMarkdown(md)",
+			"function renderArtifactPreview(path,text)",
+			"markdown-preview",
 			`id="protocol"`,
 			"metadata.protocol=protocol",
 			"function loadCases(quiet)",
@@ -60,6 +64,9 @@ func TestUIRoutesArePublic(t *testing.T) {
 		}
 		if strings.Contains(body, `onclick="readArtifact`) {
 			t.Fatalf("GET %s uses an inline artifact click handler", path)
+		}
+		if strings.Contains(body, `<pre id="artifactText"`) {
+			t.Fatalf("GET %s still renders artifact preview as raw pre", path)
 		}
 		if !strings.Contains(body, "function pickArtifact(files,name)") {
 			t.Fatalf("GET %s missing artifact label/path picker", path)
