@@ -4,6 +4,8 @@ This page is for operators and teammates who need to understand what Helios
 _does_ during an incident. It intentionally avoids package-level or code-level
 details.
 
+For a one-page visual map, open [`helios-e2e-workflow.excalidraw`](./helios-e2e-workflow.excalidraw).
+
 Helios is the middle service in the Lumos incident workflow:
 
 1. a suspicious transaction is submitted,
