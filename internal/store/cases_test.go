@@ -128,6 +128,33 @@ func TestProtocolFromMetadataFindsNestedProjectName(t *testing.T) {
 	}
 }
 
+func TestProtocolFromMetadataPrefersTopLevelIdentityOverNestedRawSignal(t *testing.T) {
+	c := &Case{
+		Chain:      "ethereum",
+		DetectedAt: ptr("2026-05-30T15:04:45Z"),
+		CreatedAt:  "2026-05-31T00:00:00Z",
+		Metadata:   json.RawMessage(`{"protocol":"Manual Protocol","raw_signal":{"protocol_name":"Nested Raw Protocol"}}`),
+	}
+	if got, want := incidentOutputSlug(c), "260530_eth_manual_protocol"; got != want {
+		t.Fatalf("incidentOutputSlug = %q, want %q", got, want)
+	}
+}
+
+func TestIncidentSlugPrefersSignalProtocolNameOverInferredProtocol(t *testing.T) {
+	c := &Case{
+		Chain:      "ethereum",
+		DetectedAt: ptr("2026-05-30T15:04:45Z"),
+		CreatedAt:  "2026-05-31T00:00:00Z",
+		Metadata:   json.RawMessage(`{"protocol_name":"Alephium TokenBridge","protocol":"BridgeImplementation","protocol_source":"rca_address_db"}`),
+	}
+	if got, want := IncidentSlug(c), "260530_eth_alephium_tokenbridge"; got != want {
+		t.Fatalf("IncidentSlug = %q, want %q", got, want)
+	}
+	if got, want := incidentOutputSlug(c), "260530_eth_alephium_tokenbridge"; got != want {
+		t.Fatalf("incidentOutputSlug = %q, want %q", got, want)
+	}
+}
+
 func TestIncidentSlugPrefersExplicitMetadataSlug(t *testing.T) {
 	c := &Case{
 		Chain:     "bsc",

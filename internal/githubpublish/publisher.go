@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -453,16 +454,17 @@ func monthFromJSON(v any) string {
 	walk = func(node any) string {
 		switch x := node.(type) {
 		case map[string]any:
-			for k, val := range x {
+			keys := sortedJSONMapKeys(x)
+			for _, k := range keys {
 				if !isIncidentDateKey(k) {
 					continue
 				}
-				if month := monthFromValue(val); month != "" {
+				if month := monthFromValue(x[k]); month != "" {
 					return month
 				}
 			}
-			for _, val := range x {
-				if month := walk(val); month != "" {
+			for _, k := range keys {
+				if month := walk(x[k]); month != "" {
 					return month
 				}
 			}
@@ -576,33 +578,64 @@ func protocolFromReport(report string) string {
 }
 
 func protocolFromJSON(v any) string {
-	var walk func(any) string
-	walk = func(node any) string {
-		switch x := node.(type) {
-		case map[string]any:
-			for k, val := range x {
-				kl := strings.ToLower(k)
-				if kl == "protocol" || kl == "protocol_name" || kl == "project" || kl == "project_name" {
-					if s, ok := val.(string); ok {
-						return cleanProtocol(s)
-					}
-				}
-			}
-			for _, val := range x {
-				if protocol := walk(val); protocol != "" {
-					return protocol
-				}
-			}
-		case []any:
-			for _, val := range x {
-				if protocol := walk(val); protocol != "" {
-					return protocol
-				}
+	switch x := v.(type) {
+	case map[string]any:
+		if protocol := protocolFromCurrentJSONMap(x); protocol != "" {
+			return cleanProtocol(protocol)
+		}
+		for _, key := range sortedJSONMapKeys(x) {
+			if protocol := protocolFromJSON(x[key]); protocol != "" {
+				return protocol
 			}
 		}
-		return ""
+	case []any:
+		for _, val := range x {
+			if protocol := protocolFromJSON(val); protocol != "" {
+				return protocol
+			}
+		}
 	}
-	return walk(v)
+	return ""
+}
+
+func protocolFromCurrentJSONMap(m map[string]any) string {
+	for _, target := range []string{"protocolname", "projectname", "displayname", "protocol", "project"} {
+		if protocol := stringFromCurrentJSONMapByCompactKey(m, target); protocol != "" {
+			return protocol
+		}
+	}
+	return ""
+}
+
+func stringFromCurrentJSONMapByCompactKey(m map[string]any, target string) string {
+	for _, key := range sortedJSONMapKeys(m) {
+		if compactMetadataKey(key) != target {
+			continue
+		}
+		if s, ok := m[key].(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func sortedJSONMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func compactMetadataKey(raw string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(raw)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func cleanProtocol(s string) string {

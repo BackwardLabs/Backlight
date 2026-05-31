@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -64,8 +65,8 @@ func pathExists(path string) (bool, error) {
 	return false, fmt.Errorf("check output_root path: %w", err)
 }
 
-// IncidentSlug returns the display slug for a case. Unlike case_id, this may
-// improve after analysis enriches case metadata with a protocol label.
+// IncidentSlug returns the deterministic display slug for a case. Explicit
+// signal/user identity fields win over post-run inferred protocol labels.
 func IncidentSlug(c *Case) string {
 	if slug := incidentSlugFromMetadata(c.Metadata); slug != "" {
 		return slug
@@ -95,22 +96,26 @@ func incidentSlugFromMetadata(metadata json.RawMessage) string {
 }
 
 func incidentSlugFromValue(v any) string {
-	switch x := v.(type) {
-	case map[string]any:
-		for _, key := range []string{"incident_slug", "incidentSlug", "display_slug", "displaySlug"} {
-			if val, ok := x[key]; ok {
-				if s, ok := val.(string); ok {
-					return cleanIncidentSlug(s)
-				}
-			}
+	x, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, target := range []string{"incidentslug", "displayslug"} {
+		if s := stringFromCurrentMapByCompactKey(x, target); s != "" {
+			return cleanIncidentSlug(s)
 		}
-		for key, val := range x {
-			normalized := compactKey(key)
-			if normalized == "incidentslug" || normalized == "displayslug" {
-				if s, ok := val.(string); ok {
-					return cleanIncidentSlug(s)
-				}
-			}
+	}
+	return ""
+}
+
+func stringFromCurrentMapByCompactKey(m map[string]any, target string) string {
+	keys := sortedMapKeys(m)
+	for _, key := range keys {
+		if compactKey(key) != target {
+			continue
+		}
+		if s, ok := m[key].(string); ok && strings.TrimSpace(s) != "" {
+			return s
 		}
 	}
 	return ""
@@ -238,23 +243,11 @@ func protocolFromMetadata(metadata json.RawMessage) string {
 func protocolFromValue(v any) string {
 	switch x := v.(type) {
 	case map[string]any:
-		for _, key := range []string{"protocol", "protocol_name", "protocolName", "project", "project_name", "projectName", "display_name", "displayName"} {
-			if val, ok := x[key]; ok {
-				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
-					return s
-				}
-			}
+		if s := protocolFromCurrentMap(x); s != "" {
+			return s
 		}
-		for key, val := range x {
-			normalized := compactKey(key)
-			if normalized == "protocol" || normalized == "protocolname" || normalized == "project" || normalized == "projectname" || normalized == "displayname" {
-				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
-					return s
-				}
-			}
-		}
-		for _, val := range x {
-			if s := protocolFromValue(val); s != "" {
+		for _, key := range sortedMapKeys(x) {
+			if s := protocolFromValue(x[key]); s != "" {
 				return s
 			}
 		}
@@ -266,6 +259,29 @@ func protocolFromValue(v any) string {
 		}
 	}
 	return ""
+}
+
+func protocolFromCurrentMap(m map[string]any) string {
+	// Stable publish/display identity priority at each metadata level:
+	// 1. signal/user protocol_name
+	// 2. signal/user project_name
+	// 3. signal/user display_name
+	// 4. fallback protocol/project labels, including post-run inference
+	for _, target := range []string{"protocolname", "projectname", "displayname", "protocol", "project"} {
+		if s := stringFromCurrentMapByCompactKey(m, target); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func sortedMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func protocolSlug(raw string) string {

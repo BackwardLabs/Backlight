@@ -109,6 +109,30 @@ func TestBuildTargetSpecPrefersIncidentSlugAndTransactionTimestamp(t *testing.T)
 	}
 }
 
+func TestBuildTargetSpecPrefersProtocolNameOverInferredProtocolFallback(t *testing.T) {
+	root := writeProductArtifacts(t, `# LumosKit Run Report
+
+- **Finding**: generic generated report heading
+`, `{"status":"partial","tx_timestamp":1780163085,"protocol_name":"Alephium TokenBridge","protocol":"BridgeImplementation"}`)
+
+	spec, err := buildTargetSpec(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Month != "2026-05" || spec.Protocol != "Alephium-TokenBridge" {
+		t.Fatalf("target spec = month %q protocol %q", spec.Month, spec.Protocol)
+	}
+	want := []string{
+		"test/2026-05/Alephium-TokenBridge/Alephium-TokenBridge.t.sol",
+		"test/2026-05/Alephium-TokenBridge/README.md",
+	}
+	for i, path := range want {
+		if spec.Files[i].Path != path {
+			t.Fatalf("target path[%d] = %q, want %q", i, spec.Files[i].Path, path)
+		}
+	}
+}
+
 func TestBuildTargetSpecSkipsGenericLumosProtocol(t *testing.T) {
 	root := writeProductArtifacts(t, `# LumosKit Run Report
 
