@@ -185,6 +185,67 @@ func TestMap_VerifiedAcceptsNonEngineFailureKind(t *testing.T) {
 	}
 }
 
+func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
+	cases := []struct {
+		name         string
+		summary      string
+		wantOutcome  string
+		wantStage    string
+		wantDecision string
+		wantReason   string
+	}{
+		{
+			name:         "success does not rerun",
+			summary:      `{"status":"pass","poc":{"status":"verified"},"rca":{"status":"complete"}}`,
+			wantOutcome:  OutcomeVerified,
+			wantStage:    AnalysisStageSuccess,
+			wantDecision: RerunDecisionNoRerun,
+			wantReason:   "verified_result",
+		},
+		{
+			name:         "poc failed without rca is manual review",
+			summary:      `{"status":"fail","poc":{"status":"missing","failure_kind":"poc_missing"},"failure":{"kind":"poc_missing"}}`,
+			wantOutcome:  OutcomeUnverified,
+			wantStage:    AnalysisStagePoCFailed,
+			wantDecision: RerunDecisionManualReview,
+			wantReason:   "poc_missing",
+		},
+		{
+			name:         "poc verified but rca blocked auto reruns",
+			summary:      `{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantDecision: RerunDecisionAutoRerun,
+			wantReason:   "root_cause_gap",
+		},
+		{
+			name:         "poc blocked auto reruns",
+			summary:      `{"status":"partial","poc":{"status":"unverified","failure_kind":"forge_test_failed"},"rca":{"status":"not_run"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStagePoCBlocked,
+			wantDecision: RerunDecisionAutoRerun,
+			wantReason:   "forge_test_failed",
+		},
+		{
+			name:         "engine error is manual review",
+			summary:      `{"status":"fail","poc":{"status":"missing"},"failure":{"kind":"engine_error"}}`,
+			wantOutcome:  OutcomeEngineError,
+			wantStage:    AnalysisStageEngineError,
+			wantDecision: RerunDecisionManualReview,
+			wantReason:   FailureLumoskitReportedEngineError,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Map(Input{ExitCode: 0, SummaryBytes: []byte(tc.summary)})
+			if got.Outcome != tc.wantOutcome || got.AnalysisStage != tc.wantStage || got.RerunDecision != tc.wantDecision || got.RerunReason != tc.wantReason {
+				t.Fatalf("got outcome/stage/decision/reason = %s/%s/%s/%s, want %s/%s/%s/%s", got.Outcome, got.AnalysisStage, got.RerunDecision, got.RerunReason, tc.wantOutcome, tc.wantStage, tc.wantDecision, tc.wantReason)
+			}
+		})
+	}
+}
+
 func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 	in := Input{ExitCode: 0, SummaryBytes: []byte(`{
 		"status":"partial",
@@ -227,6 +288,15 @@ func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 	if got["summary_status"] != "partial" {
 		t.Fatalf("summary_status = %v, want partial", got["summary_status"])
 	}
+	if got["analysis_stage"] != AnalysisStagePoCBlocked {
+		t.Fatalf("analysis_stage = %v, want %s", got["analysis_stage"], AnalysisStagePoCBlocked)
+	}
+	if got["rerun_decision"] != RerunDecisionAutoRerun {
+		t.Fatalf("rerun_decision = %v, want %s", got["rerun_decision"], RerunDecisionAutoRerun)
+	}
+	if got["rerun_reason"] != "missing_profit_or_economic_oracle" {
+		t.Fatalf("rerun_reason = %v", got["rerun_reason"])
+	}
 	poc := got["poc"].(map[string]any)
 	if poc["status"] != "unverified" || poc["proof_kind"] != "reachability_only" || poc["forge_test_status"] != "pass" {
 		t.Fatalf("unexpected poc payload: %#v", poc)
@@ -254,6 +324,12 @@ func TestTerminalEventPayloadFallsBackToRuleForMissingSummary(t *testing.T) {
 	}
 	if payload["failure_kind"] != FailureSummaryMissing {
 		t.Fatalf("failure_kind = %v, want %s", payload["failure_kind"], FailureSummaryMissing)
+	}
+	if payload["analysis_stage"] != AnalysisStageEngineError {
+		t.Fatalf("analysis_stage = %v, want %s", payload["analysis_stage"], AnalysisStageEngineError)
+	}
+	if payload["rerun_decision"] != RerunDecisionManualReview {
+		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], RerunDecisionManualReview)
 	}
 	if _, ok := payload["poc"]; ok {
 		t.Fatalf("poc payload should be absent when summary is missing: %#v", payload)

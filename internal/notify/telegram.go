@@ -71,12 +71,54 @@ func renderTelegramText(p Payload) string {
 		tx = tx[:10] + "…" + tx[len(tx)-4:]
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "[helios] event=%s\n", p.Event)
-	fmt.Fprintf(&b, "case_id=%s\n", p.CaseID)
-	fmt.Fprintf(&b, "chain=%s tx=%s\n", p.Chain, tx)
-	fmt.Fprintf(&b, "state=%s outcome=%s", p.State, p.Outcome)
+	fmt.Fprintf(&b, "[helios] %s", p.Event)
+	if p.Outcome != "" {
+		fmt.Fprintf(&b, " outcome=%s", p.Outcome)
+	}
+	if p.AnalysisStage != "" {
+		fmt.Fprintf(&b, " stage=%s", p.AnalysisStage)
+	}
+	if p.CompletedAt != "" {
+		fmt.Fprintf(&b, "\ncompleted_at=%s", p.CompletedAt)
+	}
+	fmt.Fprintf(&b, "\ncase_id=%s", p.CaseID)
+	fmt.Fprintf(&b, "\nchain=%s tx=%s", p.Chain, tx)
+	fmt.Fprintf(&b, "\nstate=%s outcome=%s", p.State, p.Outcome)
 	if p.FailureKind != nil && *p.FailureKind != "" {
 		fmt.Fprintf(&b, " failure_kind=%s", *p.FailureKind)
+	}
+	if p.SummaryStatus != "" {
+		fmt.Fprintf(&b, "\nsummary_status=%s", p.SummaryStatus)
+	}
+	if p.AnalysisStage != "" {
+		fmt.Fprintf(&b, "\nanalysis_stage=%s", p.AnalysisStage)
+	}
+	if p.RerunDecision != "" {
+		fmt.Fprintf(&b, "\nrerun_decision=%s", p.RerunDecision)
+		if p.RerunReason != "" {
+			fmt.Fprintf(&b, " reason=%s", p.RerunReason)
+		}
+	}
+	if p.AutoRerunResumeStage != "" {
+		fmt.Fprintf(&b, "\nauto_rerun_resume_stage=%s", p.AutoRerunResumeStage)
+	}
+	if p.AutoRerunEligible != nil {
+		fmt.Fprintf(&b, "\nauto_rerun_eligible=%t", *p.AutoRerunEligible)
+	}
+	if p.ResumeStage != "" || p.LumoskitStage != "" {
+		fmt.Fprintf(&b, "\nresume_stage=%s lumoskit_stage=%s", p.ResumeStage, p.LumoskitStage)
+	}
+	if p.ReportURL != "" {
+		fmt.Fprintf(&b, "\nreport_url=%s", p.ReportURL)
+	}
+	if p.PoCURL != "" {
+		fmt.Fprintf(&b, "\npoc_url=%s", p.PoCURL)
+	}
+	if p.CommitURL != "" {
+		fmt.Fprintf(&b, "\ncommit_url=%s", p.CommitURL)
+	}
+	if p.GitHubSkipReason != "" {
+		fmt.Fprintf(&b, "\ngithub_publish=skipped reason=%s", p.GitHubSkipReason)
 	}
 	if p.HandoffStatus != "" {
 		fmt.Fprintf(&b, "\nhandoff_status=%s", p.HandoffStatus)

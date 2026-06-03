@@ -15,6 +15,7 @@ import (
 
 	"github.com/UPside-Lumos-V2/helios/internal/githubpublish"
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
+	"github.com/UPside-Lumos-V2/helios/internal/outcome"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 )
 
@@ -322,6 +323,16 @@ func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
 	if parent.State != store.StateHandedOff || parent.HandoffStatus != "skipped" || parent.Outcome == nil || *parent.Outcome != "partial" {
 		t.Fatalf("parent after auto rerun = %+v", parent)
 	}
+	payload := terminalStatePayload(t, ctx, st, c.CaseID)
+	if payload["analysis_stage"] != outcome.AnalysisStagePoCBlocked {
+		t.Fatalf("analysis_stage = %v, want %s", payload["analysis_stage"], outcome.AnalysisStagePoCBlocked)
+	}
+	if payload["rerun_decision"] != outcome.RerunDecisionAutoRerun {
+		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], outcome.RerunDecisionAutoRerun)
+	}
+	if payload["auto_rerun_eligible"] != true {
+		t.Fatalf("auto_rerun_eligible = %v, want true", payload["auto_rerun_eligible"])
+	}
 	items, total, err := st.ListCases(ctx, store.CaseListFilter{TxHash: &c.TxHash, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -338,6 +349,171 @@ func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
 	if child == nil || child.State != store.StateQueued || child.AttemptNumber != 2 {
 		t.Fatalf("auto rerun child = %+v", child)
 	}
+	auto := autoRerunMetadata(t, child)
+	if auto["resume_stage"] != "agent_poc" {
+		t.Fatalf("child resume_stage = %v, want agent_poc; metadata=%#v", auto["resume_stage"], auto)
+	}
+}
+
+func TestWorkerStageResumesRCABlockedChild(t *testing.T) {
+	ctx := context.Background()
+	outputParent := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("7", 64), nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Worker{
+		Store:                       st,
+		Runner:                      &lumoskit.Runner{Binary: writeRCABlockedThenStageAwareLumoskit(t, t.TempDir())},
+		PartialAutoRerunMaxAttempts: 3,
+		Logger:                      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	w.process(ctx, c)
+
+	items, _, err := st.ListCases(ctx, store.CaseListFilter{TxHash: &c.TxHash, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queuedChild *store.Case
+	for i := range items {
+		if items[i].ParentCaseID != nil && *items[i].ParentCaseID == c.CaseID {
+			queuedChild = &items[i]
+		}
+	}
+	if queuedChild == nil {
+		t.Fatal("auto-rerun child not found")
+	}
+	auto := autoRerunMetadata(t, queuedChild)
+	if auto["resume_stage"] != "rca" {
+		t.Fatalf("child resume_stage = %v, want rca; metadata=%#v", auto["resume_stage"], auto)
+	}
+
+	child, err := st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.process(ctx, child)
+
+	updated, err := st.GetCase(ctx, child.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Outcome == nil || *updated.Outcome != outcome.OutcomeVerified {
+		t.Fatalf("child outcome = %+v, want verified", updated)
+	}
+	payload := terminalStatePayload(t, ctx, st, child.CaseID)
+	if payload["lumoskit_stage"] != "rca" || payload["resume_stage"] != "rca" {
+		t.Fatalf("child resume payload = %#v", payload)
+	}
+	stages := strings.TrimSpace(mustRead(t, filepath.Join(*child.OutputRoot, "stages.txt")))
+	if !strings.HasSuffix(stages, "rca") {
+		t.Fatalf("child stages = %q, want rca suffix", stages)
+	}
+}
+
+func TestWorkerDoesNotAutoRerunPoCFailed(t *testing.T) {
+	ctx := context.Background()
+	outputParent := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("6", 64), nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Worker{
+		Store:                       st,
+		Runner:                      &lumoskit.Runner{Binary: writePoCFailedLumoskit(t, t.TempDir())},
+		PartialAutoRerunMaxAttempts: 3,
+		Logger:                      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	w.process(ctx, c)
+
+	updated, err := st.GetCase(ctx, c.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Outcome == nil || *updated.Outcome != outcome.OutcomeUnverified {
+		t.Fatalf("case outcome = %+v, want unverified", updated)
+	}
+	payload := terminalStatePayload(t, ctx, st, c.CaseID)
+	if payload["analysis_stage"] != outcome.AnalysisStagePoCFailed {
+		t.Fatalf("analysis_stage = %v, want %s", payload["analysis_stage"], outcome.AnalysisStagePoCFailed)
+	}
+	if payload["rerun_decision"] != outcome.RerunDecisionManualReview {
+		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], outcome.RerunDecisionManualReview)
+	}
+	items, total, err := st.ListCases(ctx, store.CaseListFilter{TxHash: &c.TxHash, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("total cases = %d, want no auto-rerun child; items=%+v", total, items)
+	}
+}
+
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func autoRerunMetadata(t *testing.T, c *store.Case) map[string]any {
+	t.Helper()
+	var metadata map[string]any
+	if err := json.Unmarshal(c.Metadata, &metadata); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	auto, ok := metadata[store.AutoRerunMetadataKey].(map[string]any)
+	if !ok {
+		t.Fatalf("missing %s metadata: %#v", store.AutoRerunMetadataKey, metadata)
+	}
+	return auto
+}
+
+func terminalStatePayload(t *testing.T, ctx context.Context, st *store.Store, caseID string) map[string]any {
+	t.Helper()
+	events, err := st.CaseEvents(ctx, caseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.EventType != "state_transition" || event.FromState == nil || event.ToState == nil {
+			continue
+		}
+		if *event.FromState != store.StateRunning || *event.ToState != store.StateDone {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal terminal payload: %v", err)
+		}
+		return payload
+	}
+	t.Fatalf("terminal running->done payload not found for %s: %#v", caseID, events)
+	return nil
 }
 
 type fakeGitHub struct {
@@ -505,6 +681,71 @@ done
 mkdir -p "$out"
 cat > "$out/summary.json" <<'JSON'
 {"status":"partial","poc":{"status":"unverified","proof_kind":"reachability_only"},"rca":{"status":"blocked","blocker_code":"economic_proof_gap"}}
+JSON
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeRCABlockedThenStageAwareLumoskit(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-rca-stage-lumoskit")
+	script := `#!/bin/sh
+set -eu
+out=""
+stage="all"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --stage) stage="$2"; shift 2 ;;
+    --output-root) out="$2"; shift 2 ;;
+    --tx) shift 2 ;;
+    --chain) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out/report_bundle/report"
+printf '%s\n' "$stage" >> "$out/stages.txt"
+if [ "$stage" = "rca" ]; then
+  test -f "$out/artifacts/agent_poc/result.json"
+  mkdir -p "$out/artifacts/rca"
+  cat > "$out/report_bundle/report/run_summary.json" <<'JSON'
+{"status":"pass","poc":{"status":"verified"},"rca":{"status":"complete"}}
+JSON
+  exit 0
+fi
+mkdir -p "$out/artifacts/agent_poc"
+cat > "$out/artifacts/agent_poc/result.json" <<'JSON'
+{"status":"pass","poc_status":"pass"}
+JSON
+cat > "$out/report_bundle/report/run_summary.json" <<'JSON'
+{"status":"partial","poc":{"status":"verified"},"rca":{"status":"blocked","blocker_code":"source_gap"}}
+JSON
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writePoCFailedLumoskit(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-poc-failed-lumoskit")
+	script := `#!/bin/sh
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-root) out="$2"; shift 2 ;;
+    --tx) shift 2 ;;
+    --chain) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out"
+cat > "$out/summary.json" <<'JSON'
+{"status":"fail","poc":{"status":"missing","failure_kind":"poc_missing"},"failure":{"kind":"poc_missing"}}
 JSON
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {

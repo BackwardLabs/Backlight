@@ -1,0 +1,148 @@
+# Helios operations
+
+This page keeps the operational details out of the project README.
+
+## What's wired
+
+| Surface | State |
+| --- | --- |
+| `GET /healthz` | done (unauthenticated for container probes) |
+| `GET /` / `GET /ui` | done (browser console for submitting and tracking analysis cases) |
+| `GET /metrics` | done (Prometheus default registry, auth required) |
+| `POST /signals` | done (validate, dedup, persist, queue) |
+| `POST /cases` | done (validate, dedup, persist, `force_rerun`) |
+| `GET /cases` | done (filters: state/outcome/chain/tx_hash/created_from/created_to, offset/limit, default `created_at DESC`) |
+| `GET /cases/{case_id}` | done (case-detail + events + handoff/notification attempts) |
+| `POST /cases/{case_id}/retry-handoff` | done (precondition: state=done AND handoff_status=failed; pending URLs only) |
+| Worker (FIFO dispatcher) | done (poll loop + semaphore for max_concurrent) |
+| lumoskit child process invocation | done (env pass-through; stderr captured with 64 KiB cap) |
+| Outcome mapping (O1..O8) | done (strict precedence O5 -> O6 -> O7 -> O4 -> O1 -> O2 -> O3 -> O8) |
+| Downstream fan-out | done (per-URL bounded exp backoff, multi-URL aggregation) |
+| GitHub product publish | done (`verified` and final `partial`, `test/{YYYY-MM}/{Protocol}/`, `Report.md` -> `README.md`) |
+| Pre-Lumos incident JSON | done (verified only, Agent SDK sidecar, case `pre-lumos.json` + `seed/import_{YEAR}.json`) |
+| Operator notifications | done (webhook + Telegram native; 5 events; per-channel retry) |
+| Restart recovery | done (orphan running cases -> failed/host_restart + linked child queued) |
+| Prometheus metrics | done (case_state/outcome counters, queue_depth gauge, lumoskit duration histogram, handoff/notification attempt counters) |
+
+## Web UI
+
+Open `http://127.0.0.1:8080/ui` or the matching host/port from
+`HELIOS_LISTEN_ADDR`. The UI is a lightweight console for manual analysis work:
+
+- save the local `HELIOS_API_TOKEN` in browser localStorage
+- submit `POST /cases` with `chain`, `tx_hash`, optional incident metadata,
+  and optional `force_rerun`
+- poll `GET /cases` for queued/running/done/failed progress
+- inspect `GET /cases/{case_id}` analysis result, events, output paths,
+  handoff attempts, and notifications
+- call `POST /cases/{case_id}/retry-handoff` when a completed case is retryable
+
+The HTML shell is public so a browser can load it without a pre-existing
+Authorization header. All data/actions still use the protected API and require
+the token entered in the UI.
+
+## Configuration
+
+All configuration is via env. Defaults match `seeds/v1.yaml` ->
+`runtime_config_surface`.
+
+For local runs, Helios loads `.env` and `.env.local` from the current working
+directory before reading configuration. Existing process env values take
+precedence; `.env.local` can override `.env`.
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `HELIOS_API_TOKEN` | yes | - | Bearer token for every endpoint except `/healthz` |
+| `HELIOS_DB_PATH` | yes | - | SQLite file path |
+| `HELIOS_OUTPUT_ROOT` | yes | - | fixed parent directory for flat human-readable LumosKit `--output-root` directories (`<YYMMDD>_<chain-alias>_<protocol>[-N]`) |
+| `HELIOS_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
+| `HELIOS_LUMOSKIT_BIN` | no | `bin/lumoskit` | child-process executable invoked per case |
+| `HELIOS_WORKER_POLL_MILLIS` | no | `1000` | worker poll cadence |
+| `HELIOS_MAX_CONCURRENT_LUMOSKIT` | no | `2` | parallel lumoskit ceiling |
+| `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` | no | `3` | linked rerun ceiling for `rerun_decision=auto_rerun`; set `0` to disable |
+| `HELIOS_DOWNSTREAM_WEBHOOK_URLS` | no | empty | comma-separated webhook list (empty means `handoff_status=skipped`, case advances directly to `handed-off`) |
+| `HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN` | no | empty | optional Bearer token sent to downstream webhook targets, useful for `helios-mcp-bridge` |
+| `HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS` | no | `5` | per-URL retry ceiling |
+| `HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | exponential backoff base |
+| `HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | exponential backoff ceiling |
+| `OPERATOR_NOTIFY_WEBHOOK_URL` | no | empty | enables operator-webhook channel when set |
+| `TELEGRAM_BOT_TOKEN` | no | empty | Helios process env var required with chat id for Telegram alerts; can reuse the hackdetector bot token |
+| `TELEGRAM_CHAT_ID` | no | empty | Helios process env var required with bot token; target group/channel/user id for Helios alerts |
+| `HELIOS_TELEGRAM_API_BASE` | no | `https://api.telegram.org` | override for tests / self-hosted Telegram proxies |
+| `HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS` | no | `5` | notification retry ceiling |
+| `HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | |
+| `HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | |
+| `GITHUB_TOKEN` / `GH_TOKEN` | no | empty | enables GitHub publish for verified LumosKit outputs; skipped when unset |
+| `HELIOS_GITHUB_PUBLISH_OWNER` | no | `UPside-Lumos-V2` | GitHub owner for product artifact publish |
+| `HELIOS_GITHUB_PUBLISH_REPO` | no | `Q1-2026` | GitHub repo for product artifact publish |
+| `HELIOS_GITHUB_PUBLISH_BRANCH` | no | `main` | GitHub branch for product artifact publish |
+| `HELIOS_PRE_LUMOS_ENABLED` | no | `false` | enables the Pre-Lumos Agent SDK sidecar for verified cases |
+| `HELIOS_PRE_LUMOS_SEED_ROOT` | when enabled | empty | repo/root where `seed/import_{YEAR}.json` should be merged by slug |
+| `HELIOS_PRE_LUMOS_OPENAI_BASE_URL` | no | `http://127.0.0.1:10631/v1` | OpenAI-compatible API proxy for the Agent SDK runner |
+| `HELIOS_PRE_LUMOS_PYTHON_BIN` | no | `python3` | Python executable used to run `scripts/pre_lumos_agent.py` |
+| `HELIOS_PRE_LUMOS_AGENT_SCRIPT` | no | `scripts/pre_lumos_agent.py` | Pre-Lumos Agent SDK runner script |
+| `HELIOS_PRE_LUMOS_SKILL_DIR` | no | `skills/pre-lumos` | vendored skill bundle; copied as-is from `UPside-Lumos-V2/skills-pre-lumos` |
+| `HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOT` / `HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOTS` | no | empty | standalone runner input roots; Helios worker passes the case output root automatically |
+| `HELIOS_PRE_LUMOS_YEAR` | no | inferred | optional forced target year for `seed/import_{YEAR}.json` |
+| `HELIOS_PRE_LUMOS_MODEL` / `OPENAI_MODEL` | no | SDK default | optional model override for the Agent SDK runner |
+| `HELIOS_PRE_LUMOS_WEB_SEARCH` | no | `false` | enables the hosted `WebSearchTool` when installed/supported |
+
+Plus any RPC env vars (`CEFG_LIVE_RPC_URL`, `RPC_URL`, `ETH_RPC_URL`,
+`ALCHEMY_API_KEY`); Helios passes these through unchanged to the spawned
+lumoskit child process per ADR-0018 in the `lumoskit` repo.
+
+## Operational notes
+
+- **State machine.** `queued -> running -> done -> handed-off`. Engine failure
+  is `running -> failed` (outcome=`engine_error`, populated `failure_kind`).
+  Handoff failure leaves `state=done` with `handoff_status=failed`; the case
+  can be re-driven via `POST /cases/{case_id}/retry-handoff`.
+- **GitHub publish.** When `GITHUB_TOKEN` or `GH_TOKEN` is set, Helios publishes
+  product artifacts for `verified` and final `partial` cases to
+  `test/{YYYY-MM}/{Protocol}/` in the configured Q1 repo. The publish step
+  requires `PoC.t.sol` and `Report.md`; `Report.md` becomes `README.md`.
+- **Pre-Lumos incident JSON.** When `HELIOS_PRE_LUMOS_ENABLED=true` and
+  `HELIOS_PRE_LUMOS_SEED_ROOT` is set, verified cases also run
+  `scripts/pre_lumos_agent.py`, write `<case output root>/pre-lumos.json`, and
+  merge rows into `seed/import_{YEAR}.json` by `slug`.
+- **Decision-based auto-rerun.** Terminal event payloads include
+  `analysis_stage`, `rerun_decision`, `rerun_reason`, `auto_rerun_resume_stage`,
+  and eligibility fields. Attempts with `rerun_decision=auto_rerun` and
+  `auto_rerun_eligible=true` are retried as linked child cases until
+  `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` is reached. `poc_blocked` resumes
+  at `agent_poc` and then runs `rca`; `rca_blocked` resumes at `rca` only;
+  generic partial results rerun the full pipeline. Intermediate attempts skip
+  downstream handoff and operator notification; the final attempt follows the
+  normal terminal flow.
+- **Lineage.** Each retry, automatic engine_error recovery, and `force_rerun`
+  inserts a new case row linked via `parent_case_id` with `attempt_number+1`.
+- **Restart recovery.** On startup every `state=running` row is rewritten to
+  `state=failed`, `outcome=engine_error`, `failure_kind=host_restart`,
+  `handoff_status=skipped`, and a fresh linked child case is queued with a new
+  `output_root`.
+- **Empty downstream URL list.** Successful engine outcomes immediately move to
+  `handed-off` with `handoff_status=skipped`.
+- **engine_error cases.** Skip downstream fan-out entirely. Only an operator
+  notification (`event=engine_error`) is produced, and only if a channel is
+  configured.
+- **Notification status.** Reflects the latest event delivery: `pending`,
+  `retrying`, `succeeded`, `failed`, or `disabled` (no channels at all).
+  Telegram messages include case identity, completion time, outcome,
+  `analysis_stage`, `rerun_decision`, `auto_rerun_resume_stage`, summary path,
+  and GitHub `report_url` / `poc_url` / `commit_url` when publish completes.
+
+Telegram message shape:
+
+```text
+[helios] verified outcome=verified stage=success
+completed_at=2026-06-03T03:25:16Z
+case_id=case_...
+chain=ethereum tx=0x12345678...abcd
+state=handed-off outcome=verified
+summary_status=pass
+analysis_stage=success
+rerun_decision=no_rerun reason=verified_result
+report_url=https://github.com/.../README.md
+poc_url=https://github.com/.../PoC.t.sol
+commit_url=https://github.com/.../commit/<sha>
+```

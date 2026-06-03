@@ -81,6 +81,14 @@ const (
 	DedupRerunCreated = "rerun_created"
 )
 
+const AutoRerunMetadataKey = "helios_auto_rerun"
+
+// AutoRerunRequest describes the linked attempt created after a partial result.
+type AutoRerunRequest struct {
+	Reason      string
+	ResumeStage string
+}
+
 func NewID(prefix string) string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
@@ -620,9 +628,13 @@ func (s *Store) MarkDoneWithPayload(ctx context.Context, caseID, outcome string,
 // MarkDoneAndQueueAutoRerun records a completed non-final attempt and queues a
 // fresh linked child attempt in the same transaction. The parent is marked as
 // handed-off/skipped so partial intermediate attempts never fan out downstream.
-func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome string, eventPayload map[string]any, reason string, maxAttempts int) (*Case, bool, error) {
+func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome string, eventPayload map[string]any, request AutoRerunRequest, maxAttempts int) (*Case, bool, error) {
 	if maxAttempts <= 0 {
 		return nil, false, nil
+	}
+	reason := request.Reason
+	if reason == "" {
+		reason = "auto_rerun"
 	}
 	var child *Case
 	err := s.Tx(ctx, func(tx *sql.Tx) error {
@@ -649,6 +661,7 @@ func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome s
 				"outcome":                 outcome,
 				"auto_rerun_queued":       true,
 				"auto_rerun_reason":       reason,
+				"auto_rerun_resume_stage": request.ResumeStage,
 				"auto_rerun_max_attempts": maxAttempts,
 			},
 			eventPayload,
@@ -674,22 +687,20 @@ func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome s
 			return err
 		}
 
-		metadata := parent.Metadata
-		if len(metadata) == 0 {
-			metadata = json.RawMessage("{}")
-		}
+		metadata := metadataWithAutoRerun(parent.Metadata, parent, request, reason)
 		next, err := insertChildCaseTx(ctx, tx, parent, parent.Source, parent.DetectedAt, metadata, false, now)
 		if err != nil {
 			return err
 		}
 		insertPayload, _ := json.Marshal(map[string]any{
-			"reason":            reason,
-			"parent_outcome":    outcome,
-			"parent_case_id":    parent.CaseID,
-			"max_attempts":      maxAttempts,
-			"auto_rerun_queued": true,
-			"previous_attempt":  parent.AttemptNumber,
-			"scheduled_attempt": parent.AttemptNumber + 1,
+			"reason":                  reason,
+			"parent_outcome":          outcome,
+			"parent_case_id":          parent.CaseID,
+			"max_attempts":            maxAttempts,
+			"auto_rerun_queued":       true,
+			"auto_rerun_resume_stage": request.ResumeStage,
+			"previous_attempt":        parent.AttemptNumber,
+			"scheduled_attempt":       parent.AttemptNumber + 1,
 		})
 		if err := appendEventTx(ctx, tx, next.CaseID, nil, ptr(StateQueued), "case_inserted", insertPayload, now); err != nil {
 			return err
@@ -708,6 +719,31 @@ func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome s
 	metrics.ObserveCaseStateTransition(StateHandedOff)
 	metrics.ObserveCaseStateTransition(StateQueued)
 	return child, true, nil
+}
+
+func metadataWithAutoRerun(metadata json.RawMessage, parent *Case, request AutoRerunRequest, reason string) json.RawMessage {
+	merged := map[string]any{}
+	if len(metadata) > 0 {
+		_ = json.Unmarshal(metadata, &merged)
+	}
+	if merged == nil {
+		merged = map[string]any{}
+	}
+	entry := map[string]any{
+		"schema":           "helios-auto-rerun-v1",
+		"reason":           reason,
+		"source_case_id":   parent.CaseID,
+		"previous_attempt": parent.AttemptNumber,
+	}
+	if request.ResumeStage != "" {
+		entry["resume_stage"] = request.ResumeStage
+	}
+	merged[AutoRerunMetadataKey] = entry
+	data, err := json.Marshal(merged)
+	if err != nil {
+		return metadata
+	}
+	return data
 }
 
 // MergeCaseMetadata shallow-merges new metadata into a case. Existing

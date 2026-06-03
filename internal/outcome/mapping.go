@@ -13,10 +13,13 @@ import (
 
 // Result is what the worker writes back onto the case row after lumoskit exits.
 type Result struct {
-	State       string  // queued | running | done | handed-off | failed
-	Outcome     string  // verified | partial | unverified | engine_error
-	FailureKind *string // populated iff Outcome == engine_error
-	Rule        string  // O1..O8 — the rule that fired (debug/audit)
+	State         string  // queued | running | done | handed-off | failed
+	Outcome       string  // verified | partial | unverified | engine_error
+	FailureKind   *string // populated iff Outcome == engine_error
+	Rule          string  // O1..O8 — the rule that fired (debug/audit)
+	AnalysisStage string  // success | poc_failed | poc_blocked | rca_blocked | engine_error | unknown
+	RerunDecision string  // no_rerun | auto_rerun | manual_review
+	RerunReason   string  // short reason code for the decision
 }
 
 const (
@@ -27,6 +30,18 @@ const (
 	OutcomePartial     = "partial"
 	OutcomeUnverified  = "unverified"
 	OutcomeEngineError = "engine_error"
+
+	AnalysisStageSuccess     = "success"
+	AnalysisStagePoCFailed   = "poc_failed"
+	AnalysisStagePoCBlocked  = "poc_blocked"
+	AnalysisStageRCABlocked  = "rca_blocked"
+	AnalysisStagePartial     = "partial"
+	AnalysisStageEngineError = "engine_error"
+	AnalysisStageUnknown     = "unknown"
+
+	RerunDecisionNoRerun      = "no_rerun"
+	RerunDecisionAutoRerun    = "auto_rerun"
+	RerunDecisionManualReview = "manual_review"
 
 	FailureLumoskitNonzeroExit         = "lumoskit_nonzero_exit"
 	FailureSummaryMissing              = "summary_missing"
@@ -117,14 +132,69 @@ func Map(in Input) Result {
 	// O1, O2, O3
 	switch {
 	case s.Status == "pass" && s.PoC.Status == "verified":
-		return Result{State: StateDone, Outcome: OutcomeVerified, Rule: "O1"}
+		return withRerunDecision(Result{State: StateDone, Outcome: OutcomeVerified, Rule: "O1"}, s)
 	case s.Status == "partial":
-		return Result{State: StateDone, Outcome: OutcomePartial, Rule: "O2"}
+		return withRerunDecision(Result{State: StateDone, Outcome: OutcomePartial, Rule: "O2"}, s)
 	case s.Status == "fail" && (s.PoC.Status == "unverified" || s.PoC.Status == "missing"):
-		return Result{State: StateDone, Outcome: OutcomeUnverified, Rule: "O3"}
+		return withRerunDecision(Result{State: StateDone, Outcome: OutcomeUnverified, Rule: "O3"}, s)
 	}
 	// O8
 	return engineError("O8", FailureLumoskitUnexpectedSummary)
+}
+
+func withRerunDecision(result Result, s Summary) Result {
+	switch result.Outcome {
+	case OutcomeVerified:
+		result.AnalysisStage = AnalysisStageSuccess
+		result.RerunDecision = RerunDecisionNoRerun
+		result.RerunReason = "verified_result"
+	case OutcomePartial:
+		if isPoCBlocked(s.PoC) {
+			result.AnalysisStage = AnalysisStagePoCBlocked
+			result.RerunDecision = RerunDecisionAutoRerun
+			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, s.PoC.Status, "poc_blocked")
+		} else if isRCABlocked(s.RCA) {
+			result.AnalysisStage = AnalysisStageRCABlocked
+			result.RerunDecision = RerunDecisionAutoRerun
+			result.RerunReason = firstNonEmpty(s.RCA.BlockerCode, s.RCA.Status, s.Failure.Kind, "rca_blocked")
+		} else {
+			result.AnalysisStage = AnalysisStagePartial
+			result.RerunDecision = RerunDecisionAutoRerun
+			result.RerunReason = firstNonEmpty(s.Failure.Kind, "partial_result")
+		}
+	case OutcomeUnverified:
+		result.AnalysisStage = AnalysisStagePoCFailed
+		result.RerunDecision = RerunDecisionManualReview
+		result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, s.PoC.Status, "poc_failed")
+	default:
+		result.AnalysisStage = AnalysisStageUnknown
+		result.RerunDecision = RerunDecisionManualReview
+		result.RerunReason = "unknown_outcome"
+	}
+	return result
+}
+
+func isPoCBlocked(p SummaryPoC) bool {
+	switch p.Status {
+	case "unverified", "missing":
+		return true
+	case "verified":
+		return false
+	}
+	return p.FailureKind != ""
+}
+
+func isRCABlocked(r SummaryRCA) bool {
+	return r.Status == "blocked" || r.BlockerCode != "" || r.BlockerReason != ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // TerminalEventPayload builds the diagnostic payload stored on terminal
@@ -140,6 +210,15 @@ func TerminalEventPayload(result Result, in Input) map[string]any {
 	}
 	if result.FailureKind != nil && *result.FailureKind != "" {
 		payload["failure_kind"] = *result.FailureKind
+	}
+	if result.AnalysisStage != "" {
+		payload["analysis_stage"] = result.AnalysisStage
+	}
+	if result.RerunDecision != "" {
+		payload["rerun_decision"] = result.RerunDecision
+	}
+	if result.RerunReason != "" {
+		payload["rerun_reason"] = result.RerunReason
 	}
 
 	s, ok := parseSummaryForPayload(in)
@@ -220,9 +299,12 @@ func (f SummaryFailure) eventPayload() map[string]string {
 func engineError(rule, kind string) Result {
 	k := kind
 	return Result{
-		State:       StateFailed,
-		Outcome:     OutcomeEngineError,
-		FailureKind: &k,
-		Rule:        rule,
+		State:         StateFailed,
+		Outcome:       OutcomeEngineError,
+		FailureKind:   &k,
+		Rule:          rule,
+		AnalysisStage: AnalysisStageEngineError,
+		RerunDecision: RerunDecisionManualReview,
+		RerunReason:   kind,
 	}
 }

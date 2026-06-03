@@ -373,19 +373,27 @@ func TestMarkDoneAndQueueAutoRerunStopsAtMaxAttempts(t *testing.T) {
 		t.Fatalf("claimed first case = %s, want %s", first.CaseID, root.CaseID)
 	}
 
-	second, queued, err := s.MarkDoneAndQueueAutoRerun(ctx, first.CaseID, "partial", map[string]any{"rule": "O2"}, "partial_auto_rerun", 3)
+	second, queued, err := s.MarkDoneAndQueueAutoRerun(ctx, first.CaseID, "partial", map[string]any{"rule": "O2"}, AutoRerunRequest{Reason: "partial_auto_rerun", ResumeStage: "agent_poc"}, 3)
 	if err != nil {
 		t.Fatalf("queue second: %v", err)
 	}
 	if !queued || second.AttemptNumber != 2 || second.ParentCaseID == nil || *second.ParentCaseID != first.CaseID {
 		t.Fatalf("unexpected second attempt: queued=%v case=%+v", queued, second)
 	}
+	var secondMetadata map[string]any
+	if err := json.Unmarshal(second.Metadata, &secondMetadata); err != nil {
+		t.Fatalf("unmarshal second metadata: %v", err)
+	}
+	auto, ok := secondMetadata[AutoRerunMetadataKey].(map[string]any)
+	if !ok || auto["resume_stage"] != "agent_poc" || auto["source_case_id"] != first.CaseID {
+		t.Fatalf("auto rerun metadata = %#v", secondMetadata[AutoRerunMetadataKey])
+	}
 
 	secondClaim, err := s.ClaimNextQueued(ctx, t.TempDir())
 	if err != nil {
 		t.Fatalf("claim second: %v", err)
 	}
-	third, queued, err := s.MarkDoneAndQueueAutoRerun(ctx, secondClaim.CaseID, "partial", map[string]any{"rule": "O2"}, "partial_auto_rerun", 3)
+	third, queued, err := s.MarkDoneAndQueueAutoRerun(ctx, secondClaim.CaseID, "partial", map[string]any{"rule": "O2"}, AutoRerunRequest{Reason: "partial_auto_rerun", ResumeStage: "agent_poc"}, 3)
 	if err != nil {
 		t.Fatalf("queue third: %v", err)
 	}
@@ -397,7 +405,7 @@ func TestMarkDoneAndQueueAutoRerunStopsAtMaxAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim third: %v", err)
 	}
-	if _, queued, err := s.MarkDoneAndQueueAutoRerun(ctx, thirdClaim.CaseID, "partial", map[string]any{"rule": "O2"}, "partial_auto_rerun", 3); err != nil {
+	if _, queued, err := s.MarkDoneAndQueueAutoRerun(ctx, thirdClaim.CaseID, "partial", map[string]any{"rule": "O2"}, AutoRerunRequest{Reason: "partial_auto_rerun", ResumeStage: "agent_poc"}, 3); err != nil {
 		t.Fatalf("third auto rerun check: %v", err)
 	} else if queued {
 		t.Fatalf("third partial attempt queued another rerun despite max attempts")

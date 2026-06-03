@@ -2,7 +2,7 @@
 //
 // Per ADR-0018 in the lumoskit repo, helios:
 //   - spawns bin/lumoskit (no in-process embedding)
-//   - passes --tx, --chain, --output-root flags only
+//   - passes --tx, --chain, --output-root, and optional --stage flags
 //   - does NOT pass any --rpc-url; RPC env vars are inherited unchanged
 //   - reads the product run summary after the process exits (any exit code)
 package lumoskit
@@ -25,6 +25,24 @@ type Result struct {
 	SummaryMissing bool   // true iff the expected path does not exist after exit
 	SummaryReadErr error  // non-nil read errors other than missing
 	Stderr         []byte // captured stderr (truncated) for operator diagnosis
+}
+
+// RunOptions configures a LumosKit attempt. Empty Stage runs the default
+// all-stage pipeline. Stage agent_poc runs agent_poc followed by rca so a PoC
+// retry can still produce a complete product summary when it succeeds.
+type RunOptions struct {
+	Stage string
+}
+
+func (o RunOptions) stages() []string {
+	switch o.Stage {
+	case "", "all", "pipeline":
+		return []string{""}
+	case "agent_poc", "poc":
+		return []string{"agent_poc", "rca"}
+	default:
+		return []string{o.Stage}
+	}
 }
 
 // Runner spawns lumoskit child processes.
@@ -83,6 +101,13 @@ func lumoskitRootForBin(binary string) string {
 // when ctx is Done). The caller is expected to provide a parent ctx that gets
 // cancelled on helios shutdown so in-flight cases unwind cleanly.
 func (r *Runner) Run(ctx context.Context, chain, txHash, outputRoot string) Result {
+	return r.RunWithOptions(ctx, chain, txHash, outputRoot, RunOptions{})
+}
+
+// RunWithOptions dispatches one attempt, optionally constrained to a LumosKit
+// stage. outputRoot MUST be unique per attempt; for stage resumes, callers
+// prepare any reusable upstream artifacts in outputRoot before invoking this.
+func (r *Runner) RunWithOptions(ctx context.Context, chain, txHash, outputRoot string, opts RunOptions) Result {
 	res := Result{
 		SummaryPath: preferredSummaryPath(outputRoot),
 	}
@@ -93,31 +118,37 @@ func (r *Runner) Run(ctx context.Context, chain, txHash, outputRoot string) Resu
 	}
 
 	binary, workingDir := r.command()
-	cmd := exec.CommandContext(ctx, binary,
-		"--tx", txHash,
-		"--chain", chain,
-		"--output-root", outputRoot,
-	)
-	if workingDir != "" {
-		cmd.Dir = workingDir
-	}
-	// Pass through the entire env (lumoskit owns RPC resolution per ADR-0018).
-	cmd.Env = os.Environ()
-	cmd.Stdout = io.Discard
-
 	stderrBuf := newCappedBuffer(r.maxStderr())
-	cmd.Stderr = stderrBuf
+	for _, stage := range opts.stages() {
+		args := []string{
+			"--tx", txHash,
+			"--chain", chain,
+			"--output-root", outputRoot,
+		}
+		if stage != "" {
+			args = append([]string{"--stage", stage}, args...)
+		}
+		cmd := exec.CommandContext(ctx, binary, args...)
+		if workingDir != "" {
+			cmd.Dir = workingDir
+		}
+		// Pass through the entire env (lumoskit owns RPC resolution per ADR-0018).
+		cmd.Env = os.Environ()
+		cmd.Stdout = io.Discard
+		cmd.Stderr = stderrBuf
 
-	err := cmd.Run()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			res.ExitCode = ee.ExitCode()
-		} else {
-			// process failed to start (e.g. binary missing) — surface as
-			// non-zero so outcome mapping classifies as engine_error
-			res.ExitCode = -1
-			res.SummaryReadErr = err
+		err := cmd.Run()
+		if err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				res.ExitCode = ee.ExitCode()
+			} else {
+				// process failed to start (e.g. binary missing) — surface as
+				// non-zero so outcome mapping classifies as engine_error
+				res.ExitCode = -1
+				res.SummaryReadErr = err
+			}
+			break
 		}
 	}
 	res.Stderr = stderrBuf.Bytes()

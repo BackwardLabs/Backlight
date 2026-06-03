@@ -41,7 +41,7 @@ flowchart LR
     helios -->|"one run per case"| lumoskit
     lumoskit -->|"summary.json"| outputs
     outputs -->|"result read by Helios"| helios
-    helios -->|"verified only<br/>PoC.t.sol + Report.md"| github
+    helios -->|"verified + final partial<br/>PoC.t.sol + Report.md"| github
     helios -->|"verified only<br/>case output root"| prelumos
     prelumos -->|"pre-lumos.json"| outputs
     prelumos -->|"merge by slug"| seed
@@ -61,7 +61,7 @@ flowchart LR
 | --- | --- | --- |
 | Detecting suspicious transactions | `hack-detector` | Helios receives already-detected transactions; it does not decide what is suspicious. |
 | Running forensic analysis and PoC generation | `lumoskit` | Helios launches `lumoskit` and reads its `summary.json`; it does not perform the analysis itself. |
-| Verified product publishing | Helios + GitHub API | Optional side effect for `outcome=verified`; it publishes `PoC.t.sol` and `Report.md` as `README.md` to the configured product repo. |
+| Product publishing | Helios + GitHub API | Optional side effect for `outcome=verified` and final `outcome=partial`; it publishes `PoC.t.sol` and `Report.md` as `README.md` to the configured product repo. |
 | Importer-ready incident JSON | Helios + vendored `skills/pre-lumos` | Optional side effect for `outcome=verified`; it reads the same output root and writes `<output_root>/pre-lumos.json` plus `seed/import_{YEAR}.json`. |
 | Case tracking, retries, handoff, notifications | Helios | This is the service operators watch and control during incident processing. |
 | MCP assistant access | `helios-mcp` / `helios-mcp-bridge` | Read-only access to case metadata and `summary.json`, `summary.md`, `rca.md`, `PoC.t.sol`, `Report.md`; no engine execution, writes, shell, or arbitrary filesystem access. |
@@ -149,7 +149,7 @@ flowchart TD
 2. Check `state` first.
 3. If `state=done` or `state=handed-off`, check `outcome`.
 4. If `outcome=engine_error`, check `failure_kind` and `summary_json_path`.
-5. If `outcome=verified`, inspect `github_publish` and `pre_lumos_sync` case events when those optional side effects are enabled.
+5. If `outcome=verified`, inspect `github_publish` and `pre_lumos_sync` case events when those optional side effects are enabled; for final `outcome=partial`, inspect `github_publish` when configured.
 6. If `handoff_status=failed`, inspect `handoff_attempts` and retry handoff after the receiver is healthy.
 7. If notifications are missing, inspect `notification_attempts`; this does not change the case result.
 8. For fleet-level health, watch `/metrics` and queue depth.
@@ -205,10 +205,10 @@ state=handed-off, handoff_status=skipped
 
 This means no external handoff was configured; it is not an error.
 
-### Verified-case product side effects
+### Product side effects
 
-Verified cases may trigger two optional asynchronous side effects after Helios records
-`state=done, outcome=verified`:
+Verified cases may trigger both optional asynchronous side effects after Helios records
+`state=done, outcome=verified`. Final partial cases may trigger GitHub publish only:
 
 - GitHub publish, enabled by `GITHUB_TOKEN` or `GH_TOKEN`, copies `PoC.t.sol`
   and `Report.md` into `test/{YYYY-MM}/{Protocol}/` in the configured repo.

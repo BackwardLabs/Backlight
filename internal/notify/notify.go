@@ -41,17 +41,30 @@ type Channel interface {
 // Payload is the structured data each event carries. WebhookChannel sends it
 // as JSON; TelegramChannel renders it as a short text message.
 type Payload struct {
-	Event           string  `json:"event"`
-	CaseID          string  `json:"case_id"`
-	Chain           string  `json:"chain"`
-	TxHash          string  `json:"tx_hash"`
-	State           string  `json:"state"`
-	Outcome         string  `json:"outcome"`
-	FailureKind     *string `json:"failure_kind"`
-	HandoffStatus   string  `json:"handoff_status"`
-	OutputRoot      *string `json:"output_root"`
-	SummaryJSONPath *string `json:"summary_json_path"`
-	AttemptNumber   int     `json:"attempt_number"`
+	Event                string  `json:"event"`
+	CaseID               string  `json:"case_id"`
+	Chain                string  `json:"chain"`
+	TxHash               string  `json:"tx_hash"`
+	State                string  `json:"state"`
+	Outcome              string  `json:"outcome"`
+	FailureKind          *string `json:"failure_kind"`
+	HandoffStatus        string  `json:"handoff_status"`
+	OutputRoot           *string `json:"output_root"`
+	SummaryJSONPath      *string `json:"summary_json_path"`
+	AttemptNumber        int     `json:"attempt_number"`
+	CompletedAt          string  `json:"completed_at,omitempty"`
+	ReportURL            string  `json:"report_url,omitempty"`
+	PoCURL               string  `json:"poc_url,omitempty"`
+	CommitURL            string  `json:"commit_url,omitempty"`
+	GitHubSkipReason     string  `json:"github_skip_reason,omitempty"`
+	SummaryStatus        string  `json:"summary_status,omitempty"`
+	AnalysisStage        string  `json:"analysis_stage,omitempty"`
+	RerunDecision        string  `json:"rerun_decision,omitempty"`
+	RerunReason          string  `json:"rerun_reason,omitempty"`
+	AutoRerunEligible    *bool   `json:"auto_rerun_eligible,omitempty"`
+	AutoRerunResumeStage string  `json:"auto_rerun_resume_stage,omitempty"`
+	ResumeStage          string  `json:"resume_stage,omitempty"`
+	LumoskitStage        string  `json:"lumoskit_stage,omitempty"`
 }
 
 func PayloadFromCase(c *store.Case, event string) Payload {
@@ -67,7 +80,99 @@ func PayloadFromCase(c *store.Case, event string) Payload {
 		OutputRoot:      c.OutputRoot,
 		SummaryJSONPath: c.SummaryJSONPath,
 		AttemptNumber:   c.AttemptNumber,
+		CompletedAt:     c.UpdatedAt,
 	}
+}
+
+func (p *Payload) applyPublishPayload(raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	var decoded map[string]any
+	if json.Unmarshal(raw, &decoded) != nil {
+		return
+	}
+	if value := stringField(decoded, "report_url"); value != "" {
+		p.ReportURL = value
+	}
+	if value := stringField(decoded, "poc_url"); value != "" {
+		p.PoCURL = value
+	}
+	if value := stringField(decoded, "commit_url"); value != "" {
+		p.CommitURL = value
+	}
+	if value := stringField(decoded, "skip_reason"); value != "" {
+		p.GitHubSkipReason = value
+	}
+}
+
+func (p *Payload) applyAnalysisPayload(raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	var decoded map[string]any
+	if json.Unmarshal(raw, &decoded) != nil {
+		return
+	}
+	if value := stringField(decoded, "summary_status"); value != "" {
+		p.SummaryStatus = value
+	}
+	if value := stringField(decoded, "analysis_stage"); value != "" {
+		p.AnalysisStage = value
+	}
+	if value := stringField(decoded, "rerun_decision"); value != "" {
+		p.RerunDecision = value
+	}
+	if value := stringField(decoded, "rerun_reason"); value != "" {
+		p.RerunReason = value
+	}
+	if value := boolField(decoded, "auto_rerun_eligible"); value != nil {
+		p.AutoRerunEligible = value
+	}
+	if value := stringField(decoded, "auto_rerun_resume_stage"); value != "" {
+		p.AutoRerunResumeStage = value
+	}
+	if value := stringField(decoded, "resume_stage"); value != "" {
+		p.ResumeStage = value
+	}
+	if value := stringField(decoded, "lumoskit_stage"); value != "" {
+		p.LumoskitStage = value
+	}
+}
+
+func (n *Notifier) enrichWithAnalysisPayload(ctx context.Context, p *Payload) error {
+	if n.Store == nil || p == nil || p.CaseID == "" {
+		return nil
+	}
+	events, err := n.Store.CaseEvents(ctx, p.CaseID)
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		switch event.EventType {
+		case "state_transition":
+			p.applyAnalysisPayload(event.Payload)
+		case "github_publish":
+			p.applyPublishPayload(event.Payload)
+		}
+	}
+	return nil
+}
+
+func stringField(m map[string]any, key string) string {
+	value, ok := m[key].(string)
+	if !ok {
+		return ""
+	}
+	return value
+}
+
+func boolField(m map[string]any, key string) *bool {
+	value, ok := m[key].(bool)
+	if !ok {
+		return nil
+	}
+	return &value
 }
 
 // Notifier fans an event out to every enabled channel with per-channel retry.
@@ -111,6 +216,9 @@ func (n *Notifier) Notify(ctx context.Context, c *store.Case, event string) {
 	}
 
 	payload := PayloadFromCase(c, event)
+	if err := n.enrichWithAnalysisPayload(ctx, &payload); err != nil {
+		log.Warn("notification analysis enrichment failed", "err", err)
+	}
 	allOK := true
 	for _, ch := range n.Channels {
 		if !n.deliverChannel(ctx, ch, payload, log) {
