@@ -97,7 +97,7 @@ type Input struct {
 //	O4: summary parseable + failure.kind == "engine_error"
 //	                                                    → failed/engine_error/lumoskit_reported_engine_error
 //	O1: status=pass + poc=verified                      → done/verified
-//	O2: status=partial                                  → done/partial
+//	O2: status=partial OR blocked analysis              → done/partial
 //	O3: status=fail + poc∈{unverified,missing}          → done/unverified
 //	O8: catch-all (parseable summary, none of above)    → failed/engine_error/lumoskit_unexpected_summary_shape
 //
@@ -133,7 +133,7 @@ func Map(in Input) Result {
 	switch {
 	case s.Status == "pass" && s.PoC.Status == "verified":
 		return withRerunDecision(Result{State: StateDone, Outcome: OutcomeVerified, Rule: "O1"}, s)
-	case s.Status == "partial":
+	case s.Status == "partial" || isBlockedAnalysis(s):
 		return withRerunDecision(Result{State: StateDone, Outcome: OutcomePartial, Rule: "O2"}, s)
 	case s.Status == "fail" && (s.PoC.Status == "unverified" || s.PoC.Status == "missing"):
 		return withRerunDecision(Result{State: StateDone, Outcome: OutcomeUnverified, Rule: "O3"}, s)
@@ -186,6 +186,10 @@ func isPoCBlocked(p SummaryPoC) bool {
 
 func isRCABlocked(r SummaryRCA) bool {
 	return r.Status == "blocked" || r.BlockerCode != "" || r.BlockerReason != ""
+}
+
+func isBlockedAnalysis(s Summary) bool {
+	return s.Status == "blocked" && (isPoCBlocked(s.PoC) || isRCABlocked(s.RCA))
 }
 
 func firstNonEmpty(values ...string) string {

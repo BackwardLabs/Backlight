@@ -97,6 +97,14 @@ func TestMap_PrecedenceTable(t *testing.T) {
 			wantState:   StateDone,
 			wantOutcome: OutcomePartial,
 		},
+		// O2 — blocked summary with analysis blocker is a partial result.
+		{
+			name:        "O2 blocked RCA with verified PoC",
+			in:          Input{ExitCode: 0, SummaryBytes: []byte(`{"status":"blocked","poc":{"status":"verified"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"},"failure":{"kind":"rca_blocked"}}`)},
+			wantRule:    "O2",
+			wantState:   StateDone,
+			wantOutcome: OutcomePartial,
+		},
 		// O3 — fail + unverified
 		{
 			name:        "O3 fail-unverified",
@@ -213,6 +221,14 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 		{
 			name:         "poc verified but rca blocked auto reruns",
 			summary:      `{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantDecision: RerunDecisionAutoRerun,
+			wantReason:   "root_cause_gap",
+		},
+		{
+			name:         "blocked summary with verified poc and rca blocker auto reruns",
+			summary:      `{"status":"blocked","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"},"failure":{"kind":"rca_blocked"}}`,
 			wantOutcome:  OutcomePartial,
 			wantStage:    AnalysisStageRCABlocked,
 			wantDecision: RerunDecisionAutoRerun,
