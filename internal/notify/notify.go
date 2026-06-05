@@ -138,6 +138,18 @@ func (p *Payload) applyAnalysisPayload(raw json.RawMessage) {
 	if value := stringField(decoded, "lumoskit_stage"); value != "" {
 		p.LumoskitStage = value
 	}
+	if p.AnalysisStage == "" {
+		stage, reason := inferAnalysisStage(decoded)
+		if stage != "" {
+			p.AnalysisStage = stage
+			if p.RerunReason == "" {
+				p.RerunReason = reason
+			}
+			if p.RerunDecision == "" && (stage == "rca_blocked" || stage == "poc_blocked") {
+				p.RerunDecision = "auto_rerun"
+			}
+		}
+	}
 }
 
 func (n *Notifier) enrichWithAnalysisPayload(ctx context.Context, p *Payload) error {
@@ -173,6 +185,37 @@ func boolField(m map[string]any, key string) *bool {
 		return nil
 	}
 	return &value
+}
+
+func inferAnalysisStage(m map[string]any) (string, string) {
+	rca := objectField(m, "rca")
+	poc := objectField(m, "poc")
+	failure := objectField(m, "failure")
+	failureKind := firstString(stringField(failure, "kind"), stringField(m, "failure_kind"))
+	if stringField(rca, "status") == "blocked" || stringField(rca, "blocker_code") != "" || stringField(rca, "blocker_reason") != "" || failureKind == "rca_blocked" {
+		return "rca_blocked", firstString(stringField(rca, "blocker_code"), stringField(rca, "blocker_reason"), failureKind)
+	}
+	if stringField(poc, "status") == "blocked" || failureKind == "poc_blocked" {
+		return "poc_blocked", firstString(stringField(poc, "failure_kind"), failureKind, stringField(poc, "status"))
+	}
+	return "", ""
+}
+
+func objectField(m map[string]any, key string) map[string]any {
+	value, ok := m[key].(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return value
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // Notifier fans an event out to every enabled channel with per-channel retry.

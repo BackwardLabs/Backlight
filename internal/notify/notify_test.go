@@ -85,15 +85,16 @@ func TestRenderTelegramText_TruncatesTxAndIncludesEverything(t *testing.T) {
 	}
 	text := renderTelegramText(p)
 	mustContain := []string{
-		"[helios] engine_error",
+		"[helios] RCA blocked",
 		"completed_at=2026-06-03T03:25:16Z",
 		"case_id=case_xyz",
 		"chain=ethereum",
 		"0xaaaaaaaa", // first 10 of tx
 		"aaab",       // last 4 of tx
 		"…",
-		"state=failed",
-		"outcome=engine_error",
+		"diagnosis=rca_blocked reason=source_gap",
+		"event=engine_error",
+		"state=failed stored_outcome=engine_error",
 		"failure_kind=rpc_timeout",
 		"summary_status=partial",
 		"analysis_stage=rca_blocked",
@@ -128,6 +129,52 @@ func TestRenderTelegramText_OmitsEmptyOptionalFields(t *testing.T) {
 	}
 	if strings.Contains(text, "summary=") {
 		t.Errorf("expected no summary line, got:\n%s", text)
+	}
+}
+
+func TestPayloadAnalysisEnrichmentInfersRCABlockedFromLegacyPayload(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "bsc", "0x"+strings.Repeat("c", 64), nil, nil, json.RawMessage(`{"protocol":"test"}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendCaseEvent(ctx, c.CaseID, "state_transition", map[string]any{
+		"outcome":        "engine_error",
+		"failure_kind":   "lumoskit_unexpected_summary_shape",
+		"summary_status": "blocked",
+		"poc": map[string]any{
+			"status": "verified",
+		},
+		"rca": map[string]any{
+			"status":         "blocked",
+			"blocker_reason": "missing allowance provenance",
+		},
+		"failure": map[string]any{
+			"kind": "rca_blocked",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := PayloadFromCase(c, EventEngineError)
+	n := &Notifier{Store: st}
+	if err := n.enrichWithAnalysisPayload(ctx, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.AnalysisStage != "rca_blocked" || payload.RerunDecision != "auto_rerun" || payload.RerunReason != "missing allowance provenance" {
+		t.Fatalf("legacy payload not inferred as rca_blocked: %+v", payload)
+	}
+	text := renderTelegramText(payload)
+	for _, marker := range []string{"[helios] RCA blocked", "diagnosis=rca_blocked reason=missing allowance provenance", "event=engine_error", "stored_outcome="} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("telegram text missing %q:\n%s", marker, text)
+		}
 	}
 }
 

@@ -63,27 +63,29 @@ func (t *TelegramChannel) Deliver(ctx context.Context, p Payload) (int, error) {
 	return resp.StatusCode, fmt.Errorf("telegram sendMessage returned HTTP %d", resp.StatusCode)
 }
 
-// renderTelegramText is a deliberately small text. The seed wants only
-// case_id / chain / tx_hash / outcome / failure_kind / link-level info.
+// renderTelegramText keeps the message compact while separating the
+// operator-facing diagnosis from the stored lifecycle event/outcome. This is
+// important for legacy runs whose stored outcome may be engine_error even when
+// the terminal payload proves an analysis blocker such as rca_blocked.
 func renderTelegramText(p Payload) string {
 	tx := p.TxHash
 	if len(tx) > 14 {
 		tx = tx[:10] + "…" + tx[len(tx)-4:]
 	}
+	diagnosis, title, reason := telegramDiagnosis(p)
 	var b strings.Builder
-	fmt.Fprintf(&b, "[helios] %s", p.Event)
-	if p.Outcome != "" {
-		fmt.Fprintf(&b, " outcome=%s", p.Outcome)
-	}
-	if p.AnalysisStage != "" {
-		fmt.Fprintf(&b, " stage=%s", p.AnalysisStage)
-	}
+	fmt.Fprintf(&b, "[helios] %s", title)
 	if p.CompletedAt != "" {
 		fmt.Fprintf(&b, "\ncompleted_at=%s", p.CompletedAt)
 	}
 	fmt.Fprintf(&b, "\ncase_id=%s", p.CaseID)
 	fmt.Fprintf(&b, "\nchain=%s tx=%s", p.Chain, tx)
-	fmt.Fprintf(&b, "\nstate=%s outcome=%s", p.State, p.Outcome)
+	fmt.Fprintf(&b, "\ndiagnosis=%s", diagnosis)
+	if reason != "" {
+		fmt.Fprintf(&b, " reason=%s", reason)
+	}
+	fmt.Fprintf(&b, "\nevent=%s", p.Event)
+	fmt.Fprintf(&b, "\nstate=%s stored_outcome=%s", p.State, p.Outcome)
 	if p.FailureKind != nil && *p.FailureKind != "" {
 		fmt.Fprintf(&b, " failure_kind=%s", *p.FailureKind)
 	}
@@ -127,4 +129,47 @@ func renderTelegramText(p Payload) string {
 		fmt.Fprintf(&b, "\nsummary=%s", *p.SummaryJSONPath)
 	}
 	return b.String()
+}
+
+func telegramDiagnosis(p Payload) (key, title, reason string) {
+	reason = p.RerunReason
+	switch p.AnalysisStage {
+	case "success":
+		return "success", "Success", firstText(reason, "verified_result")
+	case "rca_blocked":
+		return "rca_blocked", "RCA blocked", reason
+	case "poc_blocked":
+		return "poc_blocked", "PoC blocked", reason
+	case "poc_failed":
+		return "poc_failed", "PoC failed", reason
+	case "engine_error":
+		return "engine_error", "Engine error", firstText(reason, failureKindText(p))
+	}
+	switch p.Outcome {
+	case "verified":
+		return "success", "Success", "verified_result"
+	case "partial":
+		return "partial", "Partial result", reason
+	case "unverified":
+		return "poc_failed", "PoC failed", firstText(reason, failureKindText(p))
+	case "engine_error":
+		return "engine_error", "Engine error", firstText(reason, failureKindText(p))
+	}
+	return firstText(p.Outcome, p.Event, "unknown"), firstText(p.Outcome, p.Event, "Unknown"), reason
+}
+
+func failureKindText(p Payload) string {
+	if p.FailureKind == nil {
+		return ""
+	}
+	return *p.FailureKind
+}
+
+func firstText(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
