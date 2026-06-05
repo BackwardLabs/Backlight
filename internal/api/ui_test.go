@@ -43,6 +43,10 @@ func TestUIRoutesArePublic(t *testing.T) {
 		body := rr.Body.String()
 		for _, marker := range []string{
 			`var visibleArtifacts=["PoC.t.sol","REPORT.md","RCA.md"];`,
+			"function diagnosis(c,p)",
+			"Primary diagnosis",
+			"Stored outcome",
+			"RCA blocked",
 			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol</span>",
 			`id="artifactText" class="artifact-preview plain-preview"`,
 			"function renderMarkdown(md)",
