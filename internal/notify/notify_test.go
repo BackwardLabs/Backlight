@@ -63,6 +63,7 @@ func TestRenderTelegramText_TruncatesTxAndIncludesEverything(t *testing.T) {
 	p := Payload{
 		Event:                EventEngineError,
 		CaseID:               "case_xyz",
+		IncidentSlug:         "260603_eth_test_case",
 		Chain:                "ethereum",
 		TxHash:               "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
 		State:                "failed",
@@ -86,26 +87,15 @@ func TestRenderTelegramText_TruncatesTxAndIncludesEverything(t *testing.T) {
 	text := renderTelegramText(p)
 	mustContain := []string{
 		"[helios] RCA blocked",
-		"completed_at=2026-06-03T03:25:16Z",
-		"case_id=case_xyz",
-		"chain=ethereum",
+		"Incident: Test Case on Ethereum",
+		"Tx: 0xaaaaaaaa…aaab",
+		"Result: RCA blocked · auto rerun",
+		"Reason: source_gap",
 		"0xaaaaaaaa", // first 10 of tx
 		"aaab",       // last 4 of tx
 		"…",
-		"diagnosis=rca_blocked reason=source_gap",
-		"event=engine_error",
-		"state=failed stored_outcome=engine_error",
-		"failure_kind=rpc_timeout",
-		"summary_status=partial",
-		"analysis_stage=rca_blocked",
-		"rerun_decision=auto_rerun reason=source_gap",
-		"auto_rerun_resume_stage=rca",
-		"auto_rerun_eligible=true",
-		"report_url=https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/case/README.md",
-		"poc_url=https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/case/PoC.t.sol",
-		"commit_url=https://github.com/UPside-Lumos-V2/Q1-2026/commit/abc123",
-		"handoff_status=skipped",
-		"summary=" + summary,
+		"Report: https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/case/README.md",
+		"Completed: 2026-06-03 03:25 UTC",
 	}
 	for _, m := range mustContain {
 		if !strings.Contains(text, m) {
@@ -129,6 +119,11 @@ func TestRenderTelegramText_OmitsEmptyOptionalFields(t *testing.T) {
 	}
 	if strings.Contains(text, "summary=") {
 		t.Errorf("expected no summary line, got:\n%s", text)
+	}
+	for _, removed := range []string{"poc_url=", "commit_url=", "handoff_status=", "stored_outcome=", "case_id="} {
+		if strings.Contains(text, removed) {
+			t.Errorf("expected no noisy field %q, got:\n%s", removed, text)
+		}
 	}
 }
 
@@ -171,9 +166,14 @@ func TestPayloadAnalysisEnrichmentInfersRCABlockedFromLegacyPayload(t *testing.T
 		t.Fatalf("legacy payload not inferred as rca_blocked: %+v", payload)
 	}
 	text := renderTelegramText(payload)
-	for _, marker := range []string{"[helios] RCA blocked", "diagnosis=rca_blocked reason=missing allowance provenance", "event=engine_error", "stored_outcome="} {
+	for _, marker := range []string{"[helios] RCA blocked", "Result: RCA blocked · auto rerun", "Reason: missing allowance provenance"} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("telegram text missing %q:\n%s", marker, text)
+		}
+	}
+	for _, removed := range []string{"event=engine_error", "stored_outcome=", "summary="} {
+		if strings.Contains(text, removed) {
+			t.Fatalf("telegram text still contains noisy field %q:\n%s", removed, text)
 		}
 	}
 }

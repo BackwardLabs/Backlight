@@ -43,6 +43,7 @@ type Channel interface {
 type Payload struct {
 	Event                string  `json:"event"`
 	CaseID               string  `json:"case_id"`
+	IncidentSlug         string  `json:"incident_slug,omitempty"`
 	Chain                string  `json:"chain"`
 	TxHash               string  `json:"tx_hash"`
 	State                string  `json:"state"`
@@ -71,6 +72,7 @@ func PayloadFromCase(c *store.Case, event string) Payload {
 	return Payload{
 		Event:           event,
 		CaseID:          c.CaseID,
+		IncidentSlug:    store.IncidentSlug(c),
 		Chain:           c.Chain,
 		TxHash:          c.TxHash,
 		State:           c.State,

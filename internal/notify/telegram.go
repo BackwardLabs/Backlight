@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // TelegramChannel posts a short text message via Telegram Bot API
@@ -75,58 +76,17 @@ func renderTelegramText(p Payload) string {
 	diagnosis, title, reason := telegramDiagnosis(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[helios] %s", title)
-	if p.CompletedAt != "" {
-		fmt.Fprintf(&b, "\ncompleted_at=%s", p.CompletedAt)
-	}
-	fmt.Fprintf(&b, "\ncase_id=%s", p.CaseID)
-	fmt.Fprintf(&b, "\nchain=%s tx=%s", p.Chain, tx)
-	fmt.Fprintf(&b, "\ndiagnosis=%s", diagnosis)
-	if reason != "" {
-		fmt.Fprintf(&b, " reason=%s", reason)
-	}
-	fmt.Fprintf(&b, "\nevent=%s", p.Event)
-	fmt.Fprintf(&b, "\nstate=%s stored_outcome=%s", p.State, p.Outcome)
-	if p.FailureKind != nil && *p.FailureKind != "" {
-		fmt.Fprintf(&b, " failure_kind=%s", *p.FailureKind)
-	}
-	if p.SummaryStatus != "" {
-		fmt.Fprintf(&b, "\nsummary_status=%s", p.SummaryStatus)
-	}
-	if p.AnalysisStage != "" {
-		fmt.Fprintf(&b, "\nanalysis_stage=%s", p.AnalysisStage)
-	}
-	if p.RerunDecision != "" {
-		fmt.Fprintf(&b, "\nrerun_decision=%s", p.RerunDecision)
-		if p.RerunReason != "" {
-			fmt.Fprintf(&b, " reason=%s", p.RerunReason)
-		}
-	}
-	if p.AutoRerunResumeStage != "" {
-		fmt.Fprintf(&b, "\nauto_rerun_resume_stage=%s", p.AutoRerunResumeStage)
-	}
-	if p.AutoRerunEligible != nil {
-		fmt.Fprintf(&b, "\nauto_rerun_eligible=%t", *p.AutoRerunEligible)
-	}
-	if p.ResumeStage != "" || p.LumoskitStage != "" {
-		fmt.Fprintf(&b, "\nresume_stage=%s lumoskit_stage=%s", p.ResumeStage, p.LumoskitStage)
+	fmt.Fprintf(&b, "\n\nIncident: %s on %s", incidentTitle(p), chainTitle(p.Chain))
+	fmt.Fprintf(&b, "\nTx: %s", tx)
+	fmt.Fprintf(&b, "\nResult: %s", resultSummary(p, diagnosis))
+	if reasonForMessage(diagnosis, reason) != "" {
+		fmt.Fprintf(&b, "\nReason: %s", truncateText(reasonForMessage(diagnosis, reason), 180))
 	}
 	if p.ReportURL != "" {
-		fmt.Fprintf(&b, "\nreport_url=%s", p.ReportURL)
+		fmt.Fprintf(&b, "\nReport: %s", p.ReportURL)
 	}
-	if p.PoCURL != "" {
-		fmt.Fprintf(&b, "\npoc_url=%s", p.PoCURL)
-	}
-	if p.CommitURL != "" {
-		fmt.Fprintf(&b, "\ncommit_url=%s", p.CommitURL)
-	}
-	if p.GitHubSkipReason != "" {
-		fmt.Fprintf(&b, "\ngithub_publish=skipped reason=%s", p.GitHubSkipReason)
-	}
-	if p.HandoffStatus != "" {
-		fmt.Fprintf(&b, "\nhandoff_status=%s", p.HandoffStatus)
-	}
-	if p.SummaryJSONPath != nil && *p.SummaryJSONPath != "" {
-		fmt.Fprintf(&b, "\nsummary=%s", *p.SummaryJSONPath)
+	if completed := completedTime(p.CompletedAt); completed != "" {
+		fmt.Fprintf(&b, "\nCompleted: %s", completed)
 	}
 	return b.String()
 }
@@ -163,6 +123,192 @@ func failureKindText(p Payload) string {
 		return ""
 	}
 	return *p.FailureKind
+}
+
+func resultSummary(p Payload, diagnosis string) string {
+	decision := decisionText(p.RerunDecision)
+	switch diagnosis {
+	case "success":
+		return joinTelegramParts("verified", decision)
+	case "rca_blocked":
+		return joinTelegramParts("RCA blocked", decision)
+	case "poc_blocked":
+		return joinTelegramParts("PoC blocked", decision)
+	case "poc_failed":
+		return joinTelegramParts("PoC failed", decision)
+	case "engine_error":
+		return joinTelegramParts("engine error", decision)
+	case "partial":
+		return joinTelegramParts("partial", decision)
+	default:
+		return firstText(joinTelegramParts(diagnosis, decision), diagnosis, p.Outcome, p.Event, "unknown")
+	}
+}
+
+func decisionText(decision string) string {
+	switch decision {
+	case "no_rerun":
+		return "no rerun"
+	case "auto_rerun":
+		return "auto rerun"
+	case "manual_review":
+		return "manual review"
+	default:
+		return ""
+	}
+}
+
+func reasonForMessage(diagnosis, reason string) string {
+	if diagnosis == "success" || reason == "verified_result" {
+		return ""
+	}
+	return reason
+}
+
+func incidentTitle(p Payload) string {
+	slug := p.IncidentSlug
+	if slug == "" {
+		slug = incidentSlugFromCaseID(p.CaseID)
+	}
+	if title := titleFromSlug(slug); title != "" {
+		return title
+	}
+	return "Incident"
+}
+
+func incidentSlugFromCaseID(caseID string) string {
+	parts := strings.Split(strings.TrimPrefix(caseID, "case_"), "_")
+	if len(parts) == 0 {
+		return ""
+	}
+	start := 0
+	if len(parts[start]) == 6 && allDigits(parts[start]) {
+		start++
+	}
+	if start < len(parts) && isChainToken(parts[start]) {
+		start++
+	}
+	end := len(parts)
+	for i := start; i < len(parts); i++ {
+		if isAttemptToken(parts[i]) {
+			end = i
+			break
+		}
+	}
+	if start >= end {
+		return ""
+	}
+	return strings.Join(parts[start:end], "_")
+}
+
+func titleFromSlug(slug string) string {
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(slug)), func(r rune) bool {
+		return r == '_' || r == '-' || r == '/'
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	start := 0
+	if len(parts[start]) == 6 && allDigits(parts[start]) {
+		start++
+	}
+	if start < len(parts) && isChainToken(parts[start]) {
+		start++
+	}
+	words := make([]string, 0, len(parts)-start)
+	for _, part := range parts[start:] {
+		if part == "" || isAttemptToken(part) {
+			continue
+		}
+		words = append(words, titleWord(part))
+	}
+	return strings.Join(words, " ")
+}
+
+func titleWord(word string) string {
+	switch word {
+	case "atm", "bsc", "fpc", "sea", "usdt", "usd", "btc", "eth":
+		return strings.ToUpper(word)
+	}
+	if word == "" {
+		return ""
+	}
+	return strings.ToUpper(word[:1]) + word[1:]
+}
+
+func chainTitle(chain string) string {
+	switch strings.ToLower(strings.TrimSpace(chain)) {
+	case "eth", "ethereum":
+		return "Ethereum"
+	case "bsc", "bnb", "bnb_chain":
+		return "BSC"
+	default:
+		if chain == "" {
+			return "unknown chain"
+		}
+		return chain
+	}
+}
+
+func completedTime(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return raw
+	}
+	return t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+func truncateText(value string, max int) string {
+	if max <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:max-1])) + "…"
+}
+
+func joinTelegramParts(values ...string) string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return strings.Join(out, " · ")
+}
+
+func isAttemptToken(value string) bool {
+	if len(value) < 2 || value[0] != 'a' {
+		return false
+	}
+	return allDigits(value[1:])
+}
+
+func isChainToken(value string) bool {
+	switch value {
+	case "eth", "ethereum", "bsc", "bnb", "bnbchain", "bnb_chain":
+		return true
+	default:
+		return false
+	}
+}
+
+func allDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func firstText(values ...string) string {
