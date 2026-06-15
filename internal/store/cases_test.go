@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/UPside-Lumos-V2/helios/internal/outcome"
 )
 
 func TestClaimNextQueuedUsesIncidentSlugOutputRoot(t *testing.T) {
@@ -267,6 +269,92 @@ func TestMarkDoneWithPayloadPersistsAnalysisDiagnostics(t *testing.T) {
 	rca := terminalPayload["rca"].(map[string]any)
 	if rca["blocker_code"] != "economic_proof_gap" {
 		t.Fatalf("unexpected rca diagnostics: %#v", rca)
+	}
+}
+
+func markLatestFailed(ctx context.Context, t *testing.T, s *Store, chain, tx, failureKind string) {
+	t.Helper()
+	c, _, err := s.SubmitCase(ctx, chain, tx, nil, nil, nil, false)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if _, err := s.ClaimNextQueued(ctx, t.TempDir()); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := s.MarkFailed(ctx, c.CaseID, failureKind); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+}
+
+func TestSubmitCaseSkipsRerunForNonRetryableFailure(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	tx := "0x" + strings.Repeat("c", 64)
+	markLatestFailed(ctx, t, s, "ethereum", tx, outcome.FailureTxNotFound)
+
+	// Repeated /signals of the same bad tx must NOT spawn a new lumoskit attempt.
+	again, dedup, err := s.SubmitCase(ctx, "ethereum", tx, nil, nil, nil, false)
+	if err != nil {
+		t.Fatalf("resubmit: %v", err)
+	}
+	if dedup != DedupExistingNonRetryable {
+		t.Fatalf("dedup = %q, want %q", dedup, DedupExistingNonRetryable)
+	}
+	if again.AttemptNumber != 1 {
+		t.Fatalf("expected no new attempt, got attempt_number=%d", again.AttemptNumber)
+	}
+}
+
+func TestSubmitCaseRerunsForRetryableFailure(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	tx := "0x" + strings.Repeat("d", 64)
+	markLatestFailed(ctx, t, s, "ethereum", tx, outcome.FailureRPCUnavailable)
+
+	// Transient (retryable) failures still create a fresh child attempt.
+	again, dedup, err := s.SubmitCase(ctx, "ethereum", tx, nil, nil, nil, false)
+	if err != nil {
+		t.Fatalf("resubmit: %v", err)
+	}
+	if dedup != DedupRerunCreated {
+		t.Fatalf("dedup = %q, want %q", dedup, DedupRerunCreated)
+	}
+	if again.AttemptNumber != 2 {
+		t.Fatalf("expected new attempt, got attempt_number=%d", again.AttemptNumber)
+	}
+}
+
+func TestSubmitCaseForceRerunOverridesNonRetryable(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	tx := "0x" + strings.Repeat("e", 64)
+	markLatestFailed(ctx, t, s, "ethereum", tx, outcome.FailureTxNotFound)
+
+	// /cases force_rerun=true forces a fresh attempt even for non-retryable kinds.
+	again, dedup, err := s.SubmitCase(ctx, "ethereum", tx, nil, nil, nil, true)
+	if err != nil {
+		t.Fatalf("resubmit: %v", err)
+	}
+	if dedup != DedupRerunCreated {
+		t.Fatalf("dedup = %q, want %q", dedup, DedupRerunCreated)
+	}
+	if again.AttemptNumber != 2 {
+		t.Fatalf("expected forced new attempt, got attempt_number=%d", again.AttemptNumber)
 	}
 }
 

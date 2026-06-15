@@ -46,7 +46,7 @@ func (s *Server) handleSignal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "store_error", err.Error(), nil)
 		return
 	}
-	if dedup == store.DedupExisting {
+	if dedup == store.DedupExisting || dedup == store.DedupExistingNonRetryable {
 		if mergeErr := s.Store.MergeCaseMetadata(ctx, c.CaseID, signalMetadataMergeFields(signalMeta)); mergeErr != nil {
 			writeError(w, http.StatusInternalServerError, "store_error", mergeErr.Error(), nil)
 			return

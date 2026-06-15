@@ -104,6 +104,43 @@ func TestRenderTelegramText_TruncatesTxAndIncludesEverything(t *testing.T) {
 	}
 }
 
+func TestRenderTelegramText_EngineErrorIncludesDiagnosisLines(t *testing.T) {
+	failure := "tx_not_found"
+	retryable := false
+	p := Payload{
+		Event:              EventEngineError,
+		CaseID:             "case_260611_arb_nova_finance_a02_4d5e6f7a_420a",
+		IncidentSlug:       "260611_arb_nova_finance",
+		Chain:              "arbitrum",
+		TxHash:             "0x4d5e6f7a" + strings.Repeat("0", 56),
+		State:              "failed",
+		Outcome:            "engine_error",
+		FailureKind:        &failure,
+		AnalysisStage:      "engine_error",
+		RerunDecision:      "manual_review",
+		RerunReason:        "tx_not_found",
+		EngineErrorKind:    "tx_not_found",
+		DiagnosisOwner:     "upstream_input",
+		DiagnosisRetryable: &retryable,
+		DiagnosisAction:    "verify the tx hash exists on the submitted chain",
+		CompletedAt:        "2026-06-13T14:23:00Z",
+	}
+	text := renderTelegramText(p)
+	mustContain := []string{
+		"[helios] Engine error",
+		"Reason: tx_not_found",
+		"Owner: upstream_input",
+		"Retryable: no",
+		"Action: verify the tx hash exists on the submitted chain",
+		"Case: case_260611_arb_nova_finance_a02_4d5e6f7a_420a",
+	}
+	for _, m := range mustContain {
+		if !strings.Contains(text, m) {
+			t.Errorf("rendered text missing %q\ntext:\n%s", m, text)
+		}
+	}
+}
+
 func TestRenderTelegramText_OmitsEmptyOptionalFields(t *testing.T) {
 	p := Payload{
 		Event:   EventVerified,

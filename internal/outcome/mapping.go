@@ -87,6 +87,7 @@ type Input struct {
 	SummaryBytes   []byte // raw bytes; nil when SummaryReadErr != nil
 	SummaryMissing bool   // os.IsNotExist(err) on the expected path
 	SummaryReadErr error  // any non-nil read error other than missing
+	Stderr         []byte // captured lumoskit stderr tail; classified into a finer engine-error kind
 }
 
 // Map applies rules O5..O8 in the seed's required precedence.
@@ -109,8 +110,12 @@ type Input struct {
 // so O4 now requires the specific kind="engine_error" sentinel that lumoskit
 // emits for genuine pipeline failures.
 func Map(in Input) Result {
-	// O5
+	// O5 — refine the opaque nonzero exit into a finer engine-error kind when
+	// stderr/summary make the cause clear (tx_not_found, rpc_unavailable, ...).
 	if in.ExitCode != 0 {
+		if kind := classifyEngineError(in); kind != "" {
+			return engineError("O5", kind)
+		}
 		return engineError("O5", FailureLumoskitNonzeroExit)
 	}
 	// O6
@@ -223,6 +228,23 @@ func TerminalEventPayload(result Result, in Input) map[string]any {
 	}
 	if result.RerunReason != "" {
 		payload["rerun_reason"] = result.RerunReason
+	}
+
+	// Engine-error diagnosis + redacted stderr tail so an operator can decide
+	// the next action from GET /cases/{id} (and Telegram) without SSH/journal.
+	if result.Outcome == OutcomeEngineError && result.FailureKind != nil && *result.FailureKind != "" {
+		payload["engine_error_kind"] = *result.FailureKind
+		if d, ok := DiagnosisFor(*result.FailureKind); ok {
+			payload["diagnosis"] = map[string]any{
+				"category":           d.Category,
+				"owner":              d.Owner,
+				"retryable":          d.Retryable,
+				"recommended_action": d.Action,
+			}
+		}
+		if tail := redactStderr(in.Stderr); tail != "" {
+			payload["stderr_tail"] = tail
+		}
 	}
 
 	s, ok := parseSummaryForPayload(in)

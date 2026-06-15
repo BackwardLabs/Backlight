@@ -82,6 +82,22 @@ func renderTelegramText(p Payload) string {
 	if reasonForMessage(diagnosis, reason) != "" {
 		fmt.Fprintf(&b, "\nReason: %s", truncateText(reasonForMessage(diagnosis, reason), 180))
 	}
+	// Engine-error triage lines: let an operator decide the next action from
+	// Telegram alone (who owns it, is it worth retrying, what to check).
+	if diagnosis == "engine_error" {
+		if p.DiagnosisOwner != "" {
+			fmt.Fprintf(&b, "\nOwner: %s", p.DiagnosisOwner)
+		}
+		if p.DiagnosisRetryable != nil {
+			fmt.Fprintf(&b, "\nRetryable: %s", yesNo(*p.DiagnosisRetryable))
+		}
+		if p.DiagnosisAction != "" {
+			fmt.Fprintf(&b, "\nAction: %s", truncateText(p.DiagnosisAction, 200))
+		}
+		if p.CaseID != "" {
+			fmt.Fprintf(&b, "\nCase: %s", p.CaseID)
+		}
+	}
 	if p.ReportURL != "" {
 		fmt.Fprintf(&b, "\nReport: %s", p.ReportURL)
 	}
@@ -123,6 +139,13 @@ func failureKindText(p Payload) string {
 		return ""
 	}
 	return *p.FailureKind
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 func resultSummary(p Payload, diagnosis string) string {
