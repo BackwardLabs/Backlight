@@ -183,6 +183,27 @@ func TestReaderRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestReaderRejectsAllowlistedSymlinkToExcludedInRootFile(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "case_1")
+	if err := os.MkdirAll(filepath.Join(root, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "prompts", "system.txt"), []byte("prompt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "prompts", "system.txt"), filepath.Join(root, "RCA.md")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	reader, err := NewReader(base, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.Read(caseWithRoot(root), "RCA.md", 0); err == nil {
+		t.Fatal("allowlisted symlink to excluded in-root file succeeded; want rejected")
+	}
+}
+
 func TestReaderMaxBytes(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "case_1")

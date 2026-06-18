@@ -11,7 +11,8 @@ import (
 	"strings"
 )
 
-const DefaultMaxBytes int64 = 1 << 20 // 1 MiB
+const DefaultMaxBytes int64 = 1 << 20           // 1 MiB
+const DefaultECWExportMaxBytes int64 = 16 << 20 // 16 MiB
 
 type artifactSpec struct {
 	PublicPath string
@@ -37,6 +38,62 @@ var defaultArtifacts = []artifactSpec{
 	{PublicPath: "report_bundle/evidence/fund_flows.json", SourcePath: "report_bundle/evidence/fund_flows.json"},
 	{PublicPath: "report_bundle/visuals/asset_deltas.dot", SourcePath: "report_bundle/visuals/asset_deltas.dot"},
 	{PublicPath: "report_bundle/visuals/fund_flows.dot", SourcePath: "report_bundle/visuals/fund_flows.dot"},
+}
+
+var ecwArtifacts = []artifactSpec{
+	{PublicPath: "summary.md", SourcePath: "summary.md"},
+	{PublicPath: "summary.json", SourcePath: "summary.json"},
+	{PublicPath: "RCA.md", SourcePath: "RCA.md"},
+	{PublicPath: "rca.md", SourcePath: "rca.md"},
+	{PublicPath: "PoC.t.sol", SourcePath: "PoC.t.sol"},
+	{PublicPath: "inputs/tx_metadata.json", SourcePath: "inputs/tx_metadata.json"},
+	{PublicPath: "report_bundle/README.md", SourcePath: "report_bundle/README.md"},
+	{PublicPath: "report_bundle/manifest.json", SourcePath: "report_bundle/manifest.json"},
+	{PublicPath: "report_bundle/report/REPORT.md", SourcePath: "report_bundle/report/REPORT.md"},
+	{PublicPath: "report_bundle/report/RCA.md", SourcePath: "report_bundle/report/RCA.md"},
+	{PublicPath: "report_bundle/report/report.json", SourcePath: "report_bundle/report/report.json"},
+	{PublicPath: "report_bundle/report/run_summary.json", SourcePath: "report_bundle/report/run_summary.json"},
+	{PublicPath: "report_bundle/poc/PoC.t.sol", SourcePath: "report_bundle/poc/PoC.t.sol"},
+	{PublicPath: "report_bundle/poc/LumosPoCBase.sol", SourcePath: "report_bundle/poc/LumosPoCBase.sol"},
+	{PublicPath: "report_bundle/evidence/asset_deltas.json", SourcePath: "report_bundle/evidence/asset_deltas.json"},
+	{PublicPath: "report_bundle/evidence/fund_flows.json", SourcePath: "report_bundle/evidence/fund_flows.json"},
+	{PublicPath: "report_bundle/visuals/asset_deltas.dot", SourcePath: "report_bundle/visuals/asset_deltas.dot"},
+	{PublicPath: "report_bundle/visuals/fund_flows.dot", SourcePath: "report_bundle/visuals/fund_flows.dot"},
+	{PublicPath: "artifacts/agent_poc/attack_flow.md", SourcePath: "artifacts/agent_poc/attack_flow.md"},
+	{PublicPath: "artifacts/agent_poc/multi_leg_reconciliation.md", SourcePath: "artifacts/agent_poc/multi_leg_reconciliation.md"},
+	{PublicPath: "artifacts/agent_poc/multi_leg_reconciliation.json", SourcePath: "artifacts/agent_poc/multi_leg_reconciliation.json"},
+	{PublicPath: "artifacts/agent_poc/result.json", SourcePath: "artifacts/agent_poc/result.json"},
+	{PublicPath: "artifacts/agent_poc/summary.json", SourcePath: "artifacts/agent_poc/summary.json"},
+	{PublicPath: "artifacts/agent_poc/foundry/foundry.toml", SourcePath: "artifacts/agent_poc/foundry/foundry.toml"},
+	{PublicPath: "artifacts/agent_poc/foundry/test/PoC.t.sol", SourcePath: "artifacts/agent_poc/foundry/test/PoC.t.sol"},
+	{PublicPath: "artifacts/agent_poc/foundry/test/LumosPoCBase.sol", SourcePath: "artifacts/agent_poc/foundry/test/LumosPoCBase.sol"},
+	{PublicPath: "artifacts/agent_poc/foundry/lib/forge-std/src/Test.sol", SourcePath: "artifacts/agent_poc/foundry/lib/forge-std/src/Test.sol"},
+	{PublicPath: "artifacts/poc_sketch/poc_sketch.sol", SourcePath: "artifacts/poc_sketch/poc_sketch.sol"},
+	{PublicPath: "artifacts/poc_sketch/poc_context.json", SourcePath: "artifacts/poc_sketch/poc_context.json"},
+	{PublicPath: "artifacts/poc_sketch/foundry_spec.json", SourcePath: "artifacts/poc_sketch/foundry_spec.json"},
+	{PublicPath: "artifacts/poc_sketch/pseudo_test_plan.md", SourcePath: "artifacts/poc_sketch/pseudo_test_plan.md"},
+	{PublicPath: "artifacts/rca/input/tx_metadata.json", SourcePath: "artifacts/rca/input/tx_metadata.json"},
+	{PublicPath: "artifacts/rca/input/asset_deltas.json", SourcePath: "artifacts/rca/input/asset_deltas.json"},
+	{PublicPath: "artifacts/rca/trace_read_model.json", SourcePath: "artifacts/rca/trace_read_model.json"},
+	{PublicPath: "artifacts/rca/economic_frontier.json", SourcePath: "artifacts/rca/economic_frontier.json"},
+	{PublicPath: "artifacts/rca/rca_frontier.json", SourcePath: "artifacts/rca/rca_frontier.json"},
+	{PublicPath: "artifacts/rca/rpc_observations.json", SourcePath: "artifacts/rca/rpc_observations.json"},
+	{PublicPath: "artifacts/rca/evidence_catalog.json", SourcePath: "artifacts/rca/evidence_catalog.json"},
+	{PublicPath: "artifacts/rca/initial_context_pack.json", SourcePath: "artifacts/rca/initial_context_pack.json"},
+	{PublicPath: "artifacts/rca/state_transition_index.json", SourcePath: "artifacts/rca/state_transition_index.json"},
+	{PublicPath: "artifacts/rca/rca_retrieval_requests.json", SourcePath: "artifacts/rca/rca_retrieval_requests.json"},
+	{PublicPath: "artifacts/rca/retrieval_pack.json", SourcePath: "artifacts/rca/retrieval_pack.json"},
+	{PublicPath: "artifacts/rca/reasoning.md", SourcePath: "artifacts/rca/reasoning.md"},
+	{PublicPath: "artifacts/rca/report.json", SourcePath: "artifacts/rca/report.json"},
+	{PublicPath: "artifacts/rca/summary.json", SourcePath: "artifacts/rca/summary.json"},
+	{PublicPath: "artifacts/rca/validation.json", SourcePath: "artifacts/rca/validation.json"},
+	{PublicPath: "artifacts/rca/source_fetch_summary.json", SourcePath: "artifacts/rca/source_fetch_summary.json"},
+	{PublicPath: "artifacts/asset_delta/asset_deltas.json", SourcePath: "artifacts/asset_delta/asset_deltas.json"},
+	{PublicPath: "artifacts/asset_delta/accounting_notes.md", SourcePath: "artifacts/asset_delta/accounting_notes.md"},
+	{PublicPath: "artifacts/flow_context/fund_flows.json", SourcePath: "artifacts/flow_context/fund_flows.json"},
+	{PublicPath: "artifacts/enrich/selector_labels.json", SourcePath: "artifacts/enrich/selector_labels.json"},
+	{PublicPath: "artifacts/localize/localized_call_graph.json", SourcePath: "artifacts/localize/localized_call_graph.json"},
+	{PublicPath: "artifacts/semantic/pseudocode_compact.txt", SourcePath: "artifacts/semantic/pseudocode_compact.txt"},
 }
 
 // Reader enforces exact-path allowlisting and output-root containment.
@@ -67,6 +124,14 @@ type ReadResult struct {
 }
 
 func NewReader(outputBase string, maxBytes int64) (*Reader, error) {
+	return newReader(outputBase, maxBytes, defaultArtifacts, DefaultMaxBytes)
+}
+
+func NewECWReader(outputBase string, maxBytes int64) (*Reader, error) {
+	return newReader(outputBase, maxBytes, ecwArtifacts, DefaultECWExportMaxBytes)
+}
+
+func newReader(outputBase string, maxBytes int64, specs []artifactSpec, defaultMaxBytes int64) (*Reader, error) {
 	if strings.TrimSpace(outputBase) == "" {
 		return nil, fmt.Errorf("HELIOS_OUTPUT_BASE or HELIOS_OUTPUT_ROOT is required")
 	}
@@ -79,10 +144,10 @@ func NewReader(outputBase string, maxBytes int64) (*Reader, error) {
 		return nil, fmt.Errorf("output base must not be filesystem root")
 	}
 	if maxBytes <= 0 {
-		maxBytes = DefaultMaxBytes
+		maxBytes = defaultMaxBytes
 	}
-	allowed := make(map[string]string, len(defaultArtifacts))
-	for _, artifact := range defaultArtifacts {
+	allowed := make(map[string]string, len(specs))
+	for _, artifact := range specs {
 		allowed[artifact.PublicPath] = artifact.SourcePath
 	}
 	return &Reader{OutputBase: outputBase, MaxBytes: maxBytes, Allowed: allowed}, nil
@@ -189,6 +254,13 @@ func (r *Reader) safeFilePath(root, rel string) (string, error) {
 	}
 	if !isWithin(root, resolved) {
 		return "", fmt.Errorf("artifact path escapes output_root")
+	}
+	resolvedRel, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Clean(resolvedRel) != sourceRel {
+		return "", fmt.Errorf("artifact path %q resolves to non-allowlisted path", rel)
 	}
 	return resolved, nil
 }
