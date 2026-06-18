@@ -14,6 +14,7 @@ This page keeps the operational details out of the project README.
 | `GET /cases` | done (filters: state/outcome/chain/tx_hash/created_from/created_to, offset/limit, default `created_at DESC`) |
 | `GET /cases/{case_id}` | done (case-detail + events + handoff/notification attempts) |
 | `POST /cases/{case_id}/retry-handoff` | done (precondition: state=done AND handoff_status=failed; pending URLs only) |
+| `GET /ecw/cases/{case_id}/export` | done (internal ECW artifact bundle, separate ECW token, exact file allowlist) |
 | Worker (FIFO dispatcher) | done (poll loop + semaphore for max_concurrent) |
 | lumoskit child process invocation | done (env pass-through; stderr captured with 64 KiB cap) |
 | Outcome mapping (O1..O8) | done (strict precedence O5 -> O6 -> O7 -> O4 -> O1 -> O2 -> O3 -> O8) |
@@ -52,7 +53,9 @@ precedence; `.env.local` can override `.env`.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `HELIOS_API_TOKEN` | yes | - | Bearer token for every endpoint except `/healthz` |
+| `HELIOS_API_TOKEN` | yes | - | Bearer token for core API endpoints except `/healthz` |
+| `HELIOS_ECW_EXPORT_TOKEN` | no | empty | separate Bearer token for `GET /ecw/cases/{case_id}/export`; unset disables ECW export and the value must differ from `HELIOS_API_TOKEN` |
+| `HELIOS_ECW_EXPORT_MAX_BYTES` | no | `16777216` | per-artifact read cap for ECW export responses |
 | `HELIOS_DB_PATH` | yes | - | SQLite file path |
 | `HELIOS_OUTPUT_ROOT` | yes | - | fixed parent directory for flat human-readable LumosKit `--output-root` directories (`<YYMMDD>_<chain-alias>_<protocol>[-N]`) |
 | `HELIOS_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
@@ -105,6 +108,10 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   `HELIOS_PRE_LUMOS_SEED_ROOT` is set, verified cases also run
   `scripts/pre_lumos_agent.py`, write `<case output root>/pre-lumos.json`, and
   merge rows into `seed/import_{YEAR}.json` by `slug`.
+- **ECW export.** When `HELIOS_ECW_EXPORT_TOKEN` is set, `GET /ecw/cases/{case_id}/export`
+  returns an `ecw-internal-complete` bundle for internal PoC replay/adaptation.
+  It uses exact file allowlisting, reports absent profile files in `missing`, and
+  does not expand the MCP/product artifact profile.
 - **Decision-based auto-rerun.** Terminal event payloads include
   `analysis_stage`, `rerun_decision`, `rerun_reason`, `auto_rerun_resume_stage`,
   and eligibility fields. Attempts with `rerun_decision=auto_rerun` and

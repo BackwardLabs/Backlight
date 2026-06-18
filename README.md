@@ -91,11 +91,13 @@ http://127.0.0.1:8080/ui
 Production deployments should expose the browser console on
 `dashboard.backwardlabs.io` and automation/API surfaces on `api.backwardlabs.io`.
 The dashboard host only needs `/ui`, `/cases...`, and `/healthz`; `/signals`,
-`/metrics`, and `/mcp` should be served from the API host.
+`/metrics`, `/ecw`, and `/mcp` should be served from the API host.
 
 ## Core API
 
-All endpoints except `/healthz` require `Authorization: Bearer $HELIOS_API_TOKEN`.
+Core API endpoints except `/healthz` require `Authorization: Bearer $HELIOS_API_TOKEN`.
+The internal ECW export uses a separate `HELIOS_ECW_EXPORT_TOKEN` and is disabled
+when that token is unset.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -106,6 +108,7 @@ All endpoints except `/healthz` require `Authorization: Bearer $HELIOS_API_TOKEN
 | `GET /cases/{case_id}` | case detail, events, handoff attempts, notifications, exposed on both dashboard/API hosts |
 | `POST /cases/{case_id}/retry-handoff` | retry failed downstream delivery, exposed on both dashboard/API hosts |
 | `GET /metrics` | Prometheus metrics, exposed on `api.backwardlabs.io` |
+| `GET /ecw/cases/{case_id}/export` | internal ECW replay/RCA bundle export, exposed on `api.backwardlabs.io` with `HELIOS_ECW_EXPORT_TOKEN` |
 | `/mcp` | remote MCP endpoint, exposed on `api.backwardlabs.io` when `helios-mcp` HTTP mode is enabled |
 
 ## Docs
