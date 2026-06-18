@@ -30,8 +30,8 @@ func writeError(w http.ResponseWriter, status int, code, message string, details
 	writeJSON(w, status, ErrorBody{ErrorCode: code, Message: message, Details: details})
 }
 
-// authMiddleware enforces Bearer token on all protected endpoints. /healthz is
-// the only public path and must be mounted outside this middleware.
+// authMiddleware enforces the core API Bearer token on the protected mux. Routes
+// with distinct auth requirements must be mounted outside this middleware.
 func authMiddleware(token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
