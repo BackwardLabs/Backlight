@@ -9,6 +9,8 @@ import (
 
 type Config struct {
 	APIToken                string
+	ECWExportToken          string
+	ECWExportMaxBytes       int64
 	DBPath                  string
 	OutputRoot              string
 	ListenAddr              string
@@ -53,6 +55,8 @@ func Load() (*Config, error) {
 
 	c := &Config{
 		APIToken:                       os.Getenv("HELIOS_API_TOKEN"),
+		ECWExportToken:                 os.Getenv("HELIOS_ECW_EXPORT_TOKEN"),
+		ECWExportMaxBytes:              envInt64("HELIOS_ECW_EXPORT_MAX_BYTES", 0),
 		DBPath:                         os.Getenv("HELIOS_DB_PATH"),
 		OutputRoot:                     os.Getenv("HELIOS_OUTPUT_ROOT"),
 		ListenAddr:                     envDefault("HELIOS_LISTEN_ADDR", ":8080"),
@@ -100,6 +104,9 @@ func Load() (*Config, error) {
 	if c.OutputRoot == "" {
 		return nil, errors.New("HELIOS_OUTPUT_ROOT is required")
 	}
+	if strings.TrimSpace(c.ECWExportToken) != "" && strings.TrimSpace(c.ECWExportToken) == strings.TrimSpace(c.APIToken) {
+		return nil, errors.New("HELIOS_ECW_EXPORT_TOKEN must differ from HELIOS_API_TOKEN")
+	}
 	if c.PreLumosEnabled {
 		if c.PreLumosSeedRoot == "" {
 			return nil, errors.New("HELIOS_PRE_LUMOS_SEED_ROOT is required when HELIOS_PRE_LUMOS_ENABLED=true")
@@ -138,6 +145,15 @@ func firstNonEmpty(values ...string) string {
 func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envInt64(key string, def int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}
