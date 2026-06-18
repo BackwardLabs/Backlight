@@ -1,7 +1,7 @@
 // Package prelumos invokes the vendored Pre-Lumos Agent SDK sidecar.
 //
 // The skill bundle remains under skills/pre-lumos and is treated as read-only
-// prompt/context material. Helios only decides when to run the sidecar and
+// prompt/context material. Backlight only decides when to run the sidecar and
 // records its sync result on the case timeline.
 package prelumos
 

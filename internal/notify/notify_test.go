@@ -80,13 +80,13 @@ func TestRenderTelegramText_TruncatesTxAndIncludesEverything(t *testing.T) {
 		AutoRerunEligible:    &eligible,
 		AutoRerunResumeStage: "rca",
 		CompletedAt:          "2026-06-03T03:25:16Z",
-		ReportURL:            "https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/case/README.md",
-		PoCURL:               "https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/case/PoC.t.sol",
-		CommitURL:            "https://github.com/UPside-Lumos-V2/Q1-2026/commit/abc123",
+		ReportURL:            "https://github.com/BackwardLabs/Q1-2026/blob/main/test/case/README.md",
+		PoCURL:               "https://github.com/BackwardLabs/Q1-2026/blob/main/test/case/PoC.t.sol",
+		CommitURL:            "https://github.com/BackwardLabs/Q1-2026/commit/abc123",
 	}
 	text := renderTelegramText(p)
 	mustContain := []string{
-		"[helios] RCA blocked",
+		"[Backlight] RCA blocked",
 		"Incident: Test Case on Ethereum",
 		"Tx: 0xaaaaaaaa…aaab",
 		"Result: RCA blocked · auto rerun",
@@ -94,7 +94,7 @@ func TestRenderTelegramText_TruncatesTxAndIncludesEverything(t *testing.T) {
 		"0xaaaaaaaa", // first 10 of tx
 		"aaab",       // last 4 of tx
 		"…",
-		"Report: https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/case/README.md",
+		"Report: https://github.com/BackwardLabs/Q1-2026/blob/main/test/case/README.md",
 		"Completed: 2026-06-03 03:25 UTC",
 	}
 	for _, m := range mustContain {
@@ -166,7 +166,7 @@ func TestPayloadAnalysisEnrichmentInfersRCABlockedFromLegacyPayload(t *testing.T
 		t.Fatalf("legacy payload not inferred as rca_blocked: %+v", payload)
 	}
 	text := renderTelegramText(payload)
-	for _, marker := range []string{"[helios] RCA blocked", "Result: RCA blocked · auto rerun", "Reason: missing allowance provenance"} {
+	for _, marker := range []string{"[Backlight] RCA blocked", "Result: RCA blocked · auto rerun", "Reason: missing allowance provenance"} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("telegram text missing %q:\n%s", marker, text)
 		}
@@ -175,6 +175,65 @@ func TestPayloadAnalysisEnrichmentInfersRCABlockedFromLegacyPayload(t *testing.T
 		if strings.Contains(text, removed) {
 			t.Fatalf("telegram text still contains noisy field %q:\n%s", removed, text)
 		}
+	}
+}
+
+func TestPayloadAnalysisEnrichmentShowsRCAAgentRuntimeError(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "bsc", "0x"+strings.Repeat("d", 64), nil, nil, json.RawMessage(`{"protocol":"test"}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendCaseEvent(ctx, c.CaseID, "state_transition", map[string]any{
+		"outcome":        "engine_error",
+		"failure_kind":   "rca_agent_runtime_error",
+		"analysis_stage": "engine_error",
+		"rerun_decision": "manual_review",
+		"rerun_reason":   "codex_sdk_auth_error",
+		"rca": map[string]any{
+			"status":       "blocked",
+			"blocker_code": "rca_agent_runtime_error",
+		},
+		"failure": map[string]any{
+			"kind":        "rca_agent_runtime_error",
+			"category":    "engine_error",
+			"detail_kind": "codex_sdk_auth_error",
+			"message":     "RCA agent runtime error (codex_sdk_auth_error): refresh token expired",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	failureKind := "rca_agent_runtime_error"
+	outcome := "engine_error"
+	c.Outcome = &outcome
+	c.FailureKind = &failureKind
+	payload := PayloadFromCase(c, EventEngineError)
+	n := &Notifier{Store: st}
+	if err := n.enrichWithAnalysisPayload(ctx, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.FailureCategory != "engine_error" || payload.FailureDetailKind != "codex_sdk_auth_error" {
+		t.Fatalf("failure details not enriched: %+v", payload)
+	}
+	text := renderTelegramText(payload)
+	for _, marker := range []string{
+		"[Backlight] RCA agent runtime error",
+		"Result: RCA agent runtime error · manual review",
+		"Reason: codex_sdk_auth_error",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("telegram text missing %q:\n%s", marker, text)
+		}
+	}
+	if strings.Contains(text, "[Backlight] Engine error") || strings.Contains(text, "Result: engine error") {
+		t.Fatalf("telegram text used generic engine error:\n%s", text)
 	}
 }
 
@@ -208,9 +267,9 @@ func TestPayloadAnalysisEnrichmentFromCaseEvents(t *testing.T) {
 	}
 	if err := st.AppendCaseEvent(ctx, c.CaseID, "github_publish", map[string]any{
 		"published":  true,
-		"report_url": "https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/case/README.md",
-		"poc_url":    "https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/case/PoC.t.sol",
-		"commit_url": "https://github.com/UPside-Lumos-V2/Q1-2026/commit/abc123",
+		"report_url": "https://github.com/BackwardLabs/Q1-2026/blob/main/test/case/README.md",
+		"poc_url":    "https://github.com/BackwardLabs/Q1-2026/blob/main/test/case/PoC.t.sol",
+		"commit_url": "https://github.com/BackwardLabs/Q1-2026/commit/abc123",
 	}); err != nil {
 		t.Fatal(err)
 	}

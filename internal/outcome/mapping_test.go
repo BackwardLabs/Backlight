@@ -17,7 +17,7 @@ func TestMap_PrecedenceTable(t *testing.T) {
 		wantOutcome     string
 		wantFailureKind string // "" when nil
 	}{
-		// O5 — nonzero exit ignores summary contents
+		// O5 — nonzero exit is generic unless lumoskit wrote a specific engine category.
 		{
 			name:            "O5 nonzero exit ignores summary",
 			in:              Input{ExitCode: 1, SummaryBytes: []byte(`{"status":"pass","poc":{"status":"verified"}}`)},
@@ -25,6 +25,14 @@ func TestMap_PrecedenceTable(t *testing.T) {
 			wantState:       StateFailed,
 			wantOutcome:     OutcomeEngineError,
 			wantFailureKind: FailureLumoskitNonzeroExit,
+		},
+		{
+			name:            "O5 nonzero exit preserves specific engine category",
+			in:              Input{ExitCode: 1, SummaryBytes: []byte(`{"status":"blocked","poc":{"status":"failed"},"failure":{"kind":"agent_poc_agent_runtime_error","category":"engine_error","detail_kind":"codex_sdk_auth_error","stage":"agent_poc"}}`)},
+			wantRule:        "O5",
+			wantState:       StateFailed,
+			wantOutcome:     OutcomeEngineError,
+			wantFailureKind: "agent_poc_agent_runtime_error",
 		},
 		// O6 — summary missing
 		{
@@ -64,6 +72,14 @@ func TestMap_PrecedenceTable(t *testing.T) {
 			wantState:       StateFailed,
 			wantOutcome:     OutcomeEngineError,
 			wantFailureKind: FailureLumoskitReportedEngineError,
+		},
+		{
+			name:            "O4 reported specific engine_error category",
+			in:              Input{ExitCode: 0, SummaryBytes: []byte(`{"status":"blocked","poc":{"status":"verified"},"rca":{"status":"blocked","blocker_code":"rca_agent_runtime_error"},"failure":{"kind":"rca_agent_runtime_error","category":"engine_error","detail_kind":"codex_sdk_auth_error"}}`)},
+			wantRule:        "O4",
+			wantState:       StateFailed,
+			wantOutcome:     OutcomeEngineError,
+			wantFailureKind: "rca_agent_runtime_error",
 		},
 		// Real lumoskit emits failure.kind=poc_missing on partial/unverified runs;
 		// helios must NOT route those through O4 — they belong to O2 / O3.
@@ -250,6 +266,14 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			wantDecision: RerunDecisionManualReview,
 			wantReason:   FailureLumoskitReportedEngineError,
 		},
+		{
+			name:         "specific engine error keeps detail reason",
+			summary:      `{"status":"blocked","poc":{"status":"verified"},"rca":{"status":"blocked","blocker_code":"rca_agent_runtime_error"},"failure":{"kind":"rca_agent_runtime_error","category":"engine_error","detail_kind":"codex_sdk_auth_error"}}`,
+			wantOutcome:  OutcomeEngineError,
+			wantStage:    AnalysisStageEngineError,
+			wantDecision: RerunDecisionManualReview,
+			wantReason:   "codex_sdk_auth_error",
+		},
 	}
 
 	for _, tc := range cases {
@@ -349,5 +373,35 @@ func TestTerminalEventPayloadFallsBackToRuleForMissingSummary(t *testing.T) {
 	}
 	if _, ok := payload["poc"]; ok {
 		t.Fatalf("poc payload should be absent when summary is missing: %#v", payload)
+	}
+}
+
+func TestTerminalEventPayloadIncludesSpecificEngineFailure(t *testing.T) {
+	in := Input{ExitCode: 0, SummaryBytes: []byte(`{
+		"status":"blocked",
+		"poc":{"status":"verified"},
+		"rca":{"status":"blocked","blocker_code":"rca_agent_runtime_error"},
+		"failure":{
+			"kind":"rca_agent_runtime_error",
+			"category":"engine_error",
+			"detail_kind":"codex_sdk_auth_error",
+			"message":"RCA agent runtime error (codex_sdk_auth_error): refresh token expired"
+		}
+	}`)}
+	mapped := Map(in)
+	payload := TerminalEventPayload(mapped, in)
+
+	if payload["outcome"] != OutcomeEngineError {
+		t.Fatalf("outcome = %v, want %s", payload["outcome"], OutcomeEngineError)
+	}
+	if payload["failure_kind"] != "rca_agent_runtime_error" {
+		t.Fatalf("failure_kind = %v", payload["failure_kind"])
+	}
+	if payload["rerun_reason"] != "codex_sdk_auth_error" {
+		t.Fatalf("rerun_reason = %v", payload["rerun_reason"])
+	}
+	failure := payload["failure"].(map[string]string)
+	if failure["category"] != "engine_error" || failure["detail_kind"] != "codex_sdk_auth_error" {
+		t.Fatalf("unexpected failure payload: %#v", failure)
 	}
 }

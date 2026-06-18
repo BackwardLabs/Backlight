@@ -2,10 +2,10 @@ global:
   scrape_interval: 5s
   evaluation_interval: 5s
   external_labels:
-    service: helios
+    service: backlight
 
 scrape_configs:
-  - job_name: helios
+  - job_name: backlight
     metrics_path: /metrics
     scheme: http
     authorization:
@@ -14,4 +14,4 @@ scrape_configs:
     static_configs:
       - targets: ['__HELIOS_HOST__']
         labels:
-          instance: helios-local
+          instance: backlight-local

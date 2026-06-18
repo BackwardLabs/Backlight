@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestLoadConfigDefaultsDirectModeFromHeliosEnv(t *testing.T) {
+func TestLoadConfigDefaultsDirectModeFromBacklightLegacyEnv(t *testing.T) {
 	t.Setenv("HELIOS_LISTEN_ADDR", "127.0.0.1:18080")
 	t.Setenv("HELIOS_API_TOKEN", "test-token")
 
@@ -13,8 +13,8 @@ func TestLoadConfigDefaultsDirectModeFromHeliosEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.HeliosBaseURL != "http://127.0.0.1:18080" {
-		t.Fatalf("HeliosBaseURL = %q, want derived listen addr", cfg.HeliosBaseURL)
+	if cfg.BacklightBaseURL != "http://127.0.0.1:18080" {
+		t.Fatalf("BacklightBaseURL = %q, want derived listen addr", cfg.BacklightBaseURL)
 	}
 	if cfg.OutputBase != "" {
 		t.Fatalf("OutputBase = %q, want empty for direct API artifact mode", cfg.OutputBase)

@@ -26,7 +26,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/worker"
 )
 
-func TestHeliosToBridgeToMCPReadArtifact(t *testing.T) {
+func TestBacklightToBridgeToMCPReadArtifact(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -84,7 +84,7 @@ func TestHeliosToBridgeToMCPReadArtifact(t *testing.T) {
 	defer heliosHTTP.Close()
 
 	caseID := submitCase(t, heliosHTTP.URL, "api-token")
-	waitForHeliosCase(t, heliosHTTP.URL, "api-token", caseID, func(c api.CaseDetailResponse) bool {
+	waitForBacklightCase(t, heliosHTTP.URL, "api-token", caseID, func(c api.CaseDetailResponse) bool {
 		return c.State == "handed-off" && c.HandoffStatus == "succeeded"
 	})
 
@@ -171,7 +171,7 @@ func submitCase(t *testing.T, baseURL, token string) string {
 	return out.CaseID
 }
 
-func waitForHeliosCase(t *testing.T, baseURL, token, caseID string, done func(api.CaseDetailResponse) bool) api.CaseDetailResponse {
+func waitForBacklightCase(t *testing.T, baseURL, token, caseID string, done func(api.CaseDetailResponse) bool) api.CaseDetailResponse {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	var last api.CaseDetailResponse

@@ -28,7 +28,7 @@ func (w *WebhookChannel) Deliver(ctx context.Context, p Payload) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "helios/1 notify=webhook")
+	req.Header.Set("User-Agent", "backlight/1 notify=webhook")
 	resp, err := w.Client.Do(req)
 	if err != nil {
 		return 0, err

@@ -11,7 +11,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/heliosclient"
 )
 
-func TestToolsListExposesOnlyReadOnlyHeliosTools(t *testing.T) {
+func TestToolsListExposesOnlyReadOnlyBacklightTools(t *testing.T) {
 	s := testServer()
 	id := json.RawMessage(`1`)
 

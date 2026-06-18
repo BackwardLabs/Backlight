@@ -1,19 +1,19 @@
-# Helios operator architecture and workflow
+# Backlight operator architecture and workflow
 
-This page is for operators and teammates who need to understand what Helios
+This page is for operators and teammates who need to understand what Backlight
 _does_ during an incident. It intentionally avoids package-level or code-level
 details.
 
 For a one-page visual map, open [`helios-e2e-workflow.excalidraw`](./helios-e2e-workflow.excalidraw).
 
-Helios is the middle service in the Lumos incident workflow:
+Backlight is the middle service in the Lumos incident workflow:
 
 1. a suspicious transaction is submitted,
-2. Helios turns it into a tracked case,
-3. Helios runs `lumoskit` for that case,
-4. Helios records the result,
-5. Helios starts verified-case product side effects,
-6. Helios hands the result to downstream agents and notifies operators.
+2. Backlight turns it into a tracked case,
+3. Backlight runs `lumoskit` for that case,
+4. Backlight records the result,
+5. Backlight starts verified-case product side effects,
+6. Backlight hands the result to downstream agents and notifies operators.
 
 ## System view
 
@@ -21,7 +21,7 @@ Helios is the middle service in the Lumos incident workflow:
 flowchart LR
     detector["hack-detector<br/>finds suspicious transactions"]
     operator["Operator<br/>browser UI or API"]
-    helios["Helios<br/>case orchestrator"]
+    helios["Backlight<br/>case orchestrator"]
     store["SQLite case store<br/>cases, events, attempts"]
     outputs["Output roots<br/>summary.json + analysis bundle"]
     lumoskit["lumoskit<br/>analysis engine subprocess"]
@@ -40,7 +40,7 @@ flowchart LR
     helios <--> store
     helios -->|"one run per case"| lumoskit
     lumoskit -->|"summary.json"| outputs
-    outputs -->|"result read by Helios"| helios
+    outputs -->|"result read by Backlight"| helios
     helios -->|"verified + final partial<br/>PoC.t.sol + Report.md"| github
     helios -->|"verified only<br/>case output root"| prelumos
     prelumos -->|"pre-lumos.json"| outputs
@@ -59,13 +59,13 @@ flowchart LR
 
 | Area | Owner | Operator takeaway |
 | --- | --- | --- |
-| Detecting suspicious transactions | `hack-detector` | Helios receives already-detected transactions; it does not decide what is suspicious. |
-| Running forensic analysis and PoC generation | `lumoskit` | Helios launches `lumoskit` and reads its `summary.json`; it does not perform the analysis itself. |
-| Product publishing | Helios + GitHub API | Optional side effect for `outcome=verified` and final `outcome=partial`; it publishes `PoC.t.sol` and `Report.md` as `README.md` to the configured product repo. |
-| Importer-ready incident JSON | Helios + vendored `skills/pre-lumos` | Optional side effect for `outcome=verified`; it reads the same output root and writes `<output_root>/pre-lumos.json` plus `seed/import_{YEAR}.json`. |
-| Case tracking, retries, handoff, notifications | Helios | This is the service operators watch and control during incident processing. |
+| Detecting suspicious transactions | `hack-detector` | Backlight receives already-detected transactions; it does not decide what is suspicious. |
+| Running forensic analysis and PoC generation | `lumoskit` | Backlight launches `lumoskit` and reads its `summary.json`; it does not perform the analysis itself. |
+| Product publishing | Backlight + GitHub API | Optional side effect for `outcome=verified` and final `outcome=partial`; it publishes `PoC.t.sol` and `Report.md` as `README.md` to the configured product repo. |
+| Importer-ready incident JSON | Backlight + vendored `skills/pre-lumos` | Optional side effect for `outcome=verified`; it reads the same output root and writes `<output_root>/pre-lumos.json` plus `seed/import_{YEAR}.json`. |
+| Case tracking, retries, handoff, notifications | Backlight | This is the service operators watch and control during incident processing. |
 | MCP assistant access | `helios-mcp` / `helios-mcp-bridge` | Read-only access to case metadata and `summary.json`, `summary.md`, `rca.md`, `PoC.t.sol`, `Report.md`; no engine execution, writes, shell, or arbitrary filesystem access. |
-| Downstream follow-up | Webhook receivers / agents | They receive completed non-engine-error cases from Helios. |
+| Downstream follow-up | Webhook receivers / agents | They receive completed non-engine-error cases from Backlight. |
 
 ## Case workflow
 
@@ -128,18 +128,18 @@ flowchart TD
 
 | Field / surface | What it means | Typical action |
 | --- | --- | --- |
-| `case_id` | Stable ID for one Helios attempt. | Use it when opening the UI detail page, searching logs, or retrying handoff. |
+| `case_id` | Stable ID for one Backlight attempt. | Use it when opening the UI detail page, searching logs, or retrying handoff. |
 | `state=queued` | The case is waiting for an available worker slot. | Check queue depth and `HELIOS_MAX_CONCURRENT_LUMOSKIT` if many cases wait. |
 | `state=running` | `lumoskit` is currently running for this case. | Wait, or inspect host resources if it stays running unexpectedly long. |
 | `state=done` | `lumoskit` finished with a non-engine-error outcome. | Check `outcome` and `handoff_status`. |
-| `state=handed-off` | Helios is finished with the case. | Downstream systems should now have the result, or handoff was intentionally skipped. |
+| `state=handed-off` | Backlight is finished with the case. | Downstream systems should now have the result, or handoff was intentionally skipped. |
 | `state=failed` + `outcome=engine_error` | The engine run failed or the summary could not be used. | Inspect `failure_kind`, `summary_json_path`, output files, and operator notifications. |
 | `outcome=verified` | The case produced a verified PoC. | Treat as high-confidence downstream material. |
 | `case_events.event_type=github_publish` | The verified artifact bundle was published to the configured GitHub repo. | Open the payload's `poc_url`, `report_url`, or `commit_url`. |
 | `case_events.event_type=pre_lumos_sync` | The Pre-Lumos Agent SDK generated importer-ready incident JSON. | Open the payload's `output_path` for this case, or `target_files` for merged importer JSON. |
 | `outcome=partial` | The engine produced useful but incomplete material. | Review the output bundle before relying on it fully. |
 | `outcome=unverified` | The engine completed but did not verify the PoC. | Review manually or rerun with better inputs if needed. |
-| `handoff_status=retrying` | Helios is still delivering to downstream URLs. | Wait unless attempts are repeatedly failing. |
+| `handoff_status=retrying` | Backlight is still delivering to downstream URLs. | Wait unless attempts are repeatedly failing. |
 | `handoff_status=failed` | At least one downstream URL exhausted its retry budget. | Fix the receiver or network, then call `POST /cases/{case_id}/retry-handoff`. |
 | `notification_status=failed` | Operator notification delivery failed. | Fix webhook or Telegram configuration; case processing itself is not blocked. |
 
@@ -161,13 +161,13 @@ MCP support is a local read-only gateway for assistant clients.
 Direct mode:
 
 ```text
-MCP client -> helios-mcp stdio process -> Helios HTTP API artifact endpoints
+MCP client -> helios-mcp stdio process -> Backlight HTTP API artifact endpoints
 ```
 
 Indexed mode:
 
 ```text
-Helios -> POST /handoff -> helios-mcp-bridge SQLite index
+Backlight -> POST /handoff -> helios-mcp-bridge SQLite index
 MCP client -> helios-mcp stdio process -> bridge index + allowlisted output files
 ```
 
@@ -178,15 +178,15 @@ downstream receiver that keeps a local read model for assistant queries.
 
 ### Duplicate submissions
 
-Helios deduplicates by `(chain, tx_hash)` against the latest lineage leaf.
+Backlight deduplicates by `(chain, tx_hash)` against the latest lineage leaf.
 Repeated submissions for an active or completed leaf return the existing case
 instead of starting another engine run. A failed leaf, an automatic restart
 recovery, or a manual `force_rerun` creates a linked child case.
 
 ### Restart recovery
 
-If Helios restarts while a case is `running`, it cannot safely assume the old
-child process completed. On startup, Helios marks the old running case as:
+If Backlight restarts while a case is `running`, it cannot safely assume the old
+child process completed. On startup, Backlight marks the old running case as:
 
 ```text
 state=failed, outcome=engine_error, failure_kind=host_restart
@@ -197,7 +197,7 @@ Then it queues a new linked child case with a fresh output root.
 ### Empty downstream URL list
 
 If `HELIOS_DOWNSTREAM_WEBHOOK_URLS` is empty, successful engine outcomes still
-finish normally. Helios immediately moves the case to:
+finish normally. Backlight immediately moves the case to:
 
 ```text
 state=handed-off, handoff_status=skipped
@@ -207,7 +207,7 @@ This means no external handoff was configured; it is not an error.
 
 ### Product side effects
 
-Verified cases may trigger both optional asynchronous side effects after Helios records
+Verified cases may trigger both optional asynchronous side effects after Backlight records
 `state=done, outcome=verified`. Final partial cases may trigger GitHub publish only:
 
 - GitHub publish, enabled by `GITHUB_TOKEN` or `GH_TOKEN`, copies `PoC.t.sol`

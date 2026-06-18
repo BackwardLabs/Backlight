@@ -40,7 +40,7 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("helios-mcp-bridge listening", "addr", cfg.ListenAddr, "db_path", cfg.DBPath, "auth_required", cfg.Token != "")
+		logger.Info("backlight-mcp-bridge listening", "addr", cfg.ListenAddr, "db_path", cfg.DBPath, "auth_required", cfg.Token != "")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server exited", "err", err)
 			stop()
@@ -53,7 +53,7 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("http shutdown failed", "err", err)
 	}
-	logger.Info("helios-mcp-bridge stopped")
+	logger.Info("backlight-mcp-bridge stopped")
 }
 
 type config struct {

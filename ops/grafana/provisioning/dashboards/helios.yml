@@ -1,7 +1,7 @@
 apiVersion: 1
 providers:
-  - name: helios
-    folder: helios
+  - name: backlight
+    folder: backlight
     type: file
     disableDeletion: true
     updateIntervalSeconds: 30

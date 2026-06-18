@@ -1,0 +1,73 @@
+# Temporary HTTP-only Nginx config for first certificate issuance.
+#
+# Use this before dashboard.backwardlabs.io and api.backwardlabs.io have
+# certificates. It keeps Nginx valid, serves ACME challenges, and exposes the
+# dashboard over plain HTTP until the HTTPS config is enabled.
+#
+# Install:
+#   sudo cp deploy/nginx/backlight-bootstrap.conf.example /etc/nginx/sites-available/backlight-bootstrap.conf
+#   sudo ln -s /etc/nginx/sites-available/backlight-bootstrap.conf /etc/nginx/sites-enabled/backlight-bootstrap.conf
+#   sudo nginx -t && sudo systemctl reload nginx
+#   sudo certbot certonly --webroot -w /var/www/html \
+#     --cert-name backlight-backwardlabs \
+#     -d dashboard.backwardlabs.io \
+#     -d api.backwardlabs.io
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name dashboard.backwardlabs.io;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location = / {
+        return 302 /ui;
+    }
+
+    location = /ui {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header Authorization $http_authorization;
+    }
+
+    location ^~ /cases {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header Authorization $http_authorization;
+    }
+
+    location = /healthz {
+        access_log off;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+    }
+
+    location / {
+        return 404;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.backwardlabs.io;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 404;
+    }
+}

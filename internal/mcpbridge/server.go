@@ -10,7 +10,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/handoff"
 )
 
-// Server receives Helios downstream handoff payloads and indexes them locally.
+// Server receives Backlight downstream handoff payloads and indexes them locally.
 type Server struct {
 	Store  *Store
 	Token  string

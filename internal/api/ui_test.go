@@ -22,8 +22,8 @@ func TestUIRoutesArePublic(t *testing.T) {
 		if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 			t.Fatalf("GET %s content-type = %q, want text/html", path, ct)
 		}
-		if !strings.Contains(rr.Body.String(), "Helios Console") {
-			t.Fatalf("GET %s did not return the Helios Console page", path)
+		if !strings.Contains(rr.Body.String(), "Backlight Console") {
+			t.Fatalf("GET %s did not return the Backlight Console page", path)
 		}
 		if !strings.Contains(rr.Body.String(), "Analysis result") {
 			t.Fatalf("GET %s did not include the analysis result section", path)
@@ -31,8 +31,8 @@ func TestUIRoutesArePublic(t *testing.T) {
 		if !strings.Contains(rr.Body.String(), "Judgment") {
 			t.Fatalf("GET %s did not include the judgment section", path)
 		}
-		if !strings.Contains(rr.Body.String(), "Helios report") {
-			t.Fatalf("GET %s did not include the Helios report section", path)
+		if !strings.Contains(rr.Body.String(), "Backlight report") {
+			t.Fatalf("GET %s did not include the Backlight report section", path)
 		}
 		if !strings.Contains(rr.Body.String(), `data-route="artifacts"`) {
 			t.Fatalf("GET %s did not include the artifacts route", path)
@@ -47,6 +47,7 @@ func TestUIRoutesArePublic(t *testing.T) {
 			"Primary diagnosis",
 			"Stored outcome",
 			"RCA blocked",
+			"RCA agent runtime error",
 			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol</span>",
 			`id="artifactText" class="artifact-preview plain-preview"`,
 			"function renderMarkdown(md)",

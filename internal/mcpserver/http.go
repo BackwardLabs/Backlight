@@ -71,7 +71,7 @@ func (s *Server) handleHTTPRPC(ctx context.Context, w http.ResponseWriter, r *ht
 		return
 	}
 	if s.Client == nil {
-		http.Error(w, "mcp server missing Helios client", http.StatusInternalServerError)
+		http.Error(w, "mcp server missing Backlight client", http.StatusInternalServerError)
 		return
 	}
 	if _, ok := s.Client.(ArtifactClient); !ok && s.Artifacts == nil {

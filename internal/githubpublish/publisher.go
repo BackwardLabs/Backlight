@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultAPIBase = "https://api.github.com"
-	defaultOwner   = "UPside-Lumos-V2"
+	defaultOwner   = "BackwardLabs"
 	defaultRepo    = "Q1-2026"
 	defaultBranch  = "main"
 )
@@ -49,7 +49,7 @@ type Case struct {
 	// When present, its protocol segment is preferred over generic report
 	// headings such as "LumosKit Run Report".
 	IncidentSlug string
-	// Outcome is the Helios outcome that made this artifact publishable.
+	// Outcome is the Backlight outcome that made this artifact publishable.
 	Outcome string
 }
 
@@ -267,12 +267,12 @@ func commitMessage(c Case, spec targetSpec) string {
 	subject := fmt.Sprintf("Publish %s %s incident artifact bundle", publishOutcome, spec.Protocol)
 	return fmt.Sprintf(`%s
 
-Constraint: Helios publishes from completed LumosKit product artifacts only
+Constraint: Backlight publishes from completed LumosKit product artifacts only
 Confidence: medium
 Scope-risk: narrow
 Directive: Keep Report.md as the README source and PoC.t.sol as the executable source
-Tested: Helios read PoC.t.sol and Report.md for case %s before creating this commit
-Not-tested: Foundry re-run inside UPside-Lumos-V2/Q1-2026
+Tested: Backlight read PoC.t.sol and Report.md for case %s before creating this commit
+Not-tested: Foundry re-run inside BackwardLabs/Q1-2026
 `, subject, c.CaseID)
 }
 
@@ -378,7 +378,7 @@ func (p *Publisher) doJSON(ctx context.Context, client *http.Client, method, suf
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "helios-github-publisher/1")
+	req.Header.Set("User-Agent", "backlight-github-publisher/1")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("Authorization", "Bearer "+p.Config.Token)
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=Helios remote MCP endpoint
+Description=Backlight remote MCP endpoint
 After=network-online.target helios.service
 Wants=network-online.target
 Requires=helios.service

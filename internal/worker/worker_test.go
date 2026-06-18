@@ -538,14 +538,14 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/ref/heads/main":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/ref/heads/main":
 			_, _ = w.Write([]byte(`{"object":{"sha":"base-commit"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/commits/base-commit":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/commits/base-commit":
 			_, _ = w.Write([]byte(`{"sha":"base-commit","tree":{"sha":"base-tree"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/blobs":
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/blobs":
 			blobCount++
 			_, _ = w.Write([]byte(`{"sha":"blob-` + string(rune('0'+blobCount)) + `"}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/trees":
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/trees":
 			var req struct {
 				Tree []struct {
 					Path string `json:"path"`
@@ -562,9 +562,9 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 			}
 			f.mu.Unlock()
 			_, _ = w.Write([]byte(`{"sha":"next-tree"}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/commits":
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/commits":
 			_, _ = w.Write([]byte(`{"sha":"next-commit","tree":{"sha":"next-tree"}}`))
-		case r.Method == http.MethodPatch && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/refs/heads/main":
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/refs/heads/main":
 			var req struct {
 				SHA string `json:"sha"`
 			}
