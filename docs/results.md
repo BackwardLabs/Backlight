@@ -134,6 +134,30 @@ Common artifact paths:
 - `report_bundle/visuals/asset_deltas.dot`
 - `report_bundle/visuals/fund_flows.dot`
 
+## ECW export profile
+
+The internal ECW extension uses a separate bearer token and endpoint instead of
+expanding the MCP/product artifact profile:
+
+```text
+GET /ecw/cases/{case_id}/export
+Authorization: Bearer $HELIOS_ECW_EXPORT_TOKEN
+```
+
+The endpoint is disabled when `HELIOS_ECW_EXPORT_TOKEN` is unset. It returns an
+`ecw-internal-complete` JSON bundle with minimal case metadata, the sorted ECW
+allowlist, exported text artifacts, and a `missing` list for allowlisted files
+that were not produced by the selected run.
+
+The ECW profile is intentionally broader than MCP because it supports internal
+PoC replay/adaptation work. It includes report bundle files, `inputs/tx_metadata.json`,
+agent PoC result/foundry files, PoC sketch context/spec files, RCA frontier and
+validation files, asset/fund-flow evidence, selector labels, localized call
+graph, and compact pseudocode. It still uses exact file allowlisting and output
+root containment; it does not expose arbitrary output-root browsing, victim
+source directories, prompts, Codex/event logs, full CEFG/lift internals, or raw
+semantic internals.
+
 Build the MCP binaries with:
 
 ```bash

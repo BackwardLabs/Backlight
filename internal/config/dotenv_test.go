@@ -89,6 +89,30 @@ OPENAI_API_KEY=test-key
 	}
 }
 
+func TestLoadRejectsECWExportTokenEqualAPIToken(t *testing.T) {
+	dir := t.TempDir()
+	testChdir(t, dir)
+	restoreEnv(t,
+		"HELIOS_API_TOKEN",
+		"HELIOS_ECW_EXPORT_TOKEN",
+		"HELIOS_DB_PATH",
+		"HELIOS_OUTPUT_ROOT",
+	)
+	if err := os.WriteFile(filepath.Join(dir, ".env.local"), []byte(`
+HELIOS_API_TOKEN=same-token
+HELIOS_ECW_EXPORT_TOKEN=same-token
+HELIOS_DB_PATH=/tmp/helios.db
+HELIOS_OUTPUT_ROOT=/tmp/helios-outputs
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load()
+	if err == nil || err.Error() != "HELIOS_ECW_EXPORT_TOKEN must differ from HELIOS_API_TOKEN" {
+		t.Fatalf("Load error = %v, want distinct ECW token requirement", err)
+	}
+}
+
 func testChdir(t *testing.T, dir string) {
 	t.Helper()
 	old, err := os.Getwd()

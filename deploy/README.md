@@ -32,6 +32,7 @@ Those identifiers are intentionally kept stable until a separate host migration.
 - Optional downstream Bearer token via `HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN`.
 - Optional verified-case GitHub publish for `PoC.t.sol` and `Report.md` as `README.md`.
 - Optional verified-case Pre-Lumos Agent SDK sidecar for `pre-lumos.json` and `seed/import_{YEAR}.json`.
+- Optional internal ECW export endpoint for complete PoC/RCA replay bundles.
 - Operator webhook / Telegram notifications with bounded retry.
 - `/metrics` for Prometheus and `/ui` for the browser console.
 
@@ -303,6 +304,35 @@ codex mcp add backlight \
 
 Keep the MCP binary on the same host as Backlight/output storage unless you
 intentionally mount the output directory read-only to the MCP runtime.
+
+## ECW internal export
+
+Backlight can expose a dedicated ECW bundle without changing the operator API,
+MCP tool list, worker queue, or the product artifact allowlist. The endpoint is
+disabled unless a separate token is configured:
+
+```bash
+HELIOS_ECW_EXPORT_TOKEN=<separate-long-random-token>
+# Optional; default is 16777216 bytes per exported file.
+HELIOS_ECW_EXPORT_MAX_BYTES=16777216
+```
+
+Fetch a bundle with the ECW token, not `HELIOS_API_TOKEN`:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $HELIOS_ECW_EXPORT_TOKEN" \
+  "https://api.backwardlabs.io/ecw/cases/<case_id>/export"
+```
+
+The response profile is `ecw-internal-complete`. It returns minimal case
+metadata, a sorted `allowed` profile, `artifacts` containing the text of files
+that exist under the case output root, and `missing` for profile files that were
+not produced by that run. The profile includes report bundle files, replay PoC
+files, RCA frontier/context/validation files, asset/fund-flow evidence, selector
+labels, localized call graph, and compact pseudocode. It does not expose
+arbitrary `output_root` browsing, victim source directories, prompts, Codex/event
+logs, full CEFG/lift internals, or raw semantic internals.
 
 To enable Phase 2 indexing, set:
 
