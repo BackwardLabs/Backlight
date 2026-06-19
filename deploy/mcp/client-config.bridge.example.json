@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "helios": {
+    "backlight": {
       "command": "/srv/helios/bin/helios-mcp",
       "env": {
         "HELIOS_MCP_BRIDGE_DB_PATH": "/srv/helios/data/helios-mcp-bridge.db",

@@ -75,8 +75,11 @@ type SummaryRCA struct {
 
 // SummaryFailure is "set" when Kind != "" (Go zero-value detection).
 type SummaryFailure struct {
-	Kind    string `json:"kind"`
-	Message string `json:"message"`
+	Kind       string `json:"kind"`
+	Category   string `json:"category"`
+	DetailKind string `json:"detail_kind"`
+	Stage      string `json:"stage"`
+	Message    string `json:"message"`
 }
 
 // Input bundles what the lumoskit runner observed after the child process
@@ -113,6 +116,12 @@ func Map(in Input) Result {
 	// O5 — refine the opaque nonzero exit into a finer engine-error kind when
 	// stderr/summary make the cause clear (tx_not_found, rpc_unavailable, ...).
 	if in.ExitCode != 0 {
+		// Prefer lumoskit's structured summary.failure (category=engine_error with
+		// a specific kind) as the high-confidence signal; fall back to the
+		// stderr-tail heuristic, then to the opaque lumoskit_nonzero_exit.
+		if failure, ok := specificEngineFailureFromSummary(in); ok {
+			return engineErrorFromSummary("O5", failure)
+		}
 		if kind := classifyEngineError(in); kind != "" {
 			return engineError("O5", kind)
 		}
@@ -130,9 +139,11 @@ func Map(in Input) Result {
 	if err := json.Unmarshal(in.SummaryBytes, &s); err != nil {
 		return engineError("O7", FailureSummaryUnreadable)
 	}
-	// O4 — only the explicit engine_error sentinel counts as a pipeline failure.
-	if s.Failure.Kind == "engine_error" {
-		return engineError("O4", FailureLumoskitReportedEngineError)
+	// O4 — only explicit engine-error markers count as pipeline failures.
+	// Specific failures can set category=engine_error while keeping a precise
+	// kind such as rca_agent_runtime_error for operator-facing diagnosis.
+	if isEngineFailure(s.Failure) {
+		return engineErrorFromSummary("O4", s.Failure)
 	}
 	// O1, O2, O3
 	switch {
@@ -145,6 +156,20 @@ func Map(in Input) Result {
 	}
 	// O8
 	return engineError("O8", FailureLumoskitUnexpectedSummary)
+}
+
+func specificEngineFailureFromSummary(in Input) (SummaryFailure, bool) {
+	if len(in.SummaryBytes) == 0 || in.SummaryReadErr != nil || in.SummaryMissing {
+		return SummaryFailure{}, false
+	}
+	var s Summary
+	if err := json.Unmarshal(in.SummaryBytes, &s); err != nil {
+		return SummaryFailure{}, false
+	}
+	if s.Failure.Category != "engine_error" || s.Failure.Kind == "" || s.Failure.Kind == "engine_error" {
+		return SummaryFailure{}, false
+	}
+	return s.Failure, true
 }
 
 func withRerunDecision(result Result, s Summary) Result {
@@ -204,6 +229,22 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func isEngineFailure(f SummaryFailure) bool {
+	return f.Kind == "engine_error" || f.Category == "engine_error"
+}
+
+func engineErrorFromSummary(rule string, f SummaryFailure) Result {
+	kind := FailureLumoskitReportedEngineError
+	if f.Kind != "" && f.Kind != "engine_error" {
+		kind = f.Kind
+	}
+	result := engineError(rule, kind)
+	if f.DetailKind != "" {
+		result.RerunReason = f.DetailKind
+	}
+	return result
 }
 
 // TerminalEventPayload builds the diagnostic payload stored on terminal
@@ -315,6 +356,15 @@ func (f SummaryFailure) eventPayload() map[string]string {
 	out := map[string]string{}
 	if f.Kind != "" {
 		out["kind"] = f.Kind
+	}
+	if f.Category != "" {
+		out["category"] = f.Category
+	}
+	if f.DetailKind != "" {
+		out["detail_kind"] = f.DetailKind
+	}
+	if f.Stage != "" {
+		out["stage"] = f.Stage
 	}
 	if f.Message != "" {
 		out["message"] = f.Message

@@ -1,4 +1,4 @@
-// Package mcpbridge stores downstream Helios handoff payloads for read-only MCP access.
+// Package mcpbridge stores downstream Backlight handoff payloads for read-only MCP access.
 package mcpbridge
 
 import (
@@ -140,7 +140,7 @@ func (s *Store) UpsertPayload(ctx context.Context, p handoff.Payload) error {
 	return nil
 }
 
-// ListCases implements mcpserver.HeliosClient using the bridge index.
+// ListCases implements mcpserver.BacklightClient using the bridge index.
 func (s *Store) ListCases(ctx context.Context, opts heliosclient.ListOptions) (*api.CaseListResponse, error) {
 	limit := opts.Limit
 	if limit <= 0 {
@@ -183,7 +183,7 @@ func (s *Store) ListCases(ctx context.Context, opts heliosclient.ListOptions) (*
 	return resp, rows.Err()
 }
 
-// GetCase implements mcpserver.HeliosClient using the bridge index.
+// GetCase implements mcpserver.BacklightClient using the bridge index.
 func (s *Store) GetCase(ctx context.Context, caseID string) (*api.CaseDetailResponse, error) {
 	caseID = strings.TrimSpace(caseID)
 	if caseID == "" {

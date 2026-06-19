@@ -1,4 +1,4 @@
-# Helios operations
+# Backlight operations
 
 This page keeps the operational details out of the project README.
 
@@ -46,7 +46,7 @@ the token entered in the UI.
 All configuration is via env. Defaults match `seeds/v1.yaml` ->
 `runtime_config_surface`.
 
-For local runs, Helios loads `.env` and `.env.local` from the current working
+For local runs, Backlight loads `.env` and `.env.local` from the current working
 directory before reading configuration. Existing process env values take
 precedence; `.env.local` can override `.env`.
 
@@ -66,14 +66,14 @@ precedence; `.env.local` can override `.env`.
 | `HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | exponential backoff base |
 | `HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | exponential backoff ceiling |
 | `OPERATOR_NOTIFY_WEBHOOK_URL` | no | empty | enables operator-webhook channel when set |
-| `TELEGRAM_BOT_TOKEN` | no | empty | Helios process env var required with chat id for Telegram alerts; can reuse the hackdetector bot token |
-| `TELEGRAM_CHAT_ID` | no | empty | Helios process env var required with bot token; target group/channel/user id for Helios alerts |
+| `TELEGRAM_BOT_TOKEN` | no | empty | Backlight process env var required with chat id for Telegram alerts; can reuse the hackdetector bot token |
+| `TELEGRAM_CHAT_ID` | no | empty | Backlight process env var required with bot token; target group/channel/user id for Backlight alerts |
 | `HELIOS_TELEGRAM_API_BASE` | no | `https://api.telegram.org` | override for tests / self-hosted Telegram proxies |
 | `HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS` | no | `5` | notification retry ceiling |
 | `HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | |
 | `HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | |
 | `GITHUB_TOKEN` / `GH_TOKEN` | no | empty | enables GitHub publish for verified LumosKit outputs; skipped when unset |
-| `HELIOS_GITHUB_PUBLISH_OWNER` | no | `UPside-Lumos-V2` | GitHub owner for product artifact publish |
+| `HELIOS_GITHUB_PUBLISH_OWNER` | no | `BackwardLabs` | GitHub owner for product artifact publish |
 | `HELIOS_GITHUB_PUBLISH_REPO` | no | `Q1-2026` | GitHub repo for product artifact publish |
 | `HELIOS_GITHUB_PUBLISH_BRANCH` | no | `main` | GitHub branch for product artifact publish |
 | `HELIOS_PRE_LUMOS_ENABLED` | no | `false` | enables the Pre-Lumos Agent SDK sidecar for verified cases |
@@ -81,14 +81,14 @@ precedence; `.env.local` can override `.env`.
 | `HELIOS_PRE_LUMOS_OPENAI_BASE_URL` | no | `http://127.0.0.1:10631/v1` | OpenAI-compatible API proxy for the Agent SDK runner |
 | `HELIOS_PRE_LUMOS_PYTHON_BIN` | no | `python3` | Python executable used to run `scripts/pre_lumos_agent.py` |
 | `HELIOS_PRE_LUMOS_AGENT_SCRIPT` | no | `scripts/pre_lumos_agent.py` | Pre-Lumos Agent SDK runner script |
-| `HELIOS_PRE_LUMOS_SKILL_DIR` | no | `skills/pre-lumos` | vendored skill bundle; copied as-is from `UPside-Lumos-V2/skills-pre-lumos` |
-| `HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOT` / `HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOTS` | no | empty | standalone runner input roots; Helios worker passes the case output root automatically |
+| `HELIOS_PRE_LUMOS_SKILL_DIR` | no | `skills/pre-lumos` | vendored skill bundle; copied as-is from `BackwardLabs/skills-pre-lumos` |
+| `HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOT` / `HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOTS` | no | empty | standalone runner input roots; Backlight worker passes the case output root automatically |
 | `HELIOS_PRE_LUMOS_YEAR` | no | inferred | optional forced target year for `seed/import_{YEAR}.json` |
 | `HELIOS_PRE_LUMOS_MODEL` / `OPENAI_MODEL` | no | SDK default | optional model override for the Agent SDK runner |
 | `HELIOS_PRE_LUMOS_WEB_SEARCH` | no | `false` | enables the hosted `WebSearchTool` when installed/supported |
 
 Plus any RPC env vars (`CEFG_LIVE_RPC_URL`, `RPC_URL`, `ETH_RPC_URL`,
-`ALCHEMY_API_KEY`); Helios passes these through unchanged to the spawned
+`ALCHEMY_API_KEY`); Backlight passes these through unchanged to the spawned
 lumoskit child process per ADR-0018 in the `lumoskit` repo.
 
 ## Operational notes
@@ -97,7 +97,7 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   is `running -> failed` (outcome=`engine_error`, populated `failure_kind`).
   Handoff failure leaves `state=done` with `handoff_status=failed`; the case
   can be re-driven via `POST /cases/{case_id}/retry-handoff`.
-- **GitHub publish.** When `GITHUB_TOKEN` or `GH_TOKEN` is set, Helios publishes
+- **GitHub publish.** When `GITHUB_TOKEN` or `GH_TOKEN` is set, Backlight publishes
   product artifacts for `verified` and final `partial` cases to
   `test/{YYYY-MM}/{Protocol}/` in the configured Q1 repo. The publish step
   requires `PoC.t.sol` and `Report.md`; `Report.md` becomes `README.md`.
@@ -127,22 +127,17 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   configured.
 - **Notification status.** Reflects the latest event delivery: `pending`,
   `retrying`, `succeeded`, `failed`, or `disabled` (no channels at all).
-  Telegram messages include case identity, completion time, outcome,
-  `analysis_stage`, `rerun_decision`, `auto_rerun_resume_stage`, summary path,
-  and GitHub `report_url` / `poc_url` / `commit_url` when publish completes.
+  Telegram messages include case identity, concise result, optional reason,
+  GitHub report link, and completion time when available.
 
 Telegram message shape:
 
 ```text
-[helios] verified outcome=verified stage=success
-completed_at=2026-06-03T03:25:16Z
-case_id=case_...
-chain=ethereum tx=0x12345678...abcd
-state=handed-off outcome=verified
-summary_status=pass
-analysis_stage=success
-rerun_decision=no_rerun reason=verified_result
-report_url=https://github.com/.../README.md
-poc_url=https://github.com/.../PoC.t.sol
-commit_url=https://github.com/.../commit/<sha>
+[Backlight] Success
+
+Incident: Ambient Finance on Ethereum
+Tx: 0x12345678...abcd
+Result: verified · no rerun
+Report: https://github.com/.../README.md
+Completed: 2026-06-03 03:25 UTC
 ```

@@ -1,4 +1,4 @@
-// Package heliosclient provides a small read-only HTTP client for Helios APIs.
+// Package heliosclient provides a small read-only HTTP client for Backlight APIs.
 package heliosclient
 
 import (
@@ -17,7 +17,7 @@ import (
 
 const defaultTimeout = 30 * time.Second
 
-// Client calls a running Helios HTTP server using the same Bearer token as the
+// Client calls a running Backlight HTTP server using the same Bearer token as the
 // browser UI and operator API.
 type Client struct {
 	BaseURL    *url.URL
@@ -25,7 +25,7 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// New constructs a client for a Helios base URL such as http://127.0.0.1:8080.
+// New constructs a client for a Backlight base URL such as http://127.0.0.1:8080.
 func New(baseURL, apiToken string, httpClient *http.Client) (*Client, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, fmt.Errorf("HELIOS_BASE_URL is required")
@@ -168,7 +168,7 @@ func (c *Client) doJSON(ctx context.Context, method, requestURL string, out any)
 		return &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("decode Helios response: %w", err)
+		return fmt.Errorf("decode Backlight response: %w", err)
 	}
 	return nil
 }
@@ -217,12 +217,12 @@ func setIfNotEmpty(q url.Values, key, value string) {
 	}
 }
 
-// HTTPError captures non-2xx Helios responses.
+// HTTPError captures non-2xx Backlight responses.
 type HTTPError struct {
 	StatusCode int
 	Body       string
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("helios HTTP %d: %s", e.StatusCode, strings.TrimSpace(e.Body))
+	return fmt.Sprintf("backlight HTTP %d: %s", e.StatusCode, strings.TrimSpace(e.Body))
 }

@@ -1,25 +1,29 @@
 # VM runtime deployment
 
 This VM uses local git checkouts under `/home/ubuntu/lumos` and keeps only
-service state, env files, logs, data, and the Helios service binary under
+service state, env files, logs, data, and the Backlight service binary under
 `/srv/helios`.
+
+Backlight currently runs on the existing legacy `helios` service account,
+paths, binary names, and `HELIOS_*` env vars. Do not rename those on a live VM
+without a dedicated systemd/data migration.
 
 ```text
 VM
-  /home/ubuntu/lumos/helios              # Helios git checkout and systemd WorkingDirectory
+  /home/ubuntu/lumos/helios              # Backlight git checkout and systemd WorkingDirectory
   /home/ubuntu/lumos/lumoskit            # LumosKit git checkout and runtime repo root
   /home/ubuntu/lumos/lumoskit/bin/lumoskit
-                                         # LumosKit binary used by Helios
-  /srv/helios/bin/helios                 # Helios binary used by systemd
+                                         # LumosKit binary used by Backlight
+  /srv/helios/bin/helios                 # Backlight binary used by systemd
   /srv/helios/data/helios.db             # SQLite
   /srv/helios/data/outputs/              # per-case LumosKit outputs
   /srv/helios/data/.svm                  # Foundry solc cache writable by helios
   /srv/helios/data/.local/share          # Foundry/XDG data writable by helios
-  /srv/helios/env/helios.env             # Helios env file
+  /srv/helios/env/helios.env             # Backlight env file
   /srv/helios/logs/                      # service logs / operator logs
 ```
 
-Helios runs `/srv/helios/bin/helios` with:
+Backlight runs `/srv/helios/bin/helios` with:
 
 ```ini
 WorkingDirectory=/home/ubuntu/lumos/helios
@@ -32,13 +36,13 @@ EnvironmentFile=/srv/helios/env/helios.env
 HELIOS_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit
 ```
 
-Helios starts LumosKit with the LumosKit repo root as the child process working
+Backlight starts LumosKit with the LumosKit repo root as the child process working
 directory, so `scripts/run_agent_poc.py`, `scripts/run_rca.py`, Python virtual
 envs, and `.env` resolve next to `bin/lumoskit`.
 
 ## 1. Sync, build, and restart
 
-Use `deploy/vm/sync-git-runtime.sh` from the Helios checkout. It updates the
+Use `deploy/vm/sync-git-runtime.sh` from the Backlight checkout. It updates the
 existing local checkouts, builds both binaries on the VM, installs them to the
 paths used by systemd, writes the systemd unit/drop-ins, reloads systemd, and
 optionally restarts the service.
@@ -75,11 +79,24 @@ HELIOS_RESTART_SERVICE=false
 The script expects both checkouts to already exist. It does not clone into
 `/srv/helios/src`.
 
+Do not run production updates with a raw `git pull` only. LumosKit loads Python
+scripts, prompt templates, and RCA skill files from the checkout at runtime, and
+those files must be readable by the `helios` service user. The sync script
+normalizes runtime asset permissions after every checkout:
+
+- `scripts/`, `prompts/`, and `external/` are assigned to group `helios`
+- files receive group read permission
+- directories receive group read/traverse permission and setgid inheritance
+- git/build steps run with `umask 0027`
+
+If someone manually pulls LumosKit and the service starts failing with
+`Permission denied`, rerun the sync script instead of only restarting systemd.
+
 ## 2. Manual build/install
 
 The script performs these operations, but they are useful for debugging.
 
-Build Helios:
+Build Backlight:
 
 ```bash
 cd /home/ubuntu/lumos/helios
@@ -97,6 +114,23 @@ sudo install -o ubuntu -g helios -m 0755 \
   /home/ubuntu/lumos/lumoskit/bin/lumoskit
 ```
 
+Then refresh the runtime checkout permissions:
+
+```bash
+sudo chgrp -R helios \
+  /home/ubuntu/lumos/lumoskit/scripts \
+  /home/ubuntu/lumos/lumoskit/prompts \
+  /home/ubuntu/lumos/lumoskit/external
+sudo chmod -R g+rX \
+  /home/ubuntu/lumos/lumoskit/scripts \
+  /home/ubuntu/lumos/lumoskit/prompts \
+  /home/ubuntu/lumos/lumoskit/external
+sudo find /home/ubuntu/lumos/lumoskit/scripts \
+  /home/ubuntu/lumos/lumoskit/prompts \
+  /home/ubuntu/lumos/lumoskit/external \
+  -type d -exec chmod g+s {} +
+```
+
 Then restart:
 
 ```bash
@@ -106,7 +140,7 @@ sudo systemctl restart helios
 
 ## 3. Env files
 
-Required Helios values in `/srv/helios/env/helios.env`:
+Required Backlight values in `/srv/helios/env/helios.env`:
 
 - `HELIOS_API_TOKEN`
 - `HELIOS_DB_PATH=/srv/helios/data/helios.db`
@@ -130,6 +164,29 @@ Required LumosKit value for real runs:
 
 `ETHERSCAN_API_KEY` and `OPENAI_API_KEY` are optional depending on which
 LumosKit stages and repair lanes are enabled.
+
+Codex SDK auth is user-home scoped. Backlight runs as `helios` with
+`HOME=/srv/helios`, so service runs read `/srv/helios/.codex/auth.json`, not
+`/home/ubuntu/.codex/auth.json`.
+
+Treat `/srv/helios/.codex/auth.json` as the canonical runtime auth file. Do
+not make the service depend on an operator home directory. When an operator
+refreshes a login elsewhere, promote that file explicitly:
+
+```bash
+cd /home/ubuntu/lumos/helios
+sudo deploy/vm/install-codex-auth.sh /path/to/auth.json
+```
+
+For example, if the refreshed login is temporarily in the ubuntu account:
+
+```bash
+sudo deploy/vm/install-codex-auth.sh /home/ubuntu/.codex/auth.json
+```
+
+The script installs the file to `/srv/helios/.codex/auth.json` with owner
+`helios:helios` and mode `0600`. New LumosKit child processes pick it up
+without a Backlight restart.
 
 ## 4. systemd
 

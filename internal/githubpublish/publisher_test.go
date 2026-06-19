@@ -222,24 +222,24 @@ Date: 2026-01-25
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/ref/heads/main":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/ref/heads/main":
 			_, _ = w.Write([]byte(`{"object":{"sha":"base-commit"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/commits/base-commit":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/commits/base-commit":
 			_, _ = w.Write([]byte(`{"sha":"base-commit","tree":{"sha":"base-tree"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/blobs":
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/blobs":
 			blobCount++
 			_, _ = w.Write([]byte(`{"sha":"blob-` + string(rune('0'+blobCount)) + `"}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/trees":
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/trees":
 			if err := json.NewDecoder(r.Body).Decode(&treeReq); err != nil {
 				t.Fatal(err)
 			}
 			_, _ = w.Write([]byte(`{"sha":"next-tree"}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/commits":
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/commits":
 			if err := json.NewDecoder(r.Body).Decode(&commitReq); err != nil {
 				t.Fatal(err)
 			}
 			_, _ = w.Write([]byte(`{"sha":"next-commit","tree":{"sha":"next-tree"}}`))
-		case r.Method == http.MethodPatch && r.URL.Path == "/repos/UPside-Lumos-V2/Q1-2026/git/refs/heads/main":
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/BackwardLabs/Q1-2026/git/refs/heads/main":
 			if err := json.NewDecoder(r.Body).Decode(&updateReq); err != nil {
 				t.Fatal(err)
 			}
@@ -259,13 +259,13 @@ Date: 2026-01-25
 	if !result.Published || result.CommitSHA != "next-commit" || result.TargetDir != "test/2026-01/yETH" {
 		t.Fatalf("publish result = %+v", result)
 	}
-	if result.PoCURL != "https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/2026-01/yETH/yETH.t.sol" {
+	if result.PoCURL != "https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/yETH/yETH.t.sol" {
 		t.Fatalf("poc url = %q", result.PoCURL)
 	}
-	if result.ReportURL != "https://github.com/UPside-Lumos-V2/Q1-2026/blob/main/test/2026-01/yETH/README.md" {
+	if result.ReportURL != "https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/yETH/README.md" {
 		t.Fatalf("report url = %q", result.ReportURL)
 	}
-	if result.CommitURL != "https://github.com/UPside-Lumos-V2/Q1-2026/commit/next-commit" {
+	if result.CommitURL != "https://github.com/BackwardLabs/Q1-2026/commit/next-commit" {
 		t.Fatalf("commit url = %q", result.CommitURL)
 	}
 	if treeReq.BaseTree != "base-tree" {

@@ -1,4 +1,4 @@
-// Package mcpserver exposes Helios case artifacts over a minimal stdio MCP server.
+// Package mcpserver exposes Backlight case artifacts over a minimal stdio MCP server.
 package mcpserver
 
 import (
@@ -18,14 +18,14 @@ import (
 
 const protocolVersion = "2025-06-18"
 
-// HeliosClient is the read-only subset of the Helios API used by MCP tools.
-type HeliosClient interface {
+// BacklightClient is the read-only subset of the Backlight API used by MCP tools.
+type BacklightClient interface {
 	ListCases(ctx context.Context, opts heliosclient.ListOptions) (*api.CaseListResponse, error)
 	GetCase(ctx context.Context, caseID string) (*api.CaseDetailResponse, error)
 }
 
-// ArtifactClient is implemented by direct Helios HTTP clients. It lets MCP
-// avoid local filesystem path configuration in direct mode; Helios enforces the
+// ArtifactClient is implemented by direct Backlight HTTP clients. It lets MCP
+// avoid local filesystem path configuration in direct mode; Backlight enforces the
 // artifact allowlist and output-root containment server-side.
 type ArtifactClient interface {
 	ListArtifacts(ctx context.Context, caseID string) (*api.ArtifactListResponse, error)
@@ -41,7 +41,7 @@ type ArtifactReader interface {
 
 // Server handles newline-delimited JSON-RPC messages on stdin/stdout.
 type Server struct {
-	Client    HeliosClient
+	Client    BacklightClient
 	Artifacts ArtifactReader
 	Logger    *slog.Logger
 }
@@ -50,7 +50,7 @@ type Server struct {
 // must go to stderr through Logger; stdout is reserved for valid MCP messages.
 func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	if s.Client == nil {
-		return fmt.Errorf("mcp server missing Helios client")
+		return fmt.Errorf("mcp server missing Backlight client")
 	}
 	if _, ok := s.Client.(ArtifactClient); !ok && s.Artifacts == nil {
 		return fmt.Errorf("mcp server missing artifact reader")
@@ -135,10 +135,10 @@ func initializeResult() map[string]any {
 			"tools": map[string]any{"listChanged": false},
 		},
 		"serverInfo": map[string]any{
-			"name":    "helios-mcp",
+			"name":    "backlight-mcp",
 			"version": "0.1.0",
 		},
-		"instructions": "Read-only Helios artifact gateway. Exposes case metadata and allowlisted report_bundle product artifacts.",
+		"instructions": "Read-only Backlight artifact gateway. Exposes case metadata and allowlisted report_bundle product artifacts.",
 	}
 }
 
@@ -147,8 +147,8 @@ func (s *Server) tools() []toolDef {
 	return []toolDef{
 		{
 			Name:        "helios.list_cases",
-			Title:       "List Helios cases",
-			Description: "List Helios cases via GET /cases. Read-only.",
+			Title:       "List Backlight cases",
+			Description: "List Backlight cases via GET /cases. Read-only.",
 			InputSchema: schema(map[string]any{
 				"limit":        intProp("Maximum rows to return, default 50, max 500"),
 				"offset":       intProp("Pagination offset"),
@@ -163,10 +163,10 @@ func (s *Server) tools() []toolDef {
 		},
 		{
 			Name:        "helios.get_case",
-			Title:       "Get Helios case",
-			Description: "Fetch one Helios case detail via GET /cases/{case_id}. Read-only.",
+			Title:       "Get Backlight case",
+			Description: "Fetch one Backlight case detail via GET /cases/{case_id}. Read-only.",
 			InputSchema: schema(map[string]any{
-				"case_id": stringProp("Helios case id"),
+				"case_id": stringProp("Backlight case id"),
 			}, []string{"case_id"}),
 			Annotations: readOnly,
 		},
@@ -175,7 +175,7 @@ func (s *Server) tools() []toolDef {
 			Title:       "List allowed case artifacts",
 			Description: "List existence and size for the allowlisted product artifacts for a case.",
 			InputSchema: schema(map[string]any{
-				"case_id": stringProp("Helios case id"),
+				"case_id": stringProp("Backlight case id"),
 			}, []string{"case_id"}),
 			Annotations: readOnly,
 		},
@@ -184,7 +184,7 @@ func (s *Server) tools() []toolDef {
 			Title:       "Read allowed case artifact",
 			Description: "Read exactly one allowlisted artifact, including canonical report_bundle files.",
 			InputSchema: schema(map[string]any{
-				"case_id":   stringProp("Helios case id"),
+				"case_id":   stringProp("Backlight case id"),
 				"path":      stringProp("Use helios.list_artifacts first. Examples: report_bundle/README.md, report_bundle/report/REPORT.md, report_bundle/report/run_summary.json, report_bundle/poc/PoC.t.sol, attack_flow.md, multi_leg_reconciliation.md"),
 				"max_bytes": intProp("Optional per-call max bytes; can only lower the server cap"),
 			}, []string{"case_id", "path"}),

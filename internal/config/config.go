@@ -66,7 +66,7 @@ func Load() (*Config, error) {
 		TelegramChatID:                 os.Getenv("TELEGRAM_CHAT_ID"),
 		TelegramAPIBase:                os.Getenv("HELIOS_TELEGRAM_API_BASE"),
 		GitHubToken:                    firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
-		GitHubOwner:                    envDefault("HELIOS_GITHUB_PUBLISH_OWNER", "UPside-Lumos-V2"),
+		GitHubOwner:                    envDefault("HELIOS_GITHUB_PUBLISH_OWNER", "BackwardLabs"),
 		GitHubRepo:                     envDefault("HELIOS_GITHUB_PUBLISH_REPO", "Q1-2026"),
 		GitHubBranch:                   envDefault("HELIOS_GITHUB_PUBLISH_BRANCH", "main"),
 		PreLumosEnabled:                envBool("HELIOS_PRE_LUMOS_ENABLED", false),

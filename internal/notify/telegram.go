@@ -51,7 +51,7 @@ func (t *TelegramChannel) Deliver(ctx context.Context, p Payload) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "helios/1 notify=telegram")
+	req.Header.Set("User-Agent", "backlight/1 notify=telegram")
 	resp, err := t.Client.Do(req)
 	if err != nil {
 		return 0, err
@@ -75,7 +75,7 @@ func renderTelegramText(p Payload) string {
 	}
 	diagnosis, title, reason := telegramDiagnosis(p)
 	var b strings.Builder
-	fmt.Fprintf(&b, "[helios] %s", title)
+	fmt.Fprintf(&b, "[Backlight] %s", title)
 	fmt.Fprintf(&b, "\n\nIncident: %s on %s", incidentTitle(p), chainTitle(p.Chain))
 	fmt.Fprintf(&b, "\nTx: %s", tx)
 	fmt.Fprintf(&b, "\nResult: %s", resultSummary(p, diagnosis))
@@ -119,6 +119,12 @@ func telegramDiagnosis(p Payload) (key, title, reason string) {
 	case "poc_failed":
 		return "poc_failed", "PoC failed", reason
 	case "engine_error":
+		switch failureKindText(p) {
+		case "agent_poc_agent_runtime_error":
+			return "agent_poc_agent_runtime_error", "Agent PoC runtime error", engineErrorReason(p)
+		case "rca_agent_runtime_error":
+			return "rca_agent_runtime_error", "RCA agent runtime error", engineErrorReason(p)
+		}
 		return "engine_error", "Engine error", firstText(reason, failureKindText(p))
 	}
 	switch p.Outcome {
@@ -129,9 +135,19 @@ func telegramDiagnosis(p Payload) (key, title, reason string) {
 	case "unverified":
 		return "poc_failed", "PoC failed", firstText(reason, failureKindText(p))
 	case "engine_error":
+		switch failureKindText(p) {
+		case "agent_poc_agent_runtime_error":
+			return "agent_poc_agent_runtime_error", "Agent PoC runtime error", engineErrorReason(p)
+		case "rca_agent_runtime_error":
+			return "rca_agent_runtime_error", "RCA agent runtime error", engineErrorReason(p)
+		}
 		return "engine_error", "Engine error", firstText(reason, failureKindText(p))
 	}
 	return firstText(p.Outcome, p.Event, "unknown"), firstText(p.Outcome, p.Event, "Unknown"), reason
+}
+
+func engineErrorReason(p Payload) string {
+	return firstText(p.FailureDetailKind, p.FailureMessage, p.RerunReason, failureKindText(p))
 }
 
 func failureKindText(p Payload) string {
@@ -159,6 +175,10 @@ func resultSummary(p Payload, diagnosis string) string {
 		return joinTelegramParts("PoC blocked", decision)
 	case "poc_failed":
 		return joinTelegramParts("PoC failed", decision)
+	case "agent_poc_agent_runtime_error":
+		return joinTelegramParts("Agent PoC runtime error", decision)
+	case "rca_agent_runtime_error":
+		return joinTelegramParts("RCA agent runtime error", decision)
 	case "engine_error":
 		return joinTelegramParts("engine error", decision)
 	case "partial":

@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "helios": {
+    "backlight": {
       "command": "/srv/helios/bin/helios-mcp",
       "env": {
         "HELIOS_BASE_URL": "http://127.0.0.1:8080",

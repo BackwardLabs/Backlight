@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Sync, build, install, and optionally restart the single-VM Helios runtime.
+Sync, build, install, and optionally restart the single-VM Backlight runtime.
 
 Usage:
   sudo HELIOS_REF=<sha-or-tag-or-branch> \
@@ -65,7 +65,7 @@ if ! id "${service_user}" >/dev/null 2>&1; then
 fi
 
 if [[ ! -d "${helios_dir}/.git" ]]; then
-  echo "missing Helios git checkout: ${helios_dir}" >&2
+  echo "missing Backlight git checkout: ${helios_dir}" >&2
   exit 1
 fi
 
@@ -84,9 +84,9 @@ run_git() {
   local owner
   owner="$(git_user_for "${dir}")"
   if [[ "${owner}" == "root" ]]; then
-    git -C "${dir}" "$@"
+    (umask 0027 && git -C "${dir}" "$@")
   else
-    sudo -u "${owner}" git -C "${dir}" "$@"
+    sudo -u "${owner}" -H bash -c 'umask 0027; dir="$1"; shift; exec git -C "$dir" "$@"' bash "${dir}" "$@"
   fi
 }
 
@@ -96,9 +96,31 @@ run_in_worktree() {
   local owner
   owner="$(git_user_for "${dir}")"
   if [[ "${owner}" == "root" ]]; then
-    (cd "${dir}" && "$@")
+    (umask 0027 && cd "${dir}" && "$@")
   else
-    sudo -u "${owner}" -H bash -c 'cd "$1" && shift && exec "$@"' bash "${dir}" "$@"
+    sudo -u "${owner}" -H bash -c 'umask 0027; cd "$1" && shift && exec "$@"' bash "${dir}" "$@"
+  fi
+}
+
+grant_lumoskit_runtime_read_access() {
+  local path
+  local runtime_paths=(
+    "${lumoskit_dir}/scripts"
+    "${lumoskit_dir}/prompts"
+    "${lumoskit_dir}/external"
+  )
+
+  for path in "${runtime_paths[@]}"; do
+    if [[ -e "${path}" ]]; then
+      chgrp -R "${service_user}" "${path}"
+      chmod -R g+rX "${path}"
+      find "${path}" -type d -exec chmod g+s {} +
+    fi
+  done
+
+  if [[ -f "${lumoskit_dir}/requirements-agent-poc.txt" ]]; then
+    chgrp "${service_user}" "${lumoskit_dir}/requirements-agent-poc.txt"
+    chmod g+r "${lumoskit_dir}/requirements-agent-poc.txt"
   fi
 }
 
@@ -159,10 +181,10 @@ chmod 750 "${base_dir}/data" "${base_dir}/data/outputs" "${base_dir}/logs"
 chmod 750 "${base_dir}/data/.svm" "${base_dir}/data/.local" "${base_dir}/data/.local/share"
 chown -R "${service_user}:${service_user}" "${base_dir}/data" "${base_dir}/logs"
 
-sync_checkout "Helios" "${helios_dir}" "${helios_ref}"
+sync_checkout "Backlight" "${helios_dir}" "${helios_ref}"
 sync_checkout "LumosKit" "${lumoskit_dir}" "${lumoskit_ref}"
 
-echo "==> Building Helios"
+echo "==> Building Backlight"
 run_in_worktree "${helios_dir}" env CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios ./cmd/helios
 
 echo "==> Building LumosKit"
@@ -178,20 +200,15 @@ if [[ -f "${base_dir}/env/lumoskit.env" ]]; then
   install -o root -g "${service_user}" -m 0640 "${base_dir}/env/lumoskit.env" "${lumoskit_dir}/.env"
 fi
 
-# LumosKit is checked out by the operator user, but helios executes its Python
-# runtime helpers from the service. Some executable scripts may be 0700 after
-# checkout or local edits, so grant the service group read/traverse access.
-chgrp -R "${service_user}" "${lumoskit_dir}/scripts"
-chmod -R g+rX "${lumoskit_dir}/scripts"
-if [[ -f "${lumoskit_dir}/requirements-agent-poc.txt" ]]; then
-  chgrp "${service_user}" "${lumoskit_dir}/requirements-agent-poc.txt"
-  chmod g+r "${lumoskit_dir}/requirements-agent-poc.txt"
-fi
+# LumosKit is checked out by the operator user, but Backlight executes Python
+# runtime helpers and reads prompt/RCA skill files from the checkout. Git does
+# not preserve owner/group policy, so refresh these permissions after every sync.
+grant_lumoskit_runtime_read_access
 
 echo "==> Writing systemd unit"
 cat >"/etc/systemd/system/${service_name}" <<EOF
 [Unit]
-Description=Helios orchestrator
+Description=Backlight orchestrator
 After=network-online.target
 Wants=network-online.target
 
@@ -230,9 +247,9 @@ systemctl daemon-reload
 
 cat <<EOF
 ==> Runtime installed
-Helios checkout:   ${helios_dir} @ $(run_git "${helios_dir}" rev-parse --short HEAD)
+Backlight checkout:   ${helios_dir} @ $(run_git "${helios_dir}" rev-parse --short HEAD)
 LumosKit checkout: ${lumoskit_dir} @ $(run_git "${lumoskit_dir}" rev-parse --short HEAD)
-Helios binary:     ${base_dir}/bin/helios
+Backlight binary:     ${base_dir}/bin/helios
 LumosKit binary:   ${lumoskit_dir}/bin/lumoskit
 Service:           ${service_name}
 

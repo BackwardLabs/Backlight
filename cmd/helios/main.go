@@ -149,7 +149,7 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("helios listening", "addr", cfg.ListenAddr)
+		logger.Info("backlight listening", "addr", cfg.ListenAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server exited", "err", err)
 			stop()
@@ -167,7 +167,7 @@ func main() {
 	w.Wait()
 	dispatcher.Wait()
 	notifier.Wait()
-	logger.Info("helios stopped")
+	logger.Info("backlight stopped")
 }
 
 // buildChannels assembles the operator notification channel list from env.

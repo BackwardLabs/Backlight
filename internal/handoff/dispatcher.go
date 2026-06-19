@@ -227,7 +227,7 @@ func (d *Dispatcher) postOnce(ctx context.Context, url string, body []byte) (int
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "helios/1")
+	req.Header.Set("User-Agent", "backlight/1")
 	if d.BearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+d.BearerToken)
 	}

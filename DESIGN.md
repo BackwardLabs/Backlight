@@ -3,10 +3,10 @@
 ## Source of truth
 - Status: Draft
 - Last refreshed: 2026-05-21
-- Primary product surfaces: `GET /` and `GET /ui` Helios Console, protected API calls behind the browser shell, operator case-detail inspection.
+- Primary product surfaces: `GET /` and `GET /ui` Backlight Console, protected API calls behind the browser shell, operator case-detail inspection.
 - Evidence reviewed:
   - `README.md` — product flow, Web UI workflow, configuration surface.
-  - `docs/architecture/overview.md` — Helios as the incident workflow operator surface.
+  - `docs/architecture/overview.md` — Backlight as the incident workflow operator surface.
   - `internal/api/ui.go` — current browser console implementation.
   - `internal/api/ui_test.go` — public shell and protected API expectations.
   - User-provided Privy style reference — high-contrast digital architecture, light canvas, dark operational surfaces, single violet accent.
@@ -35,7 +35,7 @@
 - Primary personas:
   - Incident operator monitoring incoming hack-detector signals.
   - Security engineer checking PoC/RCA progress and handoff state.
-  - Developer validating Helios locally.
+  - Developer validating Backlight locally.
 - User jobs:
   - Submit a chain + tx hash to start analysis.
   - Scan recent cases and choose the next case needing attention.
@@ -136,7 +136,7 @@
 - Tone: terse, operational, exact.
 - Terminology:
   - Use "case", "analysis", "handoff", "notification", "outcome", "GitHub publish", "Pre-Lumos sync", "metadata", and "tx hash" consistently.
-  - Distinguish Helios product UI from Grafana/Prometheus observability.
+  - Distinguish Backlight product UI from Grafana/Prometheus observability.
 - Microcopy rules:
   - Prefer labels and state names over explanatory paragraphs.
   - Preserve raw identifiers exactly.
@@ -157,9 +157,9 @@
   - Protected API calls still require Bearer token.
 - Test/screenshot expectations:
   - Run `go test ./internal/api` for shell and auth expectations.
-  - For visual implementation passes, run a local Helios smoke and inspect `/ui` in browser where possible.
+  - For visual implementation passes, run a local Backlight smoke and inspect `/ui` in browser where possible.
 
 ## Open questions
 - [ ] Should hack-detector-submitted cases get a distinct source filter or inbox lane? Owner: product/ops. Impact: case list filtering and prioritization.
 - [ ] Should the dashboard expose aggregate counts by state/outcome? Owner: product/ops. Impact: may require additional client aggregation or API support.
-- [ ] Should production branding use a Helios logo/mark? Owner: product/design. Impact: top bar identity only.
+- [ ] Should production branding use a Backlight logo/mark? Owner: product/design. Impact: top bar identity only.

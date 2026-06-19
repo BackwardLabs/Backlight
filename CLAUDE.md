@@ -2,38 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What helios is
+## What Backlight is
 
-helios is the **orchestrator** in the [Lumos family](#lumos-family). It sits
+Backlight is the **orchestrator** in the [Lumos family](#lumos-family). It sits
 between an upstream detection system (hack-detector) and an analysis engine
 (LumosKit), runs the state machine that turns a detected suspicious transaction
 into a verified PoC + RCA bundle handed off to downstream agents, and starts
 verified-only product side effects such as GitHub publish and Pre-Lumos
 importer JSON generation.
 
-helios is **not** a generic workflow platform, not a security scanner, and does
+Backlight is **not** a generic workflow platform, not a security scanner, and does
 not perform detection or analysis itself. Those responsibilities belong to its
 two siblings.
 
 ## Lumos family
 
-helios is one of three sibling repos at `/home/wiimdy/lumos/` with deliberately
+Backlight is one of three sibling repos at `/home/wiimdy/lumos/` with deliberately
 narrow, non-overlapping responsibilities:
 
 | Repo | Role | Canonical location |
 | --- | --- | --- |
-| `hack-detector` | Upstream detection — finds suspicious tx hashes on-chain | `github.com/UPside-Lumos-V2/hack-detector` |
-| **`helios`** | **Orchestrator — receives signals, dispatches engine runs, manages state, records product side effects, hands off to downstream agents** | this repo |
+| `hack-detector` | Upstream detection — finds suspicious tx hashes on-chain | `github.com/BackwardLabs/hack-detector` |
+| **Backlight** (`helios` runtime identifiers) | **Orchestrator — receives signals, dispatches engine runs, manages state, records product side effects, hands off to downstream agents** | this repo |
 | `lumoskit` | Stateless CLI engine — turns a tx hash into a verified PoC + product bundle | sibling at `../lumoskit/` |
 
-The boundary between helios and lumoskit is fixed by
+The boundary between Backlight and lumoskit is fixed by
 **`../lumoskit/docs/adr/0018-lumoskit-as-engine.md`** — read that ADR before
 adding orchestration features. It defines what lumoskit will and will not do,
-which inversely defines what helios is responsible for.
+which inversely defines what Backlight is responsible for.
 
 ## What lives where (and what does not)
 
-Things that belong in **helios**:
+Things that belong in **Backlight**:
 
 - State machine for incident lifecycle (queued → running → done → handed-off, or running → failed for engine errors)
 - Subprocess dispatch of `bin/lumoskit`
@@ -48,43 +48,43 @@ Things that belong in **helios**:
 Things that belong in **lumoskit** (do not duplicate here):
 
 - Trace acquisition, CEFG, localization, lifting, PoC synthesis, agent_poc gate
-- The engine pipeline itself; helios only invokes it as a subprocess
+- The engine pipeline itself; Backlight only invokes it as a subprocess
 
 Things that belong in **hack-detector** (do not duplicate here):
 
 - On-chain monitoring, suspicious tx detection
 - Anything that decides "is this an incident worth analysing"
 
-If a proposal asks helios to do detection, redirect to hack-detector. If it
-asks helios to do trace/PoC analysis, redirect to lumoskit. If it asks
+If a proposal asks Backlight to do detection, redirect to hack-detector. If it
+asks Backlight to do trace/PoC analysis, redirect to lumoskit. If it asks
 lumoskit to do orchestration, redirect here.
 
-## How helios calls lumoskit (engine contract)
+## How Backlight calls lumoskit (engine contract)
 
 Per `../lumoskit/docs/adr/0018-lumoskit-as-engine.md`, lumoskit exposes a
-stable subprocess engine contract. helios consumes it like this:
+stable subprocess engine contract. Backlight consumes it like this:
 
 ```text
-1. helios picks a unique human-readable --output-root for the case (e.g. outputs/260526_eth_curve/, with -2/-3 on collisions).
-2. helios spawns `bin/lumoskit --tx <hash> --chain <label> --output-root <path>` as a one-shot subprocess.
-3. helios waits on the subprocess. Exit code 0 = success, 1 = anything else.
-4. helios reads `<output-root>/summary.json`:
+1. Backlight picks a unique human-readable --output-root for the case (e.g. outputs/260526_eth_curve/, with -2/-3 on collisions).
+2. Backlight spawns `bin/lumoskit --tx <hash> --chain <label> --output-root <path>` as a one-shot subprocess.
+3. Backlight waits on the subprocess. Exit code 0 = success, 1 = anything else.
+4. Backlight reads `<output-root>/summary.json`:
    - status: "pass" | "partial" | "fail"
    - poc.status: "verified" | "unverified" | "missing"
    - failure.kind: present when status != "pass"
    - For engine errors: failure.kind == "engine_error" and failure.message has the original error string.
-5. For `outcome=verified`, helios may publish product artifacts to GitHub and run the Pre-Lumos sidecar, recording `github_publish` / `pre_lumos_sync` audit events.
-6. helios routes the case (and `summary.json` URL/path) to downstream agents.
+5. For `outcome=verified`, Backlight may publish product artifacts to GitHub and run the Pre-Lumos sidecar, recording `github_publish` / `pre_lumos_sync` audit events.
+6. Backlight routes the case (and `summary.json` URL/path) to downstream agents.
 ```
 
 Notes:
 
 - **No --rpc-url flag**. RPC is resolved by lumoskit from env at startup
   (`CEFG_LIVE_RPC_URL` / `RPC_URL` / `ETH_RPC_URL`, or `ALCHEMY_API_KEY` plus
-  `--chain`). helios sets env, not flags.
+  `--chain`). Backlight sets env, not flags.
 - **Caller-unique --output-root is mandatory.** lumoskit takes no file lock;
   collisions on the same root are caller error.
-- **summary.json is always written**, including failure paths. helios can rely
+- **summary.json is always written**, including failure paths. Backlight can rely
   on reading it after subprocess exit.
 - **Do not embed lumoskit as a library.** The engine contract is the subprocess
   surface; in-process embedding violates the contract boundary.
@@ -108,10 +108,10 @@ with the implementation.
 
 ## Useful pointers (cross-repo)
 
-- `../lumoskit/docs/product.md` — LumosKit product charter. helios serves the same audience (audit firms doing post-incident forensics) — so helios features should pass the same audience-fit test on the workflow side.
+- `../lumoskit/docs/product.md` — LumosKit product charter. Backlight serves the same audience (audit firms doing post-incident forensics) — so Backlight features should pass the same audience-fit test on the workflow side.
 - `../lumoskit/docs/adr/0018-lumoskit-as-engine.md` — the engine contract. Always check this before assuming what lumoskit will do.
 - `../lumoskit/docs/architecture/README.md` — lumoskit per-stage outputs and `outputs/<case>/summary.json` schema reference.
-- `../hack-detector/` (local clone of `UPside-Lumos-V2/hack-detector`) — upstream signal shape and integration target.
+- `../hack-detector/` (local clone of `BackwardLabs/hack-detector`) — upstream signal shape and integration target.
 
 ## What this file is not
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=Helios orchestrator
+Description=Backlight orchestrator
 After=network-online.target
 Wants=network-online.target
 

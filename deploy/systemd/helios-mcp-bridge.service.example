@@ -1,5 +1,5 @@
 [Unit]
-Description=Helios MCP handoff bridge
+Description=Backlight MCP handoff bridge
 After=network-online.target
 Wants=network-online.target
 Before=helios.service

@@ -49,7 +49,7 @@ func main() {
 		}
 	}
 
-	logger.Info("helios-mcp starting", "source", cfg.Source(), "base_url", cfg.HeliosBaseURL, "bridge_db", cfg.BridgeDBPath, "output_base", cfg.OutputBase, "max_bytes", cfg.MaxBytes, "listen_addr", cfg.MCPListenAddr, "mcp_path", cfg.MCPPath)
+	logger.Info("backlight-mcp starting", "source", cfg.Source(), "base_url", cfg.BacklightBaseURL, "bridge_db", cfg.BridgeDBPath, "output_base", cfg.OutputBase, "max_bytes", cfg.MaxBytes, "listen_addr", cfg.MCPListenAddr, "mcp_path", cfg.MCPPath)
 	srv := &mcpserver.Server{Client: client, Artifacts: reader, Logger: logger}
 	if cfg.MCPListenAddr != "" {
 		httpSrv := &http.Server{
@@ -62,7 +62,7 @@ func main() {
 			defer cancel()
 			_ = httpSrv.Shutdown(shutdownCtx)
 		}()
-		logger.Info("helios-mcp http listening", "addr", cfg.MCPListenAddr, "path", cfg.MCPPath, "auth", cfg.MCPHTTPToken != "")
+		logger.Info("backlight-mcp http listening", "addr", cfg.MCPListenAddr, "path", cfg.MCPPath, "auth", cfg.MCPHTTPToken != "")
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed && ctx.Err() == nil {
 			logger.Error("mcp http server exited", "err", err)
 			os.Exit(1)
@@ -76,34 +76,34 @@ func main() {
 }
 
 type config struct {
-	HeliosBaseURL  string
-	HeliosAPIToken string
-	BridgeDBPath   string
-	OutputBase     string
-	MaxBytes       int64
-	HTTPTimeout    time.Duration
-	MCPListenAddr  string
-	MCPPath        string
-	MCPHTTPToken   string
+	BacklightBaseURL  string
+	BacklightAPIToken string
+	BridgeDBPath      string
+	OutputBase        string
+	MaxBytes          int64
+	HTTPTimeout       time.Duration
+	MCPListenAddr     string
+	MCPPath           string
+	MCPHTTPToken      string
 }
 
 func loadConfig() (*config, error) {
 	cfg := &config{
-		HeliosBaseURL:  firstNonEmpty(os.Getenv("HELIOS_BASE_URL"), baseURLFromListenAddr(os.Getenv("HELIOS_LISTEN_ADDR"))),
-		HeliosAPIToken: os.Getenv("HELIOS_API_TOKEN"),
-		BridgeDBPath:   os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH"),
-		OutputBase:     outputBaseFromEnv(os.Getenv("HELIOS_OUTPUT_BASE"), os.Getenv("HELIOS_OUTPUT_ROOT"), os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH")),
-		MaxBytes:       envInt64("HELIOS_MCP_MAX_BYTES", artifacts.DefaultMaxBytes),
-		HTTPTimeout:    time.Duration(envInt64("HELIOS_MCP_HTTP_TIMEOUT_SECONDS", 30)) * time.Second,
-		MCPListenAddr:  strings.TrimSpace(os.Getenv("HELIOS_MCP_LISTEN_ADDR")),
-		MCPPath:        envDefault("HELIOS_MCP_PATH", "/mcp"),
-		MCPHTTPToken:   firstNonEmpty(os.Getenv("HELIOS_MCP_HTTP_TOKEN"), os.Getenv("HELIOS_API_TOKEN")),
+		BacklightBaseURL:  firstNonEmpty(os.Getenv("HELIOS_BASE_URL"), baseURLFromListenAddr(os.Getenv("HELIOS_LISTEN_ADDR"))),
+		BacklightAPIToken: os.Getenv("HELIOS_API_TOKEN"),
+		BridgeDBPath:      os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH"),
+		OutputBase:        outputBaseFromEnv(os.Getenv("HELIOS_OUTPUT_BASE"), os.Getenv("HELIOS_OUTPUT_ROOT"), os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH")),
+		MaxBytes:          envInt64("HELIOS_MCP_MAX_BYTES", artifacts.DefaultMaxBytes),
+		HTTPTimeout:       time.Duration(envInt64("HELIOS_MCP_HTTP_TIMEOUT_SECONDS", 30)) * time.Second,
+		MCPListenAddr:     strings.TrimSpace(os.Getenv("HELIOS_MCP_LISTEN_ADDR")),
+		MCPPath:           envDefault("HELIOS_MCP_PATH", "/mcp"),
+		MCPHTTPToken:      firstNonEmpty(os.Getenv("HELIOS_MCP_HTTP_TOKEN"), os.Getenv("HELIOS_API_TOKEN")),
 	}
 	if cfg.BridgeDBPath == "" {
-		if cfg.HeliosBaseURL == "" {
+		if cfg.BacklightBaseURL == "" {
 			return nil, fmt.Errorf("HELIOS_BASE_URL is required unless HELIOS_MCP_BRIDGE_DB_PATH is set")
 		}
-		if cfg.HeliosAPIToken == "" {
+		if cfg.BacklightAPIToken == "" {
 			return nil, fmt.Errorf("HELIOS_API_TOKEN is required unless HELIOS_MCP_BRIDGE_DB_PATH is set")
 		}
 	}
@@ -120,10 +120,10 @@ func (c *config) Source() string {
 	if c.BridgeDBPath != "" {
 		return "bridge"
 	}
-	return "helios-api"
+	return "backlight-api"
 }
 
-func buildClient(ctx context.Context, cfg *config) (mcpserver.HeliosClient, func() error, error) {
+func buildClient(ctx context.Context, cfg *config) (mcpserver.BacklightClient, func() error, error) {
 	if cfg.BridgeDBPath != "" {
 		st, err := mcpbridge.OpenReadOnly(ctx, cfg.BridgeDBPath)
 		if err != nil {
@@ -132,7 +132,7 @@ func buildClient(ctx context.Context, cfg *config) (mcpserver.HeliosClient, func
 		return st, st.Close, nil
 	}
 	httpClient := &http.Client{Timeout: cfg.HTTPTimeout}
-	hc, err := heliosclient.New(cfg.HeliosBaseURL, cfg.HeliosAPIToken, httpClient)
+	hc, err := heliosclient.New(cfg.BacklightBaseURL, cfg.BacklightAPIToken, httpClient)
 	if err != nil {
 		return nil, nil, err
 	}

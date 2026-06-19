@@ -66,6 +66,10 @@ type Payload struct {
 	DiagnosisOwner       string  `json:"diagnosis_owner,omitempty"`
 	DiagnosisRetryable   *bool   `json:"diagnosis_retryable,omitempty"`
 	DiagnosisAction      string  `json:"diagnosis_action,omitempty"`
+	FailureCategory      string  `json:"failure_category,omitempty"`
+	FailureDetailKind    string  `json:"failure_detail_kind,omitempty"`
+	FailureStage         string  `json:"failure_stage,omitempty"`
+	FailureMessage       string  `json:"failure_message,omitempty"`
 	AutoRerunEligible    *bool   `json:"auto_rerun_eligible,omitempty"`
 	AutoRerunResumeStage string  `json:"auto_rerun_resume_stage,omitempty"`
 	ResumeStage          string  `json:"resume_stage,omitempty"`
@@ -158,6 +162,23 @@ func (p *Payload) applyAnalysisPayload(raw json.RawMessage) {
 	if value := stringField(decoded, "lumoskit_stage"); value != "" {
 		p.LumoskitStage = value
 	}
+	if failure := objectField(decoded, "failure"); len(failure) > 0 {
+		if value := stringField(failure, "kind"); value != "" && p.FailureKind == nil {
+			p.FailureKind = &value
+		}
+		if value := stringField(failure, "category"); value != "" {
+			p.FailureCategory = value
+		}
+		if value := stringField(failure, "detail_kind"); value != "" {
+			p.FailureDetailKind = value
+		}
+		if value := stringField(failure, "stage"); value != "" {
+			p.FailureStage = value
+		}
+		if value := stringField(failure, "message"); value != "" {
+			p.FailureMessage = value
+		}
+	}
 	if p.AnalysisStage == "" {
 		stage, reason := inferAnalysisStage(decoded)
 		if stage != "" {
@@ -212,6 +233,9 @@ func inferAnalysisStage(m map[string]any) (string, string) {
 	poc := objectField(m, "poc")
 	failure := objectField(m, "failure")
 	failureKind := firstString(stringField(failure, "kind"), stringField(m, "failure_kind"))
+	if stringField(failure, "category") == "engine_error" || failureKind == "engine_error" || failureKind == "rca_agent_runtime_error" || failureKind == "agent_poc_agent_runtime_error" {
+		return "engine_error", firstString(stringField(failure, "detail_kind"), stringField(failure, "message"), failureKind)
+	}
 	if stringField(rca, "status") == "blocked" || stringField(rca, "blocker_code") != "" || stringField(rca, "blocker_reason") != "" || failureKind == "rca_blocked" {
 		return "rca_blocked", firstString(stringField(rca, "blocker_code"), stringField(rca, "blocker_reason"), failureKind)
 	}

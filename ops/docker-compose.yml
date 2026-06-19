@@ -1,11 +1,11 @@
-# Local observability stack for helios.
+# Local observability stack for Backlight.
 #
 # Usage (Linux, default):
-#   export HELIOS_API_TOKEN=<the token helios is running with>
+#   export HELIOS_API_TOKEN=<the token Backlight is running with>
 #   docker compose -f ops/docker-compose.yml up
 #
 # Both containers run on `network_mode: host` — they share the host's network
-# namespace, so Prometheus can scrape helios on 127.0.0.1:18080 (or whatever
+# namespace, so Prometheus can scrape Backlight on 127.0.0.1:18080 (or whatever
 # HELIOS_HOST you set) without crossing the docker bridge. This sidesteps
 # host firewalls (UFW / iptables FORWARD) that often block container ->
 # host-port traffic on Linux.
@@ -19,7 +19,7 @@
 services:
   prometheus:
     image: prom/prometheus:v2.55.1
-    container_name: helios-prometheus
+    container_name: backlight-prometheus
     restart: unless-stopped
     network_mode: host
     environment:
@@ -36,7 +36,7 @@ services:
       - |
         set -e
         printf '%s' "$$HELIOS_API_TOKEN" > /etc/prometheus/token
-        printf 'helios scrape target: %s\n' "$$HELIOS_HOST"
+        printf 'backlight scrape target: %s\n' "$$HELIOS_HOST"
         sed "s|__HELIOS_HOST__|$$HELIOS_HOST|g" \
           /etc/prometheus/prometheus.yml.tmpl > /etc/prometheus/prometheus.yml
         exec /bin/prometheus \
@@ -47,7 +47,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.3.0
-    container_name: helios-grafana
+    container_name: backlight-grafana
     restart: unless-stopped
     network_mode: host
     depends_on:
