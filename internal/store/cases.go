@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/UPside-Lumos-V2/helios/internal/metrics"
+	"github.com/UPside-Lumos-V2/helios/internal/outcome"
 )
 
 type Case struct {
@@ -76,9 +77,10 @@ const (
 )
 
 const (
-	DedupNew          = "new"
-	DedupExisting     = "existing"
-	DedupRerunCreated = "rerun_created"
+	DedupNew                  = "new"
+	DedupExisting             = "existing"
+	DedupRerunCreated         = "rerun_created"
+	DedupExistingNonRetryable = "existing_non_retryable"
 )
 
 const AutoRerunMetadataKey = "helios_auto_rerun"
@@ -173,6 +175,15 @@ func (s *Store) SubmitCase(ctx context.Context, chain, txHash string, source, de
 			return nil
 
 		case leaf.State == StateFailed:
+			// Non-retryable failures (tx_not_found, unsupported_chain, binary/toolchain
+			// errors) keep failing on re-run, so do not spawn a fresh lumoskit attempt
+			// for repeated /signals of the same bad input. Operators can still force a
+			// rerun via /cases force_rerun=true (which sets forceRerun here).
+			if !forceRerun && leaf.FailureKind != nil && !outcome.IsRetryableFailureKind(*leaf.FailureKind) {
+				outCase = leaf
+				result = DedupExistingNonRetryable
+				return nil
+			}
 			child, err := insertChildCaseTx(ctx, tx, leaf, source, detectedAt, metadata, forceRerun, now)
 			if err != nil {
 				return err

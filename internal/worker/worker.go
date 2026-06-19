@@ -166,6 +166,7 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 		SummaryBytes:   res.SummaryBytes,
 		SummaryMissing: res.SummaryMissing,
 		SummaryReadErr: res.SummaryReadErr,
+		Stderr:         res.Stderr,
 	}
 	mapped := outcome.Map(outcomeInput)
 	eventPayload := outcome.TerminalEventPayload(mapped, outcomeInput)
