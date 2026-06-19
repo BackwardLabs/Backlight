@@ -26,6 +26,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/outcome"
 	"github.com/UPside-Lumos-V2/helios/internal/prelumos"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
+	"github.com/UPside-Lumos-V2/helios/internal/xpublish"
 )
 
 type Worker struct {
@@ -34,6 +35,7 @@ type Worker struct {
 	Dispatcher                  *handoff.Dispatcher // nil iff no downstream URLs are configured
 	Notifier                    *notify.Notifier    // nil iff no operator channel is configured
 	GitHubPublisher             *githubpublish.Publisher
+	XPublisher                  *xpublish.Publisher
 	PreLumosRunner              *prelumos.Runner
 	PartialAutoRerunMaxAttempts int
 	OutputRootParent            string
@@ -216,6 +218,9 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 		}
 		log.Info("case complete", "state", mapped.State, "outcome", mapped.Outcome, "rule", mapped.Rule)
 		githubPublishQueued := w.publishGitHub(ctx, c, mapped.Outcome)
+		if !githubPublishQueued {
+			w.publishX(ctx, c, mapped.Outcome)
+		}
 		w.runPreLumos(ctx, c, mapped.Outcome)
 		// Trigger downstream fan-out asynchronously. With no URLs configured,
 		// MarkDone already advanced the case to handed-off (handoff_status=skipped).
@@ -368,6 +373,7 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 				"case_id", publishCase.CaseID,
 				"reason", res.SkipReason,
 			)
+			w.publishX(ctx, c, mappedOutcome)
 			return
 		}
 		if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish", map[string]any{
@@ -382,6 +388,7 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 		}); err != nil {
 			w.Logger.Error("record github publish event failed", "case_id", publishCase.CaseID, "err", err)
 		}
+		w.publishX(ctx, c, mappedOutcome)
 		w.Logger.Info("github publish complete",
 			"case_id", publishCase.CaseID,
 			"commit_sha", res.CommitSHA,
@@ -389,6 +396,84 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 		)
 	}()
 	return true
+}
+
+func (w *Worker) publishX(ctx context.Context, c *store.Case, mappedOutcome string) bool {
+	if mappedOutcome != outcome.OutcomeVerified || w.XPublisher == nil || !w.XPublisher.Configured() || c.OutputRoot == nil {
+		return false
+	}
+	reportURL, pocURL := w.githubArtifactURLs(ctx, c.CaseID)
+	publishCase := xpublish.Case{
+		CaseID:       c.CaseID,
+		Chain:        c.Chain,
+		TxHash:       c.TxHash,
+		OutputRoot:   *c.OutputRoot,
+		IncidentSlug: store.IncidentSlug(c),
+		ReportURL:    reportURL,
+		PoCURL:       pocURL,
+		Outcome:      mappedOutcome,
+	}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		res, err := w.XPublisher.Publish(ctx, publishCase)
+		if err != nil {
+			w.Logger.Error("x publish failed", "case_id", publishCase.CaseID, "err", err)
+			if recordErr := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "x_publish_failed", map[string]any{
+				"published": false,
+				"platform":  "x",
+				"error":     err.Error(),
+				"outcome":   mappedOutcome,
+			}); recordErr != nil {
+				w.Logger.Error("record x publish failure event failed", "case_id", publishCase.CaseID, "err", recordErr)
+			}
+			return
+		}
+		if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "x_publish", map[string]any{
+			"published":        res.Published,
+			"dry_run":          res.DryRun,
+			"platform":         res.Platform,
+			"post_id":          res.PostID,
+			"post_url":         res.PostURL,
+			"text":             res.Text,
+			"template":         res.Template,
+			"refresh_returned": res.RefreshReturned,
+			"outcome":          mappedOutcome,
+		}); err != nil {
+			w.Logger.Error("record x publish event failed", "case_id", publishCase.CaseID, "err", err)
+		}
+		w.Logger.Info("x publish complete",
+			"case_id", publishCase.CaseID,
+			"published", res.Published,
+			"dry_run", res.DryRun,
+			"post_id", res.PostID,
+		)
+	}()
+	return true
+}
+
+func (w *Worker) githubArtifactURLs(ctx context.Context, caseID string) (reportURL, pocURL string) {
+	events, err := w.Store.CaseEvents(ctx, caseID)
+	if err != nil {
+		w.Logger.Warn("x publish could not read case events for github urls", "case_id", caseID, "err", err)
+		return "", ""
+	}
+	for _, event := range events {
+		if event.EventType != "github_publish" || len(event.Payload) == 0 {
+			continue
+		}
+		var payload map[string]any
+		if json.Unmarshal(event.Payload, &payload) != nil {
+			continue
+		}
+		if v, ok := payload["report_url"].(string); ok && v != "" {
+			reportURL = v
+		}
+		if v, ok := payload["poc_url"].(string); ok && v != "" {
+			pocURL = v
+		}
+	}
+	return reportURL, pocURL
 }
 
 func shouldPublishGitHubOutcome(mappedOutcome string) bool {

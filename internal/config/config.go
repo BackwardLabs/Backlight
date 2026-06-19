@@ -25,6 +25,13 @@ type Config struct {
 	GitHubOwner             string
 	GitHubRepo              string
 	GitHubBranch            string
+	XPublishEnabled         bool
+	XClientID               string
+	XClientSecret           string
+	XRefreshToken           string
+	XAPIBase                string
+	XUsername               string
+	XDryRun                 bool
 	PreLumosEnabled         bool
 	PreLumosPythonBin       string
 	PreLumosAgentScript     string
@@ -69,6 +76,13 @@ func Load() (*Config, error) {
 		GitHubOwner:                    envDefault("HELIOS_GITHUB_PUBLISH_OWNER", "BackwardLabs"),
 		GitHubRepo:                     envDefault("HELIOS_GITHUB_PUBLISH_REPO", "Q1-2026"),
 		GitHubBranch:                   envDefault("HELIOS_GITHUB_PUBLISH_BRANCH", "main"),
+		XPublishEnabled:                envBool("X_PUBLISH_ENABLED", false),
+		XClientID:                      os.Getenv("X_CLIENT_ID"),
+		XClientSecret:                  os.Getenv("X_CLIENT_SECRET"),
+		XRefreshToken:                  os.Getenv("X_REFRESH_TOKEN"),
+		XAPIBase:                       envDefault("X_API_BASE", "https://api.x.com"),
+		XUsername:                      os.Getenv("X_ACCOUNT_USERNAME"),
+		XDryRun:                        envBool("X_DRY_RUN", true),
 		PreLumosEnabled:                envBool("HELIOS_PRE_LUMOS_ENABLED", false),
 		PreLumosPythonBin:              envDefault("HELIOS_PRE_LUMOS_PYTHON_BIN", "python3"),
 		PreLumosAgentScript:            envDefault("HELIOS_PRE_LUMOS_AGENT_SCRIPT", "scripts/pre_lumos_agent.py"),

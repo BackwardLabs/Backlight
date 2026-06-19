@@ -21,6 +21,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/prelumos"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 	"github.com/UPside-Lumos-V2/helios/internal/worker"
+	"github.com/UPside-Lumos-V2/helios/internal/xpublish"
 )
 
 func main() {
@@ -95,6 +96,21 @@ func main() {
 		"repo", cfg.GitHubOwner+"/"+cfg.GitHubRepo,
 		"branch", cfg.GitHubBranch,
 	)
+	xPublisher := xpublish.New(xpublish.Config{
+		Enabled:      cfg.XPublishEnabled,
+		ClientID:     cfg.XClientID,
+		ClientSecret: cfg.XClientSecret,
+		RefreshToken: cfg.XRefreshToken,
+		APIBase:      cfg.XAPIBase,
+		Username:     cfg.XUsername,
+		DryRun:       cfg.XDryRun,
+	})
+	xPublisher.Client = httpClient
+	logger.Info("x publisher configured",
+		"enabled", xPublisher.Configured(),
+		"dry_run", cfg.XDryRun,
+		"username_set", cfg.XUsername != "",
+	)
 	preLumosRunner := &prelumos.Runner{
 		Enabled:       cfg.PreLumosEnabled,
 		PythonBin:     cfg.PreLumosPythonBin,
@@ -131,6 +147,7 @@ func main() {
 		Dispatcher:                  dispatcher,
 		Notifier:                    notifier,
 		GitHubPublisher:             githubPublisher,
+		XPublisher:                  xPublisher,
 		PreLumosRunner:              preLumosRunner,
 		PartialAutoRerunMaxAttempts: cfg.PartialAutoRerunMaxAttempts,
 		OutputRootParent:            cfg.OutputRoot,

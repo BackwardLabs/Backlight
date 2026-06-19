@@ -17,6 +17,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
 	"github.com/UPside-Lumos-V2/helios/internal/outcome"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
+	"github.com/UPside-Lumos-V2/helios/internal/xpublish"
 )
 
 func TestWriteSignalContextIncludesCaseMetadata(t *testing.T) {
@@ -83,6 +84,7 @@ func TestWorkerPublishesVerifiedProductArtifacts(t *testing.T) {
 		Store:           st,
 		Runner:          &lumoskit.Runner{Binary: writePublishLumoskit(t, t.TempDir())},
 		GitHubPublisher: publisher,
+		XPublisher:      xpublish.New(xpublish.Config{Enabled: true, DryRun: true, Username: "BackwardLabs"}),
 		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
@@ -103,7 +105,7 @@ func TestWorkerPublishesVerifiedProductArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawPublish, sawDuration bool
+	var sawPublish, sawXPublish, sawDuration bool
 	for _, event := range events {
 		var payload map[string]any
 		if len(event.Payload) > 0 {
@@ -131,12 +133,27 @@ func TestWorkerPublishesVerifiedProductArtifacts(t *testing.T) {
 				t.Fatalf("github publish commit_url = %#v", payload["commit_url"])
 			}
 		}
+		if event.EventType == "x_publish" {
+			sawXPublish = true
+			if payload["dry_run"] != true || payload["published"] != false || payload["platform"] != "x" {
+				t.Fatalf("x publish payload = %#v", payload)
+			}
+			if !strings.Contains(payload["text"].(string), "[Backlight Verified Incident]") {
+				t.Fatalf("x publish text = %#v", payload["text"])
+			}
+			if !strings.Contains(payload["text"].(string), "Report: https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/yETH/README.md") {
+				t.Fatalf("x publish text missing github report url: %#v", payload["text"])
+			}
+		}
 	}
 	if !sawDuration {
 		t.Fatalf("running done state_transition did not include duration_ms: %#v", events)
 	}
 	if !sawPublish {
 		t.Fatalf("github_publish event not found: %#v", events)
+	}
+	if !sawXPublish {
+		t.Fatalf("x_publish event not found: %#v", events)
 	}
 }
 
