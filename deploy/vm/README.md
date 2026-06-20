@@ -48,7 +48,7 @@ paths used by systemd, writes the systemd unit/drop-ins, reloads systemd, and
 optionally restarts the service.
 
 ```bash
-cd /home/ubuntu/lumos/helios
+cd /home/ubuntu/lumos/backlight
 sudo HELIOS_REF=main \
   LUMOSKIT_REF=main \
   HELIOS_RESTART_SERVICE=true \
@@ -68,7 +68,7 @@ Defaults:
 
 ```text
 WORKSPACE_DIR=/home/ubuntu/lumos
-HELIOS_WORKTREE=$WORKSPACE_DIR/helios
+HELIOS_WORKTREE=$WORKSPACE_DIR/backlight
 LUMOSKIT_WORKTREE=$WORKSPACE_DIR/lumoskit
 HELIOS_BASE_DIR=/srv/backlight
 HELIOS_SERVICE_USER=backlight

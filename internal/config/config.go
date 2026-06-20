@@ -39,6 +39,9 @@ type Config struct {
 	XFeedEnabled            bool
 	XFeedSkillDir           string
 	XFeedIncludeAttackerCA  bool
+	XFeedCardEnabled        bool
+	XFeedCardPythonBin      string
+	XFeedCardTimeoutSeconds int
 	TelegramPublishEnabled  bool
 	PreLumosEnabled         bool
 	PreLumosPythonBin       string
@@ -98,6 +101,9 @@ func Load() (*Config, error) {
 		XFeedEnabled:                   envBool("HELIOS_X_FEED_ENABLED", false),
 		XFeedSkillDir:                  envDefault("HELIOS_X_FEED_SKILL_DIR", "skills/x-feed"),
 		XFeedIncludeAttackerCA:         envBool("HELIOS_X_FEED_INCLUDE_ATTACKER_CA", false),
+		XFeedCardEnabled:               envBool("HELIOS_X_FEED_CARD_ENABLED", true),
+		XFeedCardPythonBin:             envDefault("HELIOS_X_FEED_CARD_PYTHON_BIN", "python3"),
+		XFeedCardTimeoutSeconds:        envInt("HELIOS_X_FEED_CARD_TIMEOUT_SECONDS", 20),
 		TelegramPublishEnabled:         envBool("TELEGRAM_PUBLISH_ENABLED", false),
 		PreLumosEnabled:                envBool("HELIOS_PRE_LUMOS_ENABLED", false),
 		PreLumosPythonBin:              envDefault("HELIOS_PRE_LUMOS_PYTHON_BIN", "python3"),

@@ -380,12 +380,21 @@ X_REFRESH_TOKEN_FILE=/srv/backlight/data/x_refresh_token.json
 X_ACCOUNT_USERNAME=BackwardLabs
 HELIOS_X_FEED_ENABLED=true
 HELIOS_X_FEED_SKILL_DIR=skills/x-feed
+HELIOS_X_FEED_CARD_ENABLED=true
+HELIOS_X_FEED_CARD_PYTHON_BIN=python3
+HELIOS_X_FEED_CARD_TIMEOUT_SECONDS=20
 TELEGRAM_PUBLISH_ENABLED=true
 ```
 
 The flow is GitHub publish -> x-feed draft -> X main post/reply -> Telegram
 publish. Telegram gets the same main X body with `GitHub:` and `X:` links
-appended.
+appended. When the card switch is enabled, Backlight also generates a public-safe
+exploit-flow card from the x-feed brief and attaches the PNG to the main X post.
+Install `requirements-x-feed.txt` in the configured Python environment to produce
+the PNG, for example a dedicated venv under `/srv/backlight/data/x-feed-venv`
+with `HELIOS_X_FEED_CARD_PYTHON_BIN=/srv/backlight/data/x-feed-venv/bin/python`.
+If the PNG dependency is missing, Backlight records the SVG/status and publishes
+the text thread without media.
 
 To enable Pre-Lumos importer JSON generation, install `uv` or provide a Python
 environment that already has `requirements-pre-lumos.txt` installed, then add:

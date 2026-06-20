@@ -113,6 +113,50 @@ func TestRunnerBlocksWhenFormatFileMissing(t *testing.T) {
 	}
 }
 
+func TestRunnerGeneratesExploitFlowCardImagePath(t *testing.T) {
+	root := writeTruebitArtifacts(t)
+	r := &Runner{
+		Enabled:       true,
+		SkillDir:      writeSkillDirWithCard(t),
+		CardEnabled:   true,
+		CardPythonBin: writeFakeCardPython(t),
+	}
+	res, err := r.Run(context.Background(), Case{
+		CaseID:       "004_truebit",
+		Chain:        "ethereum",
+		TxHash:       "0xcd4755645595094a8ab984d0db7e3b4aabde72a5c87c4f176a030629c47fb014",
+		OutputRoot:   root,
+		IncidentSlug: "004_truebit",
+		Outcome:      outcome.OutcomePartial,
+		PublishTier:  outcome.PublishTierEconomicIncompleteRCA,
+		PoCState:     outcome.PoCStateEconomic,
+		RCAState:     outcome.RCAStateScopeLimited,
+		ReportURL:    "https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/truebit/README.md",
+		GitHubURL:    "https://github.com/BackwardLabs/Q1-2026/tree/main/test/2026-01/truebit",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ImageMode != "exploit_flow_card_png" || !strings.HasSuffix(res.ImagePath, "x-feed-visuals/exploit-flow-card.png") {
+		t.Fatalf("card image not attached: %+v", res)
+	}
+	for _, path := range []string{res.CardBriefPath, res.CardSVGPath, res.CardPNGPath, res.ImagePath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("card artifact not written %s: %v", path, err)
+		}
+	}
+	brief := mustReadFile(t, res.CardBriefPath)
+	for _, want := range []string{
+		"# Truebit Exploit Flow",
+		"- **Estimated loss**: $26423938.99",
+		"- **Proof kind**: economic_proof",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("card brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func writeTruebitArtifacts(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -131,6 +175,7 @@ func writeTruebitArtifacts(t *testing.T) string {
   "economic_reproduction": {
     "status": "pass",
     "incident": {"net_loss_usd": 26423938.988967046},
+    "poc": {"expected_reproduced_usd": 26423613.68783422},
     "pricing": {"tx_timestamp": 1767888155}
   },
   "poc": {"status":"verified","execution_state":"economic_poc"},
@@ -168,6 +213,53 @@ func writeSkillDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func writeSkillDirWithCard(t *testing.T) string {
+	t.Helper()
+	root := writeSkillDir(t)
+	scriptPath := filepath.Join(root, defaultCardScript)
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("# fake card script\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func writeFakeCardPython(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-python")
+	script := `#!/bin/sh
+set -eu
+out=""
+base=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --out-dir) out="$2"; shift 2 ;;
+    --basename) base="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out"
+printf '<svg></svg>\n' > "$out/$base.svg"
+printf 'png\n' > "$out/$base.png"
+printf 'svg: %s\npng: %s\n' "$out/$base.svg" "$out/$base.png"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func containsString(values []string, want string) bool {

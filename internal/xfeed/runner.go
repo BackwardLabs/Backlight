@@ -1,12 +1,14 @@
 package xfeed
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -20,12 +22,16 @@ import (
 const (
 	formatVersion         = "backlight_x_feed_incident_v1"
 	defaultIncidentFormat = "skills/draft-x-exploit-thread/references/incident-post-format.md"
+	defaultCardScript     = "skills/exploit-flow-card/scripts/render_card.py"
 )
 
 type Runner struct {
 	Enabled           bool
 	SkillDir          string
 	IncludeAttackerCA bool
+	CardEnabled       bool
+	CardPythonBin     string
+	CardTimeout       time.Duration
 }
 
 type Case struct {
@@ -51,6 +57,10 @@ type Result struct {
 	TelegramPost     string   `json:"telegram_post"`
 	ImagePath        string   `json:"image_path,omitempty"`
 	ImageMode        string   `json:"image_mode"`
+	CardBriefPath    string   `json:"card_brief_path,omitempty"`
+	CardSVGPath      string   `json:"card_svg_path,omitempty"`
+	CardPNGPath      string   `json:"card_png_path,omitempty"`
+	CardError        string   `json:"card_error,omitempty"`
 	Format           string   `json:"format"`
 	ExplorerURL      string   `json:"explorer_url,omitempty"`
 	GitHubURL        string   `json:"github_url,omitempty"`
@@ -81,6 +91,12 @@ type incidentFacts struct {
 	StatusLabel    string
 	ImageMode      string
 	ImagePath      string
+	CardBriefPath  string
+	CardSVGPath    string
+	CardPNGPath    string
+	CardError      string
+	ImpactUSD      float64
+	ReproducedUSD  float64
 	ReadyToPublish bool
 	Blockers       []string
 }
@@ -103,6 +119,7 @@ func (r *Runner) Run(ctx context.Context, c Case) (*Result, error) {
 	}
 
 	facts := buildFacts(c)
+	r.applyExploitFlowCard(ctx, c, &facts)
 	result := renderResult(r, c, facts)
 	if _, err := os.Stat(result.SourceFormat); err != nil {
 		result.ReadyToPublish = false
@@ -147,6 +164,7 @@ func buildFacts(c Case) incidentFacts {
 	tx := firstText(c.TxHash, jsonString(summary, "tx_hash"), jsonString(reportJSON, "tx_hash"), txHash(allText))
 	attackType := attackType(reportJSON)
 	impact := impactText(summary, reportJSON)
+	impactUSD := impactUSDValue(summary)
 	occurred := occurredText(summary, reportJSON, poc)
 	rootCause := publicRootCause(protocol, reportJSON, c)
 	whatHappened := publicWhatHappened(protocol, reportJSON, summary)
@@ -174,6 +192,8 @@ func buildFacts(c Case) incidentFacts {
 		ExplorerURL:    explorer,
 		StatusLabel:    statusLabel,
 		ImageMode:      "none",
+		ImpactUSD:      impactUSD,
+		ReproducedUSD:  reproducedUSDValue(summary),
 		ReadyToPublish: len(blockers) == 0,
 		Blockers:       blockers,
 	}
@@ -250,6 +270,10 @@ Need more detail? Check our repo and analysis thread below ↓ 🧵`,
 		TelegramPost:   strings.TrimSpace(telegram),
 		ImagePath:      f.ImagePath,
 		ImageMode:      f.ImageMode,
+		CardBriefPath:  f.CardBriefPath,
+		CardSVGPath:    f.CardSVGPath,
+		CardPNGPath:    f.CardPNGPath,
+		CardError:      f.CardError,
 		Format:         formatVersion,
 		ExplorerURL:    f.ExplorerURL,
 		GitHubURL:      f.GitHubURL,
@@ -258,6 +282,133 @@ Need more detail? Check our repo and analysis thread below ↓ 🧵`,
 		Blockers:       f.Blockers,
 		SourceFormat:   sourceFormat,
 	}
+}
+
+func (r *Runner) applyExploitFlowCard(ctx context.Context, c Case, f *incidentFacts) {
+	if r == nil || !r.CardEnabled || f == nil {
+		return
+	}
+	script := filepath.Join(r.skillDir(), defaultCardScript)
+	if info, err := os.Stat(script); err != nil || info.IsDir() {
+		f.ImageMode = "card_script_missing"
+		f.CardError = "exploit-flow-card script not found"
+		return
+	}
+	briefPath, err := writeCardBrief(c.OutputRoot, c, *f)
+	if err != nil {
+		f.ImageMode = "card_brief_failed"
+		f.CardError = err.Error()
+		return
+	}
+	f.CardBriefPath = briefPath
+
+	outDir := filepath.Join(c.OutputRoot, "x-feed-visuals")
+	pythonBin := strings.TrimSpace(r.CardPythonBin)
+	if pythonBin == "" {
+		pythonBin = "python3"
+	}
+	timeout := r.CardTimeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	cardCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(
+		cardCtx,
+		pythonBin,
+		script,
+		briefPath,
+		"--out-dir", outDir,
+		"--basename", "exploit-flow-card",
+		"--title", fmt.Sprintf("%s Exploit Flow", f.Protocol),
+		"--footer", "Full report: GitHub",
+	)
+	output, err := cmd.CombinedOutput()
+	svgPath := filepath.Join(outDir, "exploit-flow-card.svg")
+	pngPath := filepath.Join(outDir, "exploit-flow-card.png")
+	if fileExists(svgPath) {
+		f.CardSVGPath = svgPath
+	}
+	if fileExists(pngPath) {
+		f.CardPNGPath = pngPath
+		f.ImagePath = pngPath
+		f.ImageMode = "exploit_flow_card_png"
+		return
+	}
+	if err != nil {
+		f.ImageMode = "card_render_failed"
+		f.CardError = strings.TrimSpace(string(bytes.TrimSpace(output)))
+		if f.CardError == "" {
+			f.CardError = err.Error()
+		} else {
+			f.CardError = truncateText(f.CardError+": "+err.Error(), 500)
+		}
+		return
+	}
+	if f.CardSVGPath != "" {
+		f.ImageMode = "exploit_flow_card_svg_only"
+		f.CardError = "png_not_rendered"
+		return
+	}
+	f.ImageMode = "card_render_missing_output"
+	f.CardError = "exploit-flow-card did not produce PNG or SVG"
+}
+
+func (r *Runner) skillDir() string {
+	if r != nil && strings.TrimSpace(r.SkillDir) != "" {
+		return r.SkillDir
+	}
+	return "."
+}
+
+func writeCardBrief(outputRoot string, c Case, f incidentFacts) (string, error) {
+	if strings.TrimSpace(outputRoot) == "" {
+		return "", errors.New("output_root is required for card brief")
+	}
+	path := filepath.Join(outputRoot, "x-feed-card-brief.md")
+	reproduced := f.ReproducedUSD
+	if reproduced <= 0 {
+		reproduced = f.ImpactUSD
+	}
+	proofKind := "proof under review"
+	if c.PoCState == outcome.PoCStateEconomic {
+		proofKind = "economic_proof"
+	}
+	pocStatus := "under review"
+	if c.PoCState == outcome.PoCStateEconomic || c.Outcome == outcome.OutcomeVerified || c.Outcome == outcome.OutcomePartial {
+		pocStatus = "verified"
+	}
+	mechanism := append([]string(nil), f.WhatHappened...)
+	for len(mechanism) < 3 {
+		mechanism = append(mechanism, "Details remain under review.")
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s Exploit Flow\n\n", f.Protocol)
+	fmt.Fprintf(&b, "- **Protocol**: %s\n", f.Protocol)
+	fmt.Fprintf(&b, "- **Chain**: %s\n", f.Chain)
+	fmt.Fprintf(&b, "- **Estimated loss**: %s\n", moneyForCard(f.ImpactUSD, f.Impact))
+	fmt.Fprintf(&b, "- **Attacker gain reproduced**: %s\n", moneyForCard(reproduced, "unknown"))
+	fmt.Fprintf(&b, "- **PoC status**: %s\n", pocStatus)
+	fmt.Fprintf(&b, "- **Proof kind**: %s\n", proofKind)
+	fmt.Fprintf(&b, "- **Tx**: %s\n\n", f.TxHash)
+	fmt.Fprintf(&b, "## Root Cause\n\n%s\n\n", f.RootCause)
+	fmt.Fprintf(&b, "Mechanism:\n")
+	for _, line := range mechanism[:3] {
+		fmt.Fprintf(&b, "- %s\n", line)
+	}
+	fmt.Fprintf(&b, "\nKey evidence:\n")
+	fmt.Fprintf(&b, "- Impact scale: %s.\n", f.Impact)
+	if f.ReproducedUSD > 0 {
+		fmt.Fprintf(&b, "- Economic reproduction matched approximately %s.\n", moneyForCard(f.ReproducedUSD, "unknown"))
+	}
+	if f.ExplorerURL != "" {
+		fmt.Fprintf(&b, "- Explorer: %s.\n", f.ExplorerURL)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func writeArtifacts(outputRoot string, result *Result) error {
@@ -529,6 +680,39 @@ func impactText(summary, reportJSON []byte) string {
 	return ""
 }
 
+func impactUSDValue(summary []byte) float64 {
+	for _, n := range []float64{
+		jsonPathNumber(summary, "economic_reproduction", "incident", "net_loss_usd"),
+		jsonPathNumber(summary, "economic_reproduction", "incident", "drained_usd"),
+	} {
+		if n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+func reproducedUSDValue(summary []byte) float64 {
+	for _, n := range []float64{
+		jsonPathNumber(summary, "economic_reproduction", "poc", "expected_reproduced_usd"),
+		jsonPathNumber(summary, "economic_reproduction", "poc", "net_reproduced_usd"),
+		jsonPathNumber(summary, "economic_reproduction", "poc", "attacker_gain_usd"),
+		jsonPathNumber(summary, "economic_reproduction", "comparison", "profit_oracle_expected_usd"),
+	} {
+		if n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+func moneyForCard(value float64, fallbackText string) string {
+	if value > 0 {
+		return fmt.Sprintf("$%.2f", value)
+	}
+	return fallback(fallbackText, "unknown")
+}
+
 func usdApprox(value float64) string {
 	abs := math.Abs(value)
 	switch {
@@ -541,6 +725,22 @@ func usdApprox(value float64) string {
 	default:
 		return fmt.Sprintf("~$%.0f", value)
 	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func truncateText(value string, max int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return strings.TrimSpace(value[:max-3]) + "..."
 }
 
 func occurredText(summary, reportJSON []byte, poc string) string {

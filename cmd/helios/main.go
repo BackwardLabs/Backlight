@@ -118,11 +118,16 @@ func main() {
 		Enabled:           cfg.XFeedEnabled,
 		SkillDir:          cfg.XFeedSkillDir,
 		IncludeAttackerCA: cfg.XFeedIncludeAttackerCA,
+		CardEnabled:       cfg.XFeedCardEnabled,
+		CardPythonBin:     cfg.XFeedCardPythonBin,
+		CardTimeout:       time.Duration(cfg.XFeedCardTimeoutSeconds) * time.Second,
 	}
 	logger.Info("x feed runner configured",
 		"enabled", xFeedRunner.Configured(),
 		"skill_dir", cfg.XFeedSkillDir,
 		"include_attacker_ca", cfg.XFeedIncludeAttackerCA,
+		"card_enabled", cfg.XFeedCardEnabled,
+		"card_python_bin", cfg.XFeedCardPythonBin,
 		"telegram_publish_enabled", cfg.TelegramPublishEnabled,
 	)
 	preLumosRunner := &prelumos.Runner{

@@ -91,6 +91,9 @@ precedence; `.env.local` can override `.env`.
 | `HELIOS_X_FEED_ENABLED` | no | `false` | enables the structured x-feed draft path after successful GitHub publish |
 | `HELIOS_X_FEED_SKILL_DIR` | no | `skills/x-feed` | vendored x-feed skill directory containing `incident-post-format.md` |
 | `HELIOS_X_FEED_INCLUDE_ATTACKER_CA` | no | `false` | opt-in switch for attacker CA details in the X reply |
+| `HELIOS_X_FEED_CARD_ENABLED` | no | `true` | runs the vendored `exploit-flow-card` renderer during x-feed draft generation |
+| `HELIOS_X_FEED_CARD_PYTHON_BIN` | no | `python3` | Python executable used for the exploit-flow-card renderer |
+| `HELIOS_X_FEED_CARD_TIMEOUT_SECONDS` | no | `20` | timeout for the exploit-flow-card renderer; failures are recorded but do not block text publishing |
 | `TELEGRAM_PUBLISH_ENABLED` | no | `false` | after live X thread publish succeeds, sends the same main X body plus GitHub and X links to Telegram |
 | `HELIOS_PRE_LUMOS_ENABLED` | no | `false` | enables the Pre-Lumos Agent SDK sidecar for verified cases |
 | `HELIOS_PRE_LUMOS_SEED_ROOT` | when enabled | empty | repo/root where `seed/import_{YEAR}.json` should be merged by slug |
@@ -159,9 +162,18 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   `x-feed-reply-post.txt`, `x-feed-telegram-post.txt`, and `x-feed-status.json`,
   then publishes the X main post and reply. `ready_to_publish=false` blocks X
   posting when required public URLs or the vendored format file are missing.
+- **Exploit-flow card generation.** With `HELIOS_X_FEED_CARD_ENABLED=true`,
+  Backlight writes a public-safe `x-feed-card-brief.md`, runs the vendored
+  `skills/exploit-flow-card/scripts/render_card.py`, and records SVG/PNG paths in
+  `x-feed-status.json`. The renderer always attempts SVG output; PNG output
+  requires `requirements-x-feed.txt` installed in
+  `HELIOS_X_FEED_CARD_PYTHON_BIN`'s environment.
 - **X media upload.** If the x-feed draft supplies `image_path`, Backlight uploads
   it through X API v2 media upload before creating the main post, then attaches
-  the returned media id to `POST /2/tweets`.
+  the returned media id to `POST /2/tweets`. The exploit-flow card PNG becomes
+  that `image_path` when rendering succeeds. If card rendering fails or only SVG
+  is produced, Backlight records `card_error` and still publishes the text thread
+  without media.
 - **X post verification.** After each create call, Backlight verifies the
   returned/fetched post text matches the requested text. If X truncates or
   mutates the body, Backlight keeps the post and records
