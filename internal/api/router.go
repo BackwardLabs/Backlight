@@ -32,6 +32,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", uiHandler)
 	mux.HandleFunc("GET /ui", uiHandler)
 	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("GET /ecw/cases/{case_id}/export", s.handleECWExport)
 
 	protected := http.NewServeMux()
 	protected.Handle("GET /metrics", metricsHandler)

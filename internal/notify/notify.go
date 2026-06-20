@@ -62,6 +62,10 @@ type Payload struct {
 	AnalysisStage        string  `json:"analysis_stage,omitempty"`
 	RerunDecision        string  `json:"rerun_decision,omitempty"`
 	RerunReason          string  `json:"rerun_reason,omitempty"`
+	EngineErrorKind      string  `json:"engine_error_kind,omitempty"`
+	DiagnosisOwner       string  `json:"diagnosis_owner,omitempty"`
+	DiagnosisRetryable   *bool   `json:"diagnosis_retryable,omitempty"`
+	DiagnosisAction      string  `json:"diagnosis_action,omitempty"`
 	FailureCategory      string  `json:"failure_category,omitempty"`
 	FailureDetailKind    string  `json:"failure_detail_kind,omitempty"`
 	FailureStage         string  `json:"failure_stage,omitempty"`
@@ -131,6 +135,20 @@ func (p *Payload) applyAnalysisPayload(raw json.RawMessage) {
 	}
 	if value := stringField(decoded, "rerun_reason"); value != "" {
 		p.RerunReason = value
+	}
+	if value := stringField(decoded, "engine_error_kind"); value != "" {
+		p.EngineErrorKind = value
+	}
+	if diag, ok := decoded["diagnosis"].(map[string]any); ok {
+		if v := stringField(diag, "owner"); v != "" {
+			p.DiagnosisOwner = v
+		}
+		if v := stringField(diag, "recommended_action"); v != "" {
+			p.DiagnosisAction = v
+		}
+		if v := boolField(diag, "retryable"); v != nil {
+			p.DiagnosisRetryable = v
+		}
 	}
 	if value := boolField(decoded, "auto_rerun_eligible"); value != nil {
 		p.AutoRerunEligible = value
