@@ -355,6 +355,103 @@ func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
 	}
 }
 
+func TestWorkerGuidedRepairsReachablePoC(t *testing.T) {
+	ctx := context.Background()
+	outputParent := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("3", 64), nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Worker{
+		Store:                       st,
+		Runner:                      &lumoskit.Runner{Binary: writeReachablePoCLumoskit(t, t.TempDir())},
+		PartialAutoRerunMaxAttempts: 3,
+		Logger:                      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	w.process(ctx, c)
+
+	payload := terminalStatePayload(t, ctx, st, c.CaseID)
+	if payload["analysis_stage"] != outcome.AnalysisStageReachablePoC {
+		t.Fatalf("analysis_stage = %v, want %s", payload["analysis_stage"], outcome.AnalysisStageReachablePoC)
+	}
+	if payload["rerun_decision"] != outcome.RerunDecisionGuidedRepair {
+		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], outcome.RerunDecisionGuidedRepair)
+	}
+	if payload["rerun_repair_strategy"] != "economic_proof" {
+		t.Fatalf("rerun_repair_strategy = %v, want economic_proof", payload["rerun_repair_strategy"])
+	}
+	if payload["auto_rerun_resume_stage"] != "agent_poc_repair" {
+		t.Fatalf("auto_rerun_resume_stage = %v, want agent_poc_repair", payload["auto_rerun_resume_stage"])
+	}
+
+	items, total, err := st.ListCases(ctx, store.CaseListFilter{TxHash: &c.TxHash, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("total cases = %d, want 2; items=%+v", total, items)
+	}
+	var child *store.Case
+	for i := range items {
+		if items[i].ParentCaseID != nil && *items[i].ParentCaseID == c.CaseID {
+			child = &items[i]
+		}
+	}
+	if child == nil || child.State != store.StateQueued || child.AttemptNumber != 2 {
+		t.Fatalf("guided repair child = %+v", child)
+	}
+	auto := autoRerunMetadata(t, child)
+	if auto["decision"] != outcome.RerunDecisionGuidedRepair {
+		t.Fatalf("child decision = %v, want %s; metadata=%#v", auto["decision"], outcome.RerunDecisionGuidedRepair, auto)
+	}
+	if auto["resume_stage"] != "agent_poc_repair" {
+		t.Fatalf("child resume_stage = %v, want agent_poc_repair; metadata=%#v", auto["resume_stage"], auto)
+	}
+	if auto["repair_strategy"] != "economic_proof" {
+		t.Fatalf("child repair_strategy = %v, want economic_proof; metadata=%#v", auto["repair_strategy"], auto)
+	}
+
+	child, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runOptions, resumePayload, err := w.prepareResume(ctx, child)
+	if err != nil {
+		t.Fatalf("prepare guided repair resume: %v", err)
+	}
+	if runOptions.Stage != "agent_poc_repair" {
+		t.Fatalf("runOptions.Stage = %q, want agent_poc_repair", runOptions.Stage)
+	}
+	if resumePayload["resume_repair_strategy"] != "economic_proof" {
+		t.Fatalf("resume_repair_strategy = %v, want economic_proof", resumePayload["resume_repair_strategy"])
+	}
+	if child.OutputRoot == nil {
+		t.Fatal("guided repair child has no output_root")
+	}
+	if _, err := os.Stat(filepath.Join(*child.OutputRoot, "artifacts", "agent_poc", "foundry", "test", "PoC.t.sol")); err != nil {
+		t.Fatalf("guided repair did not preserve prior agent_poc foundry file: %v", err)
+	}
+	priorProductSummary := filepath.Join(*child.OutputRoot, "artifacts", "agent_poc", "prior_product_summary.json")
+	data, err := os.ReadFile(priorProductSummary)
+	if err != nil {
+		t.Fatalf("guided repair did not preserve prior product summary: %v", err)
+	}
+	if !strings.Contains(string(data), `"poc_execution_state":"reachable_poc"`) {
+		t.Fatalf("prior product summary did not contain reachable_poc execution state: %s", string(data))
+	}
+}
+
 func TestWorkerStageResumesRCABlockedChild(t *testing.T) {
 	ctx := context.Background()
 	outputParent := t.TempDir()
@@ -689,6 +786,40 @@ JSON
 	return path
 }
 
+func writeReachablePoCLumoskit(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-reachable-poc-lumoskit")
+	script := `#!/bin/sh
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-root) out="$2"; shift 2 ;;
+    --tx) shift 2 ;;
+    --chain) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out/artifacts/agent_poc/foundry/test" "$out/report_bundle/report"
+cat > "$out/artifacts/agent_poc/foundry/test/PoC.t.sol" <<'SOL'
+// prior reachable PoC
+SOL
+cat > "$out/artifacts/agent_poc/result.json" <<'JSON'
+{"status":"pass","execution_status":"pass","economic_status":"absent","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass"}
+JSON
+cat > "$out/summary.json" <<'JSON'
+{"status":"blocked","poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass"},"failure":{"kind":"poc_unverified"}}
+JSON
+cat > "$out/report_bundle/report/run_summary.json" <<'JSON'
+{"status":"blocked","final_quality":{"poc_execution_state":"reachable_poc"},"poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass"},"failure":{"kind":"poc_unverified"}}
+JSON
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func writeRCABlockedThenStageAwareLumoskit(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "fake-rca-stage-lumoskit")
@@ -720,7 +851,7 @@ cat > "$out/artifacts/agent_poc/result.json" <<'JSON'
 {"status":"pass","poc_status":"pass"}
 JSON
 cat > "$out/report_bundle/report/run_summary.json" <<'JSON'
-{"status":"partial","poc":{"status":"verified"},"rca":{"status":"blocked","blocker_code":"source_gap"}}
+{"status":"partial","poc":{"status":"verified"},"rca":{"status":"blocked","blocker_code":"rca_agent_timeout"}}
 JSON
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {

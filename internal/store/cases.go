@@ -85,8 +85,10 @@ const AutoRerunMetadataKey = "helios_auto_rerun"
 
 // AutoRerunRequest describes the linked attempt created after a partial result.
 type AutoRerunRequest struct {
-	Reason      string
-	ResumeStage string
+	Reason         string
+	ResumeStage    string
+	Decision       string
+	RepairStrategy string
 }
 
 func NewID(prefix string) string {
@@ -636,6 +638,10 @@ func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome s
 	if reason == "" {
 		reason = "auto_rerun"
 	}
+	decision := request.Decision
+	if decision == "" {
+		decision = "auto_rerun"
+	}
 	var child *Case
 	err := s.Tx(ctx, func(tx *sql.Tx) error {
 		parent, err := getCaseForUpdateTx(ctx, tx, caseID)
@@ -659,6 +665,8 @@ func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome s
 		payload := terminalEventPayload(
 			map[string]any{
 				"outcome":                 outcome,
+				"rerun_queued":            true,
+				"rerun_decision":          decision,
 				"auto_rerun_queued":       true,
 				"auto_rerun_reason":       reason,
 				"auto_rerun_resume_stage": request.ResumeStage,
@@ -696,6 +704,8 @@ func (s *Store) MarkDoneAndQueueAutoRerun(ctx context.Context, caseID, outcome s
 			"reason":                  reason,
 			"parent_outcome":          outcome,
 			"parent_case_id":          parent.CaseID,
+			"rerun_decision":          decision,
+			"repair_strategy":         request.RepairStrategy,
 			"max_attempts":            maxAttempts,
 			"auto_rerun_queued":       true,
 			"auto_rerun_resume_stage": request.ResumeStage,
@@ -729,14 +739,22 @@ func metadataWithAutoRerun(metadata json.RawMessage, parent *Case, request AutoR
 	if merged == nil {
 		merged = map[string]any{}
 	}
+	decision := request.Decision
+	if decision == "" {
+		decision = "auto_rerun"
+	}
 	entry := map[string]any{
 		"schema":           "helios-auto-rerun-v1",
+		"decision":         decision,
 		"reason":           reason,
 		"source_case_id":   parent.CaseID,
 		"previous_attempt": parent.AttemptNumber,
 	}
 	if request.ResumeStage != "" {
 		entry["resume_stage"] = request.ResumeStage
+	}
+	if request.RepairStrategy != "" {
+		entry["repair_strategy"] = request.RepairStrategy
 	}
 	merged[AutoRerunMetadataKey] = entry
 	data, err := json.Marshal(merged)

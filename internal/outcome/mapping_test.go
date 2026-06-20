@@ -215,6 +215,7 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 		summary      string
 		wantOutcome  string
 		wantStage    string
+		wantRCAState string
 		wantDecision string
 		wantReason   string
 	}{
@@ -223,6 +224,7 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			summary:      `{"status":"pass","poc":{"status":"verified"},"rca":{"status":"complete"}}`,
 			wantOutcome:  OutcomeVerified,
 			wantStage:    AnalysisStageSuccess,
+			wantRCAState: RCAStateComplete,
 			wantDecision: RerunDecisionNoRerun,
 			wantReason:   "verified_result",
 		},
@@ -235,20 +237,58 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			wantReason:   "poc_missing",
 		},
 		{
-			name:         "poc verified but rca blocked auto reruns",
-			summary:      `{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"}}`,
+			name:         "poc verified but rca runtime error auto reruns",
+			summary:      `{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"rca_agent_timeout"}}`,
 			wantOutcome:  OutcomePartial,
 			wantStage:    AnalysisStageRCABlocked,
+			wantRCAState: RCAStateRuntimeError,
 			wantDecision: RerunDecisionAutoRerun,
-			wantReason:   "root_cause_gap",
+			wantReason:   "rca_agent_timeout",
 		},
 		{
-			name:         "blocked summary with verified poc and rca blocker auto reruns",
+			name:         "blocked summary with verified poc and rca low confidence does not rerun",
 			summary:      `{"status":"blocked","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"},"failure":{"kind":"rca_blocked"}}`,
 			wantOutcome:  OutcomePartial,
 			wantStage:    AnalysisStageRCABlocked,
-			wantDecision: RerunDecisionAutoRerun,
+			wantRCAState: RCAStateLowConfidence,
+			wantDecision: RerunDecisionNoRerun,
 			wantReason:   "root_cause_gap",
+		},
+		{
+			name:         "verified poc with missing rca reruns rca once",
+			summary:      `{"status":"blocked","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"not_run"},"failure":{"kind":"rca_not_run"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantRCAState: RCAStateNotRun,
+			wantDecision: RerunDecisionAutoRerun,
+			wantReason:   "not_run",
+		},
+		{
+			name:         "verified poc with missing evidence rca does not rerun",
+			summary:      `{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"source_gap"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantRCAState: RCAStateMissingEvidence,
+			wantDecision: RerunDecisionNoRerun,
+			wantReason:   "source_gap",
+		},
+		{
+			name:         "verified poc with scope limited rca does not rerun",
+			summary:      `{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"partial"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantRCAState: RCAStateScopeLimited,
+			wantDecision: RerunDecisionNoRerun,
+			wantReason:   "partial",
+		},
+		{
+			name:         "verified poc with conflicting rca needs manual review",
+			summary:      `{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"conflicting_evidence"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantRCAState: RCAStateConflictingEvidence,
+			wantDecision: RerunDecisionManualReview,
+			wantReason:   "conflicting_evidence",
 		},
 		{
 			name:         "poc blocked auto reruns",
@@ -257,6 +297,22 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			wantStage:    AnalysisStagePoCBlocked,
 			wantDecision: RerunDecisionAutoRerun,
 			wantReason:   "forge_test_failed",
+		},
+		{
+			name:         "poc missing partial does not rerun",
+			summary:      `{"status":"blocked","poc":{"status":"missing","failure_kind":"poc_missing"},"failure":{"kind":"poc_missing"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStagePoCMissing,
+			wantDecision: RerunDecisionManualReview,
+			wantReason:   "poc_missing",
+		},
+		{
+			name:         "reachable poc uses guided repair",
+			summary:      `{"status":"blocked","poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass"},"failure":{"kind":"poc_unverified"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageReachablePoC,
+			wantDecision: RerunDecisionGuidedRepair,
+			wantReason:   "poc_unverified",
 		},
 		{
 			name:         "engine error is manual review",
@@ -282,6 +338,9 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			if got.Outcome != tc.wantOutcome || got.AnalysisStage != tc.wantStage || got.RerunDecision != tc.wantDecision || got.RerunReason != tc.wantReason {
 				t.Fatalf("got outcome/stage/decision/reason = %s/%s/%s/%s, want %s/%s/%s/%s", got.Outcome, got.AnalysisStage, got.RerunDecision, got.RerunReason, tc.wantOutcome, tc.wantStage, tc.wantDecision, tc.wantReason)
 			}
+			if tc.wantRCAState != "" && got.RCAState != tc.wantRCAState {
+				t.Fatalf("rca_state = %s, want %s", got.RCAState, tc.wantRCAState)
+			}
 		})
 	}
 }
@@ -295,6 +354,7 @@ func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 		},
 		"poc":{
 			"status":"unverified",
+			"execution_state":"reachable_poc",
 			"proof_kind":"reachability_only",
 			"forge_build_status":"pass",
 			"forge_test_status":"pass",
@@ -328,20 +388,26 @@ func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 	if got["summary_status"] != "partial" {
 		t.Fatalf("summary_status = %v, want partial", got["summary_status"])
 	}
-	if got["analysis_stage"] != AnalysisStagePoCBlocked {
-		t.Fatalf("analysis_stage = %v, want %s", got["analysis_stage"], AnalysisStagePoCBlocked)
+	if got["analysis_stage"] != AnalysisStageReachablePoC {
+		t.Fatalf("analysis_stage = %v, want %s", got["analysis_stage"], AnalysisStageReachablePoC)
 	}
-	if got["rerun_decision"] != RerunDecisionAutoRerun {
-		t.Fatalf("rerun_decision = %v, want %s", got["rerun_decision"], RerunDecisionAutoRerun)
+	if got["rerun_decision"] != RerunDecisionGuidedRepair {
+		t.Fatalf("rerun_decision = %v, want %s", got["rerun_decision"], RerunDecisionGuidedRepair)
 	}
 	if got["rerun_reason"] != "missing_profit_or_economic_oracle" {
 		t.Fatalf("rerun_reason = %v", got["rerun_reason"])
 	}
+	if got["rca_state"] != RCAStatePoCDependent {
+		t.Fatalf("rca_state = %v, want %s", got["rca_state"], RCAStatePoCDependent)
+	}
 	poc := got["poc"].(map[string]any)
-	if poc["status"] != "unverified" || poc["proof_kind"] != "reachability_only" || poc["forge_test_status"] != "pass" {
+	if poc["status"] != "unverified" || poc["execution_state"] != "reachable_poc" || poc["proof_kind"] != "reachability_only" || poc["forge_test_status"] != "pass" {
 		t.Fatalf("unexpected poc payload: %#v", poc)
 	}
 	rca := got["rca"].(map[string]any)
+	if rca["state"] != RCAStatePoCDependent {
+		t.Fatalf("unexpected rca state payload: %#v", rca)
+	}
 	if rca["status"] != "blocked" || rca["blocker_code"] != "economic_proof_gap" {
 		t.Fatalf("unexpected rca payload: %#v", rca)
 	}

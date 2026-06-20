@@ -9,6 +9,7 @@ package outcome
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // Result is what the worker writes back onto the case row after lumoskit exits.
@@ -17,8 +18,9 @@ type Result struct {
 	Outcome       string  // verified | partial | unverified | engine_error
 	FailureKind   *string // populated iff Outcome == engine_error
 	Rule          string  // O1..O8 — the rule that fired (debug/audit)
-	AnalysisStage string  // success | poc_failed | poc_blocked | rca_blocked | engine_error | unknown
-	RerunDecision string  // no_rerun | auto_rerun | manual_review
+	AnalysisStage string  // success | reachable_poc | poc_failed | poc_blocked | rca_blocked | engine_error | unknown
+	RCAState      string  // rca_complete | rca_not_run | rca_runtime_error | rca_low_confidence | ...
+	RerunDecision string  // no_rerun | auto_rerun | guided_repair | manual_review
 	RerunReason   string  // short reason code for the decision
 }
 
@@ -31,17 +33,30 @@ const (
 	OutcomeUnverified  = "unverified"
 	OutcomeEngineError = "engine_error"
 
-	AnalysisStageSuccess     = "success"
-	AnalysisStagePoCFailed   = "poc_failed"
-	AnalysisStagePoCBlocked  = "poc_blocked"
-	AnalysisStageRCABlocked  = "rca_blocked"
-	AnalysisStagePartial     = "partial"
-	AnalysisStageEngineError = "engine_error"
-	AnalysisStageUnknown     = "unknown"
+	AnalysisStageSuccess      = "success"
+	AnalysisStageReachablePoC = "reachable_poc"
+	AnalysisStagePoCMissing   = "poc_missing"
+	AnalysisStagePoCFailed    = "poc_failed"
+	AnalysisStagePoCBlocked   = "poc_blocked"
+	AnalysisStageRCABlocked   = "rca_blocked"
+	AnalysisStagePartial      = "partial"
+	AnalysisStageEngineError  = "engine_error"
+	AnalysisStageUnknown      = "unknown"
 
 	RerunDecisionNoRerun      = "no_rerun"
 	RerunDecisionAutoRerun    = "auto_rerun"
+	RerunDecisionGuidedRepair = "guided_repair"
 	RerunDecisionManualReview = "manual_review"
+
+	RCAStateComplete            = "rca_complete"
+	RCAStateNotRun              = "rca_not_run"
+	RCAStateRuntimeError        = "rca_runtime_error"
+	RCAStateLowConfidence       = "rca_low_confidence"
+	RCAStateMissingEvidence     = "rca_missing_evidence"
+	RCAStatePoCDependent        = "rca_poc_dependent"
+	RCAStateScopeLimited        = "rca_scope_limited"
+	RCAStateConflictingEvidence = "rca_conflicting_evidence"
+	RCAStateUnknown             = "rca_unknown"
 
 	FailureLumoskitNonzeroExit         = "lumoskit_nonzero_exit"
 	FailureSummaryMissing              = "summary_missing"
@@ -61,6 +76,7 @@ type Summary struct {
 
 type SummaryPoC struct {
 	Status           string `json:"status"` // verified | unverified | missing
+	ExecutionState   string `json:"execution_state"`
 	ProofKind        string `json:"proof_kind"`
 	ForgeBuildStatus string `json:"forge_build_status"`
 	ForgeTestStatus  string `json:"forge_test_status"`
@@ -68,9 +84,10 @@ type SummaryPoC struct {
 }
 
 type SummaryRCA struct {
-	Status        string `json:"status"`
-	BlockerCode   string `json:"blocker_code"`
-	BlockerReason string `json:"blocker_reason"`
+	Status         string `json:"status"`
+	AnalysisStatus string `json:"analysis_status"`
+	BlockerCode    string `json:"blocker_code"`
+	BlockerReason  string `json:"blocker_reason"`
 }
 
 // SummaryFailure is "set" when Kind != "" (Go zero-value detection).
@@ -165,23 +182,32 @@ func specificEngineFailureFromSummary(in Input) (SummaryFailure, bool) {
 }
 
 func withRerunDecision(result Result, s Summary) Result {
+	result.RCAState = classifyRCAState(s)
 	switch result.Outcome {
 	case OutcomeVerified:
 		result.AnalysisStage = AnalysisStageSuccess
 		result.RerunDecision = RerunDecisionNoRerun
 		result.RerunReason = "verified_result"
 	case OutcomePartial:
-		if isPoCBlocked(s.PoC) {
+		if isPoCMissing(s.PoC) {
+			result.AnalysisStage = AnalysisStagePoCMissing
+			result.RerunDecision = RerunDecisionManualReview
+			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, "poc_missing")
+		} else if isReachablePoC(s.PoC) {
+			result.AnalysisStage = AnalysisStageReachablePoC
+			result.RerunDecision = RerunDecisionGuidedRepair
+			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, s.PoC.ProofKind, "economic_proof_missing")
+		} else if isPoCBlocked(s.PoC) {
 			result.AnalysisStage = AnalysisStagePoCBlocked
 			result.RerunDecision = RerunDecisionAutoRerun
 			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, s.PoC.Status, "poc_blocked")
-		} else if isRCABlocked(s.RCA) {
+		} else if isRCAIncompleteState(result.RCAState) {
 			result.AnalysisStage = AnalysisStageRCABlocked
-			result.RerunDecision = RerunDecisionAutoRerun
-			result.RerunReason = firstNonEmpty(s.RCA.BlockerCode, s.RCA.Status, s.Failure.Kind, "rca_blocked")
+			result.RerunDecision = rerunDecisionForRCAState(result.RCAState)
+			result.RerunReason = firstNonEmpty(s.RCA.BlockerCode, s.RCA.Status, s.RCA.AnalysisStatus, s.Failure.Kind, "rca_blocked")
 		} else {
 			result.AnalysisStage = AnalysisStagePartial
-			result.RerunDecision = RerunDecisionAutoRerun
+			result.RerunDecision = RerunDecisionNoRerun
 			result.RerunReason = firstNonEmpty(s.Failure.Kind, "partial_result")
 		}
 	case OutcomeUnverified:
@@ -196,6 +222,10 @@ func withRerunDecision(result Result, s Summary) Result {
 	return result
 }
 
+func isPoCMissing(p SummaryPoC) bool {
+	return p.Status == "missing"
+}
+
 func isPoCBlocked(p SummaryPoC) bool {
 	switch p.Status {
 	case "unverified", "missing":
@@ -206,12 +236,102 @@ func isPoCBlocked(p SummaryPoC) bool {
 	return p.FailureKind != ""
 }
 
+func isReachablePoC(p SummaryPoC) bool {
+	if p.ExecutionState == "reachable_poc" {
+		return true
+	}
+	if p.ExecutionState != "" {
+		return false
+	}
+	return p.Status == "unverified" &&
+		p.ForgeBuildStatus == "pass" &&
+		p.ForgeTestStatus == "pass" &&
+		p.ProofKind != "" &&
+		p.ProofKind != "economic_proof"
+}
+
 func isRCABlocked(r SummaryRCA) bool {
 	return r.Status == "blocked" || r.BlockerCode != "" || r.BlockerReason != ""
 }
 
+func classifyRCAState(s Summary) string {
+	r := s.RCA
+	status := firstNonEmpty(r.AnalysisStatus, r.Status)
+	status = strings.TrimSpace(strings.ToLower(status))
+	text := strings.ToLower(strings.Join([]string{
+		r.BlockerCode,
+		r.BlockerReason,
+		s.Failure.Kind,
+		s.Failure.DetailKind,
+		s.Failure.Stage,
+		s.Failure.Message,
+	}, " "))
+
+	switch status {
+	case "complete", "pass":
+		return RCAStateComplete
+	case "", "not_run", "missing":
+		return RCAStateNotRun
+	}
+	if containsAny(text, "runtime", "timeout", "rate_limit", "rate limited", "malformed", "sdk", "output_missing") {
+		return RCAStateRuntimeError
+	}
+	if !hasEconomicPoC(s.PoC) && containsAny(text, "poc", "proof", "economic") {
+		return RCAStatePoCDependent
+	}
+	if containsAny(text, "conflict", "conflicting", "contradict", "inconsistent") {
+		return RCAStateConflictingEvidence
+	}
+	if containsAny(text, "confidence", "low_confidence", "below_threshold", "uncertain", "root_cause_gap") {
+		return RCAStateLowConfidence
+	}
+	if containsAny(text, "missing", "insufficient", "source", "abi", "trace", "storage", "delta", "provenance", "evidence", "context") {
+		return RCAStateMissingEvidence
+	}
+	if containsAny(text, "scope", "limited", "symptom", "flow", "incomplete", "not_full") {
+		return RCAStateScopeLimited
+	}
+	if status == "partial" || status == "blocked" {
+		return RCAStateScopeLimited
+	}
+	return RCAStateUnknown
+}
+
+func hasEconomicPoC(p SummaryPoC) bool {
+	return p.Status == "verified" || p.ExecutionState == "economic_poc"
+}
+
+func isRCAIncompleteState(state string) bool {
+	switch state {
+	case RCAStateNotRun, RCAStateRuntimeError, RCAStateLowConfidence, RCAStateMissingEvidence, RCAStatePoCDependent, RCAStateScopeLimited, RCAStateConflictingEvidence:
+		return true
+	default:
+		return false
+	}
+}
+
+func rerunDecisionForRCAState(state string) string {
+	switch state {
+	case RCAStateNotRun, RCAStateRuntimeError:
+		return RerunDecisionAutoRerun
+	case RCAStateConflictingEvidence:
+		return RerunDecisionManualReview
+	default:
+		return RerunDecisionNoRerun
+	}
+}
+
+func containsAny(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func isBlockedAnalysis(s Summary) bool {
-	return s.Status == "blocked" && (isPoCBlocked(s.PoC) || isRCABlocked(s.RCA))
+	return s.Status == "blocked" && (isPoCBlocked(s.PoC) || isRCAIncompleteState(classifyRCAState(s)))
 }
 
 func firstNonEmpty(values ...string) string {
@@ -256,6 +376,9 @@ func TerminalEventPayload(result Result, in Input) map[string]any {
 	if result.AnalysisStage != "" {
 		payload["analysis_stage"] = result.AnalysisStage
 	}
+	if result.RCAState != "" {
+		payload["rca_state"] = result.RCAState
+	}
 	if result.RerunDecision != "" {
 		payload["rerun_decision"] = result.RerunDecision
 	}
@@ -270,10 +393,17 @@ func TerminalEventPayload(result Result, in Input) map[string]any {
 	if s.Status != "" {
 		payload["summary_status"] = s.Status
 	}
+	rcaState := result.RCAState
+	if rcaState == "" {
+		rcaState = classifyRCAState(s)
+		if rcaState != "" {
+			payload["rca_state"] = rcaState
+		}
+	}
 	if poc := s.PoC.eventPayload(); len(poc) > 0 {
 		payload["poc"] = poc
 	}
-	if rca := s.RCA.eventPayload(); len(rca) > 0 {
+	if rca := s.RCA.eventPayload(rcaState); len(rca) > 0 {
 		payload["rca"] = rca
 	}
 	if failure := s.Failure.eventPayload(); len(failure) > 0 {
@@ -298,6 +428,9 @@ func (p SummaryPoC) eventPayload() map[string]string {
 	if p.Status != "" {
 		out["status"] = p.Status
 	}
+	if p.ExecutionState != "" {
+		out["execution_state"] = p.ExecutionState
+	}
 	if p.ProofKind != "" {
 		out["proof_kind"] = p.ProofKind
 	}
@@ -313,10 +446,16 @@ func (p SummaryPoC) eventPayload() map[string]string {
 	return out
 }
 
-func (r SummaryRCA) eventPayload() map[string]string {
+func (r SummaryRCA) eventPayload(state string) map[string]string {
 	out := map[string]string{}
+	if state != "" {
+		out["state"] = state
+	}
 	if r.Status != "" {
 		out["status"] = r.Status
+	}
+	if r.AnalysisStatus != "" {
+		out["analysis_status"] = r.AnalysisStatus
 	}
 	if r.BlockerCode != "" {
 		out["blocker_code"] = r.BlockerCode

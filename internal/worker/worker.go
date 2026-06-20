@@ -190,10 +190,15 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 
 	switch mapped.State {
 	case outcome.StateDone:
-		if w.shouldAutoRerun(mapped, c.AttemptNumber) {
+		if w.shouldQueueRerun(mapped, c.AttemptNumber) {
 			rerunReason := firstNonEmpty(mapped.RerunReason, mapped.AnalysisStage, "auto_rerun")
 			resumeStage := autoRerunResumeStage(mapped)
-			request := store.AutoRerunRequest{Reason: rerunReason, ResumeStage: resumeStage}
+			request := store.AutoRerunRequest{
+				Reason:         rerunReason,
+				ResumeStage:    resumeStage,
+				Decision:       mapped.RerunDecision,
+				RepairStrategy: rerunRepairStrategy(mapped),
+			}
 			child, queued, err := w.Store.MarkDoneAndQueueAutoRerun(ctx, c.CaseID, mapped.Outcome, eventPayload, request, w.PartialAutoRerunMaxAttempts)
 			if err != nil {
 				log.Error("auto rerun queue failed", "err", err, "outcome", mapped.Outcome)
@@ -260,16 +265,23 @@ func (w *Worker) mergeIncidentMetadata(ctx context.Context, c *store.Case) {
 	}
 }
 
-func (w *Worker) shouldAutoRerun(mapped outcome.Result, attemptNumber int) bool {
-	return mapped.RerunDecision == outcome.RerunDecisionAutoRerun && w.PartialAutoRerunMaxAttempts > 0 && attemptNumber < w.PartialAutoRerunMaxAttempts
+func (w *Worker) shouldQueueRerun(mapped outcome.Result, attemptNumber int) bool {
+	return isQueuedRerunDecision(mapped.RerunDecision) && w.PartialAutoRerunMaxAttempts > 0 && attemptNumber < w.PartialAutoRerunMaxAttempts
 }
 
 func (w *Worker) annotateRerunEligibility(payload map[string]any, mapped outcome.Result, attemptNumber int) {
-	if mapped.RerunDecision != outcome.RerunDecisionAutoRerun {
+	if !isQueuedRerunDecision(mapped.RerunDecision) {
 		return
 	}
-	payload["auto_rerun_eligible"] = w.shouldAutoRerun(mapped, attemptNumber)
-	payload["auto_rerun_resume_stage"] = autoRerunResumeStage(mapped)
+	eligible := w.shouldQueueRerun(mapped, attemptNumber)
+	resumeStage := autoRerunResumeStage(mapped)
+	payload["rerun_eligible"] = eligible
+	payload["rerun_resume_stage"] = resumeStage
+	if strategy := rerunRepairStrategy(mapped); strategy != "" {
+		payload["rerun_repair_strategy"] = strategy
+	}
+	payload["auto_rerun_eligible"] = eligible
+	payload["auto_rerun_resume_stage"] = resumeStage
 	payload["auto_rerun_max_attempts"] = w.PartialAutoRerunMaxAttempts
 	if w.PartialAutoRerunMaxAttempts <= 0 {
 		payload["auto_rerun_blocked_reason"] = "disabled"
@@ -278,6 +290,17 @@ func (w *Worker) annotateRerunEligibility(payload map[string]any, mapped outcome
 	if attemptNumber >= w.PartialAutoRerunMaxAttempts {
 		payload["auto_rerun_blocked_reason"] = "max_attempts_reached"
 	}
+}
+
+func isQueuedRerunDecision(decision string) bool {
+	return decision == outcome.RerunDecisionAutoRerun || decision == outcome.RerunDecisionGuidedRepair
+}
+
+func rerunRepairStrategy(mapped outcome.Result) string {
+	if mapped.RerunDecision == outcome.RerunDecisionGuidedRepair && mapped.AnalysisStage == outcome.AnalysisStageReachablePoC {
+		return "economic_proof"
+	}
+	return ""
 }
 
 func firstNonEmpty(values ...string) string {
