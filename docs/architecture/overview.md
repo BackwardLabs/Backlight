@@ -32,8 +32,8 @@ flowchart LR
     notify["Operator notifications<br/>webhook / Telegram"]
     prometheus["Prometheus<br/>metrics scrape"]
     mcp["MCP client<br/>read-only artifact access"]
-    helios_mcp["helios-mcp<br/>stdio gateway"]
-    mcp_bridge["helios-mcp-bridge<br/>optional downstream index"]
+    helios_mcp["backlight-mcp<br/>stdio gateway"]
+    mcp_bridge["backlight-mcp-bridge<br/>optional downstream index"]
 
     detector -->|"POST /signals"| helios
     operator -->|"POST /cases<br/>GET /cases<br/>retry handoff"| helios
@@ -64,7 +64,7 @@ flowchart LR
 | Product publishing | Backlight + GitHub API | Optional side effect for `outcome=verified` and final `outcome=partial`; it publishes `PoC.t.sol` and `Report.md` as `README.md` to the configured product repo. |
 | Importer-ready incident JSON | Backlight + vendored `skills/pre-lumos` | Optional side effect for `outcome=verified`; it reads the same output root and writes `<output_root>/pre-lumos.json` plus `seed/import_{YEAR}.json`. |
 | Case tracking, retries, handoff, notifications | Backlight | This is the service operators watch and control during incident processing. |
-| MCP assistant access | `helios-mcp` / `helios-mcp-bridge` | Read-only access to case metadata and `summary.json`, `summary.md`, `rca.md`, `PoC.t.sol`, `Report.md`; no engine execution, writes, shell, or arbitrary filesystem access. |
+| MCP assistant access | `backlight-mcp` / `backlight-mcp-bridge` | Read-only access to case metadata and `summary.json`, `summary.md`, `rca.md`, `PoC.t.sol`, `Report.md`; no engine execution, writes, shell, or arbitrary filesystem access. |
 | Downstream follow-up | Webhook receivers / agents | They receive completed non-engine-error cases from Backlight. |
 
 ## Case workflow
@@ -161,14 +161,14 @@ MCP support is a local read-only gateway for assistant clients.
 Direct mode:
 
 ```text
-MCP client -> helios-mcp stdio process -> Backlight HTTP API artifact endpoints
+MCP client -> backlight-mcp stdio process -> Backlight HTTP API artifact endpoints
 ```
 
 Indexed mode:
 
 ```text
-Backlight -> POST /handoff -> helios-mcp-bridge SQLite index
-MCP client -> helios-mcp stdio process -> bridge index + allowlisted output files
+Backlight -> POST /handoff -> backlight-mcp-bridge SQLite index
+MCP client -> backlight-mcp stdio process -> bridge index + allowlisted output files
 ```
 
 It intentionally does not replace downstream handoff. The bridge is just another

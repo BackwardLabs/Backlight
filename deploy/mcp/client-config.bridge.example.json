@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "backlight": {
-      "command": "/srv/helios/bin/helios-mcp",
+      "command": "/srv/backlight/bin/backlight-mcp",
       "env": {
-        "HELIOS_MCP_BRIDGE_DB_PATH": "/srv/helios/data/helios-mcp-bridge.db",
+        "HELIOS_MCP_BRIDGE_DB_PATH": "/srv/backlight/data/backlight-mcp-bridge.db",
         "HELIOS_MCP_MAX_BYTES": "1048576"
       }
     }

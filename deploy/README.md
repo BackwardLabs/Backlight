@@ -40,8 +40,8 @@ Those identifiers are intentionally kept stable until a separate host migration.
 
 - A real `lumoskit` executable at `HELIOS_LUMOSKIT_BIN`.
 - Persistent storage for `HELIOS_DB_PATH` and `HELIOS_OUTPUT_ROOT`.
-- Strong secret values in `/srv/helios/env/helios.env` and
-  `/srv/helios/env/lumoskit.env`.
+- Strong secret values in `/srv/backlight/env/backlight.env` and
+  `/srv/backlight/env/lumoskit.env`.
 - TLS termination and optional network/basic-auth gating in Nginx.
 - A hack-detector or other producer calling `POST /signals` with the Bearer token.
 - Downstream webhook receivers if `HELIOS_DOWNSTREAM_WEBHOOK_URLS` is non-empty.
@@ -51,17 +51,17 @@ Those identifiers are intentionally kept stable until a separate host migration.
 ## Server layout
 
 ```bash
-sudo useradd --system --home /srv/helios --shell /usr/sbin/nologin helios
-sudo mkdir -p /srv/helios/{bin,data/outputs,data/pre-lumos-seed,data/uv-cache,env,logs}
-sudo install -d -o helios -g helios -m 0750 /srv/helios/data /srv/helios/data/outputs /srv/helios/logs
-sudo install -d -o helios -g helios -m 0750 /srv/helios/data/.svm /srv/helios/data/.local/share
-sudo install -d -o root -g helios -m 0750 /srv/helios/env
+sudo useradd --system --home /srv/backlight --shell /usr/sbin/nologin helios
+sudo mkdir -p /srv/backlight/{bin,data/outputs,data/pre-lumos-seed,data/uv-cache,env,logs}
+sudo install -d -o helios -g helios -m 0750 /srv/backlight/data /srv/backlight/data/outputs /srv/backlight/logs
+sudo install -d -o helios -g helios -m 0750 /srv/backlight/data/.svm /srv/backlight/data/.local/share
+sudo install -d -o root -g helios -m 0750 /srv/backlight/env
 ```
 
 ## Preferred VM local-checkout runtime flow
 
 For this single VM, keep repo-owned runtime files in the local checkouts under
-`/home/ubuntu/lumos` and keep persistent service state under `/srv/helios`.
+`/home/ubuntu/lumos` and keep persistent service state under `/srv/backlight`.
 LumosKit needs the repo's Python/RCA files beside `bin/lumoskit`, so Backlight
 points at the binary inside the LumosKit checkout.
 
@@ -69,7 +69,7 @@ points at the binary inside the LumosKit checkout.
 VM
   -> pull /home/ubuntu/lumos/helios to a pinned ref
   -> pull /home/ubuntu/lumos/lumoskit to a pinned ref
-  -> build Backlight and install /srv/helios/bin/helios
+  -> build Backlight and install /srv/backlight/bin/backlight
   -> build LumosKit and install /home/ubuntu/lumos/lumoskit/bin/lumoskit
   -> set HELIOS_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit
   -> reload/restart systemd
@@ -79,11 +79,11 @@ See [`deploy/vm/README.md`](vm/README.md) for the concrete commands.
 `deploy/vm/sync-git-runtime.sh` performs the pull, build, install, systemd unit
 write, daemon-reload, and optional restart.
 
-The systemd templates in this directory use
-`WorkingDirectory=/home/ubuntu/lumos/helios`. Backlight sets the LumosKit child
-process working directory from `HELIOS_LUMOSKIT_BIN` when the binary lives under
-a `bin/` directory, so `/home/ubuntu/lumos/lumoskit/bin/lumoskit` can resolve
-its own runtime scripts from `/home/ubuntu/lumos/lumoskit`.
+The systemd templates in this directory use `WorkingDirectory=/srv/backlight`.
+Backlight sets the LumosKit child process working directory from
+`HELIOS_LUMOSKIT_BIN` when the binary lives under a `bin/` directory, so
+`/home/ubuntu/lumos/lumoskit/bin/lumoskit` can resolve its own runtime scripts
+from `/home/ubuntu/lumos/lumoskit`.
 
 ## Manual Backlight binary copy flow
 
@@ -92,22 +92,22 @@ is just copying build artifacts; for a first bring-up you can build them from th
 Backlight repository root:
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios ./cmd/helios
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios-mcp ./cmd/helios-mcp
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios-mcp-bridge ./cmd/helios-mcp-bridge
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/backlight ./cmd/helios
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/backlight-mcp ./cmd/helios-mcp
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/backlight-mcp-bridge ./cmd/helios-mcp-bridge
 ```
 
 Copy artifacts:
 
 ```bash
-sudo install -o root -g root -m 0755 dist/helios /srv/helios/bin/helios
-sudo install -o root -g root -m 0755 dist/helios-mcp /srv/helios/bin/helios-mcp
-sudo install -o root -g root -m 0755 dist/helios-mcp-bridge /srv/helios/bin/helios-mcp-bridge
-sudo install -o helios -g helios -m 0600 deploy/env/helios.env.example /srv/helios/env/helios.env
-sudo install -o helios -g helios -m 0600 deploy/mcp/helios-mcp-bridge.env.example /srv/helios/env/helios-mcp-bridge.env
+sudo install -o root -g root -m 0755 dist/backlight /srv/backlight/bin/backlight
+sudo install -o root -g root -m 0755 dist/backlight-mcp /srv/backlight/bin/backlight-mcp
+sudo install -o root -g root -m 0755 dist/backlight-mcp-bridge /srv/backlight/bin/backlight-mcp-bridge
+sudo install -o root -g backlight -m 0640 deploy/env/backlight.env.example /srv/backlight/env/backlight.env
+sudo install -o root -g backlight -m 0640 deploy/mcp/backlight-mcp-bridge.env.example /srv/backlight/env/backlight-mcp-bridge.env
 ```
 
-Edit `/srv/helios/env/helios.env` and replace every placeholder. Put
+Edit `/srv/backlight/env/backlight.env` and replace every placeholder. Put
 Backlight-owned values there, including `GH_TOKEN` when verified-case GitHub
 publishing should run.
 
@@ -115,14 +115,14 @@ Keep LumosKit runtime keys in a separate file and install it into the LumosKit
 checkout so `bin/lumoskit` can load its normal `.env` from its repo root:
 
 ```bash
-sudo install -o helios -g helios -m 0600 deploy/env/lumoskit.env.example /srv/helios/env/lumoskit.env
-sudo install -o root -g helios -m 0640 /srv/helios/env/lumoskit.env /home/ubuntu/lumos/lumoskit/.env
+sudo install -o root -g backlight -m 0640 deploy/env/lumoskit.env.example /srv/backlight/env/lumoskit.env
+sudo install -o root -g backlight -m 0640 /srv/backlight/env/lumoskit.env /home/ubuntu/lumos/lumoskit/.env
 ```
 
 `ALCHEMY_API_KEY` belongs in `lumoskit.env` for real LumosKit runs. Backlight will
 still inherit any process env through systemd, but the local-checkout deployment
 path defaults to LumosKit's own `.env` contract to avoid duplicating those keys in
-`helios.env`.
+`backlight.env`.
 
 Optional preflight incident naming can run before LumosKit when Backlight has scan/RPC envs:
 
@@ -139,12 +139,12 @@ normal `unknown` slug and later analysis may enrich `incident_slug`.
 ## systemd
 
 ```bash
-sudo cp deploy/systemd/helios.service.example /etc/systemd/system/helios.service
-sudo cp deploy/systemd/helios-mcp-bridge.service.example /etc/systemd/system/helios-mcp-bridge.service
+sudo cp deploy/systemd/backlight.service.example /etc/systemd/system/backlight.service
+sudo cp deploy/systemd/backlight-mcp-bridge.service.example /etc/systemd/system/backlight-mcp-bridge.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now helios-mcp-bridge
-sudo systemctl enable --now helios
-sudo journalctl -u helios -f
+sudo systemctl enable --now backlight-mcp-bridge
+sudo systemctl enable --now backlight
+sudo journalctl -u backlight -f
 ```
 
 ## Nginx
@@ -170,7 +170,7 @@ sudo certbot certonly --webroot -w /var/www/html \
   -d dashboard.backwardlabs.io \
   -d api.backwardlabs.io
 
-sudo cp deploy/nginx/helios.conf.example /etc/nginx/sites-available/backlight.conf
+sudo cp deploy/nginx/backlight.conf.example /etc/nginx/sites-available/backlight.conf
 sudo ln -s /etc/nginx/sites-available/backlight.conf /etc/nginx/sites-enabled/backlight.conf
 sudo rm /etc/nginx/sites-enabled/backlight-bootstrap.conf
 sudo nginx -t
@@ -203,7 +203,7 @@ curl -X POST https://api.backwardlabs.io/cases \
 
 Then verify:
 
-- `/srv/helios/data/outputs/260526_eth_curve/summary.json` exists.
+- `/srv/backlight/data/outputs/260526_eth_curve/summary.json` exists.
 - `GET /cases/{case_id}` reaches `done` or `handed-off`, or reports a concrete `engine_error`.
 - For verified cases, `github_publish` and `pre_lumos_sync` events appear when those optional features are enabled.
 - Downstream webhook / Telegram notifications arrive if configured.
@@ -211,7 +211,7 @@ Then verify:
 
 ## MCP Phase 1/2: read-only artifact gateway + downstream bridge
 
-`helios-mcp` supports two transports:
+`backlight-mcp` supports two transports:
 
 - stdio, the default for local MCP clients. The MCP client starts the binary and
   talks to it over stdin/stdout.
@@ -219,14 +219,14 @@ Then verify:
   MCP clients that should connect by URL. Put it behind TLS and bearer auth;
   the HTTP endpoint defaults to `/mcp`.
 
-`helios-mcp-bridge` is the Phase 2 downstream receiver. It is a local HTTP
+`backlight-mcp-bridge` is the Phase 2 downstream receiver. It is a local HTTP
 service that receives Backlight handoff payloads and stores a small SQLite index.
 Run this one under systemd if you want automatic MCP indexing.
 
 Phase 1 direct flow (stdio):
 
 ```text
-MCP client -> /srv/helios/bin/helios-mcp
+MCP client -> /srv/backlight/bin/backlight-mcp
            -> Backlight HTTP API on HELIOS_BASE_URL
            -> server-side allowlisted artifact reads
 ```
@@ -234,8 +234,8 @@ MCP client -> /srv/helios/bin/helios-mcp
 Phase 2 indexed flow (stdio):
 
 ```text
-Backlight -> POST /handoff -> helios-mcp-bridge -> bridge SQLite index
-MCP client -> /srv/helios/bin/helios-mcp -> bridge SQLite index
+Backlight -> POST /handoff -> backlight-mcp-bridge -> bridge SQLite index
+MCP client -> /srv/backlight/bin/backlight-mcp -> bridge SQLite index
                                           -> allowlisted files next to the bridge DB
 ```
 
@@ -244,7 +244,7 @@ Remote HTTP flow:
 ```text
 MCP client --url https://api.backwardlabs.io/mcp
            -> reverse proxy TLS
-           -> helios-mcp HTTP mode on HELIOS_MCP_LISTEN_ADDR
+           -> backlight-mcp HTTP mode on HELIOS_MCP_LISTEN_ADDR
            -> Backlight API or bridge index
 ```
 
@@ -278,7 +278,7 @@ Required MCP env:
 
 For bridge/indexed mode, replace `HELIOS_BASE_URL` and `HELIOS_API_TOKEN` with:
 
-- `HELIOS_MCP_BRIDGE_DB_PATH`, usually `/srv/helios/data/helios-mcp-bridge.db`
+- `HELIOS_MCP_BRIDGE_DB_PATH`, usually `/srv/backlight/data/backlight-mcp-bridge.db`
 
 Optional MCP env:
 
@@ -337,13 +337,13 @@ logs, full CEFG/lift internals, or raw semantic internals.
 To enable Phase 2 indexing, set:
 
 ```bash
-# /srv/helios/env/helios.env
+# /srv/backlight/env/backlight.env
 HELIOS_DOWNSTREAM_WEBHOOK_URLS=http://127.0.0.1:9090/handoff
 HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN=<same-value-as-bridge-token>
 
-# /srv/helios/env/helios-mcp-bridge.env
+# /srv/backlight/env/backlight-mcp-bridge.env
 HELIOS_MCP_BRIDGE_LISTEN_ADDR=127.0.0.1:9090
-HELIOS_MCP_BRIDGE_DB_PATH=/srv/helios/data/helios-mcp-bridge.db
+HELIOS_MCP_BRIDGE_DB_PATH=/srv/backlight/data/backlight-mcp-bridge.db
 HELIOS_MCP_BRIDGE_TOKEN=<same-value-as-downstream-bearer-token>
 HELIOS_MCP_BRIDGE_ALLOW_INSECURE=false
 ```
@@ -374,9 +374,9 @@ environment that already has `requirements-pre-lumos.txt` installed, then add:
 
 ```bash
 OPENAI_API_KEY=<proxy-or-openai-key>
-UV_CACHE_DIR=/srv/helios/data/uv-cache
+UV_CACHE_DIR=/srv/backlight/data/uv-cache
 HELIOS_PRE_LUMOS_ENABLED=true
-HELIOS_PRE_LUMOS_SEED_ROOT=/srv/helios/data/pre-lumos-seed
+HELIOS_PRE_LUMOS_SEED_ROOT=/srv/backlight/data/pre-lumos-seed
 HELIOS_PRE_LUMOS_OPENAI_BASE_URL=http://127.0.0.1:10631/v1
 HELIOS_PRE_LUMOS_PYTHON_BIN=scripts/pre_lumos_agent_uv.sh
 HELIOS_PRE_LUMOS_AGENT_SCRIPT=scripts/pre_lumos_agent.py
@@ -388,23 +388,23 @@ Backlight passes the verified case output root directly to the sidecar. The side
 writes `<output_root>/pre-lumos.json`, `<output_root>/pre-lumos-status.json`,
 and merges rows by `slug` into
 `$HELIOS_PRE_LUMOS_SEED_ROOT/seed/import_{YEAR}.json`. Because the example
-systemd unit only grants writes under `/srv/helios/data` and `/srv/helios/logs`,
-keep `HELIOS_PRE_LUMOS_SEED_ROOT` under `/srv/helios/data` or extend
+systemd unit only grants writes under `/srv/backlight/data` and `/srv/backlight/logs`,
+keep `HELIOS_PRE_LUMOS_SEED_ROOT` under `/srv/backlight/data` or extend
 `ReadWritePaths=`.
 
 ### MCP filesystem permissions
 
 In bridge-index mode, the MCP client process needs read-only access to:
 
-- `/srv/helios/data/helios-mcp-bridge.db`
-- `/srv/helios/data/outputs/260526_eth_curve/{summary.json,summary.md,rca.md,PoC.t.sol,Report.md}`
+- `/srv/backlight/data/backlight-mcp-bridge.db`
+- `/srv/backlight/data/outputs/260526_eth_curve/{summary.json,summary.md,rca.md,PoC.t.sol,Report.md}`
 
 The systemd templates use `UMask=0027`, so files are owner/group readable but
-not world-readable. Run the MCP client as the `helios` user or add the operator
-account that launches the MCP client to the `helios` group:
+not world-readable. Run the MCP client as the `backlight` user or add the operator
+account that launches the MCP client to the `backlight` group:
 
 ```bash
-sudo usermod -aG helios <operator-user>
+sudo usermod -aG backlight <operator-user>
 ```
 
 Do not solve MCP permission errors with `chmod 777`. If more isolation is

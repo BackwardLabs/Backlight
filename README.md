@@ -70,7 +70,7 @@ development without the real engine, use `scripts/fake-lumoskit.sh`.
 
 Optional Telegram alerts can reuse an existing bot, including the hackdetector
 bot. Set these as Backlight process env vars, either with `export` for local runs
-or in the deploy env file such as `/srv/helios/env/helios.env`:
+or in the deploy env file such as `/srv/backlight/env/backlight.env`:
 
 ```bash
 export TELEGRAM_BOT_TOKEN=<hackdetector-bot-token>
@@ -109,7 +109,7 @@ when that token is unset.
 | `POST /cases/{case_id}/retry-handoff` | retry failed downstream delivery, exposed on both dashboard/API hosts |
 | `GET /metrics` | Prometheus metrics, exposed on `api.backwardlabs.io` |
 | `GET /ecw/cases/{case_id}/export` | internal ECW replay/RCA bundle export, exposed on `api.backwardlabs.io` with `HELIOS_ECW_EXPORT_TOKEN` |
-| `/mcp` | remote MCP endpoint, exposed on `api.backwardlabs.io` when `helios-mcp` HTTP mode is enabled |
+| `/mcp` | remote MCP endpoint, exposed on `api.backwardlabs.io` when `backlight-mcp` HTTP mode is enabled |
 
 ## Docs
 

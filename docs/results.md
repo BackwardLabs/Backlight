@@ -89,7 +89,7 @@ available in the Events table.
   set `HELIOS_PRE_LUMOS_SEED_ROOT`. Verified cases run the Pre-Lumos Agent SDK
   sidecar and write `<output_root>/pre-lumos.json` plus merged
   `seed/import_{YEAR}.json` rows.
-- **MCP-assisted review:** run `helios-mcp` in direct API mode or bridge-index
+- **MCP-assisted review:** run `backlight-mcp` in direct API mode or bridge-index
   mode. Assistant clients can call `helios.list_cases`, `helios.get_case`,
   `helios.list_artifacts`, and `helios.read_artifact` to inspect case metadata
   and allowlisted artifacts.
@@ -103,11 +103,11 @@ webhooks, or expose arbitrary shell/filesystem access.
 
 Two source modes are supported:
 
-- **Direct mode:** `helios-mcp` reads case metadata from the Backlight API using
+- **Direct mode:** `backlight-mcp` reads case metadata from the Backlight API using
   `HELIOS_BASE_URL` + `HELIOS_API_TOKEN`; Backlight serves allowlisted artifacts
   from its configured output root.
 - **Bridge-index mode:** Backlight posts completed handoff payloads to
-  `helios-mcp-bridge`; `helios-mcp` reads the bridge SQLite index using
+  `backlight-mcp-bridge`; `backlight-mcp` reads the bridge SQLite index using
   `HELIOS_MCP_BRIDGE_DB_PATH` and derives the output directory from the bridge
   DB location unless explicitly overridden.
 
@@ -161,14 +161,14 @@ semantic internals.
 Build the MCP binaries with:
 
 ```bash
-go build -o dist/helios-mcp ./cmd/helios-mcp
-go build -o dist/helios-mcp-bridge ./cmd/helios-mcp-bridge
+go build -o dist/backlight-mcp ./cmd/helios-mcp
+go build -o dist/backlight-mcp-bridge ./cmd/helios-mcp-bridge
 ```
 
 Then configure a local stdio MCP client from
 `deploy/mcp/client-config.example.json` or
 `deploy/mcp/client-config.bridge.example.json`. For remote clients, run
-`helios-mcp` in HTTP mode behind TLS by setting `HELIOS_MCP_LISTEN_ADDR`; the
+`backlight-mcp` in HTTP mode behind TLS by setting `HELIOS_MCP_LISTEN_ADDR`; the
 endpoint defaults to `/mcp`, should be exposed from `api.backwardlabs.io`, and
 uses bearer auth from
 `HELIOS_MCP_HTTP_TOKEN`, or `HELIOS_API_TOKEN` when the MCP-specific token is

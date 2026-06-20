@@ -64,7 +64,7 @@ precedence; `.env.local` can override `.env`.
 | `HELIOS_MAX_CONCURRENT_LUMOSKIT` | no | `2` | parallel lumoskit ceiling |
 | `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` | no | `3` | linked rerun ceiling for `rerun_decision=auto_rerun`; set `0` to disable |
 | `HELIOS_DOWNSTREAM_WEBHOOK_URLS` | no | empty | comma-separated webhook list (empty means `handoff_status=skipped`, case advances directly to `handed-off`) |
-| `HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN` | no | empty | optional Bearer token sent to downstream webhook targets, useful for `helios-mcp-bridge` |
+| `HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN` | no | empty | optional Bearer token sent to downstream webhook targets, useful for `backlight-mcp-bridge` |
 | `HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS` | no | `5` | per-URL retry ceiling |
 | `HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | exponential backoff base |
 | `HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | exponential backoff ceiling |
@@ -146,7 +146,7 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   Telegram messages include case identity, concise result, optional reason,
   GitHub report link, and completion time when available.
 - **X refresh tokens.** Live X publishing refreshes an access token before
-  posting. Set `X_REFRESH_TOKEN_FILE=/srv/helios/data/x_refresh_token.json` so
+  posting. Set `X_REFRESH_TOKEN_FILE=/srv/backlight/data/x_refresh_token.json` so
   Backlight can persist rotated refresh tokens with `0600` permissions. SQLite
   events record only `refresh_returned` / `refresh_token_updated`; token
   material is never stored in case events.

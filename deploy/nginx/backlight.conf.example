@@ -5,7 +5,7 @@
 #   api.backwardlabs.io       -> detector ingest, metrics, MCP, and API clients
 #
 # Install after the backlight-backwardlabs certificate exists:
-#   sudo cp deploy/nginx/helios.conf.example /etc/nginx/sites-available/backlight.conf
+#   sudo cp deploy/nginx/backlight.conf.example /etc/nginx/sites-available/backlight.conf
 #   sudo ln -s /etc/nginx/sites-available/backlight.conf /etc/nginx/sites-enabled/backlight.conf
 #   sudo nginx -t && sudo systemctl reload nginx
 #

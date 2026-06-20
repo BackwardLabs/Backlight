@@ -2,25 +2,26 @@
 Description=Backlight MCP handoff bridge
 After=network-online.target
 Wants=network-online.target
-Before=helios.service
+Before=backlight.service
 
 [Service]
-User=helios
-Group=helios
-WorkingDirectory=/home/ubuntu/lumos/helios
-EnvironmentFile=/srv/helios/env/helios-mcp-bridge.env
-ExecStart=/srv/helios/bin/helios-mcp-bridge
+User=backlight
+Group=backlight
+WorkingDirectory=/srv/backlight
+EnvironmentFile=/srv/backlight/env/backlight-mcp-bridge.env
+Environment="HOME=/srv/backlight"
+ExecStart=/srv/backlight/bin/backlight-mcp-bridge
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=15
 
 # Bridge writes only its SQLite index. It reads no arbitrary case artifacts;
-# artifact reads happen in the stdio helios-mcp process started by the MCP client.
+# artifact reads happen in the stdio backlight-mcp process started by the MCP client.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/srv/helios/data
+ReadWritePaths=/srv/backlight/data
 UMask=0027
 
 [Install]

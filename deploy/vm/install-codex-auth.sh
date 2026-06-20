@@ -9,8 +9,8 @@ Usage:
   sudo deploy/vm/install-codex-auth.sh /path/to/auth.json
 
 Defaults:
-  HELIOS_BASE_DIR=/srv/helios
-  HELIOS_SERVICE_USER=helios
+  HELIOS_BASE_DIR=/srv/backlight
+  HELIOS_SERVICE_USER=backlight
 
 The Codex SDK uses Path.home()/.codex by default. Backlight runs as the
 HELIOS_SERVICE_USER with HOME=$HELIOS_BASE_DIR, so service runs read:
@@ -33,8 +33,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 source_auth="${1:-${SOURCE_AUTH_JSON:-}}"
-base_dir="${HELIOS_BASE_DIR:-/srv/helios}"
-service_user="${HELIOS_SERVICE_USER:-helios}"
+base_dir="${HELIOS_BASE_DIR:-/srv/backlight}"
+service_user="${HELIOS_SERVICE_USER:-backlight}"
 dest_dir="${base_dir}/.codex"
 dest_auth="${dest_dir}/auth.json"
 

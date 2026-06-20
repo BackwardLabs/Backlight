@@ -15,15 +15,15 @@ Defaults:
   WORKSPACE_DIR=/home/ubuntu/lumos
   HELIOS_WORKTREE=$WORKSPACE_DIR/helios
   LUMOSKIT_WORKTREE=$WORKSPACE_DIR/lumoskit
-  HELIOS_BASE_DIR=/srv/helios
-  HELIOS_SERVICE_USER=helios
-  HELIOS_SERVICE_NAME=helios.service
+  HELIOS_BASE_DIR=/srv/backlight
+  HELIOS_SERVICE_USER=backlight
+  HELIOS_SERVICE_NAME=backlight.service
   HELIOS_REF=main
   LUMOSKIT_REF=main
   HELIOS_RESTART_SERVICE=false
 
 This deployment uses the existing local git checkouts under /home/ubuntu/lumos.
-It does not clone into /srv/helios/src.
+It does not clone into /srv/backlight/src.
 USAGE
 }
 
@@ -40,9 +40,9 @@ fi
 workspace_dir="${WORKSPACE_DIR:-/home/ubuntu/lumos}"
 helios_dir="${HELIOS_WORKTREE:-${workspace_dir}/helios}"
 lumoskit_dir="${LUMOSKIT_WORKTREE:-${workspace_dir}/lumoskit}"
-base_dir="${HELIOS_BASE_DIR:-/srv/helios}"
-service_user="${HELIOS_SERVICE_USER:-helios}"
-service_name="${HELIOS_SERVICE_NAME:-helios.service}"
+base_dir="${HELIOS_BASE_DIR:-/srv/backlight}"
+service_user="${HELIOS_SERVICE_USER:-backlight}"
+service_name="${HELIOS_SERVICE_NAME:-backlight.service}"
 helios_ref="${HELIOS_REF:-main}"
 lumoskit_ref="${LUMOSKIT_REF:-main}"
 restart_service="${HELIOS_RESTART_SERVICE:-false}"
@@ -185,13 +185,13 @@ sync_checkout "Backlight" "${helios_dir}" "${helios_ref}"
 sync_checkout "LumosKit" "${lumoskit_dir}" "${lumoskit_ref}"
 
 echo "==> Building Backlight"
-run_in_worktree "${helios_dir}" env CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/helios ./cmd/helios
+run_in_worktree "${helios_dir}" env CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/backlight ./cmd/helios
 
 echo "==> Building LumosKit"
 run_in_worktree "${lumoskit_dir}" cargo build --release --bin lumoskit
 
 echo "==> Installing binaries"
-install -o root -g root -m 0755 "${helios_dir}/dist/helios" "${base_dir}/bin/helios"
+install -o root -g root -m 0755 "${helios_dir}/dist/backlight" "${base_dir}/bin/backlight"
 install -o "$(git_user_for "${lumoskit_dir}")" -g "${service_user}" -m 0755 \
   "${lumoskit_dir}/target/release/lumoskit" \
   "${lumoskit_dir}/bin/lumoskit"
@@ -215,9 +215,13 @@ Wants=network-online.target
 [Service]
 User=${service_user}
 Group=${service_user}
-WorkingDirectory=${helios_dir}
-EnvironmentFile=${base_dir}/env/helios.env
-ExecStart=${base_dir}/bin/helios
+WorkingDirectory=${base_dir}
+EnvironmentFile=${base_dir}/env/backlight.env
+Environment="HOME=${base_dir}"
+Environment="PATH=${base_dir}/.foundry/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="SVM_HOME=${base_dir}/data/.svm"
+Environment="XDG_DATA_HOME=${base_dir}/data/.local/share"
+ExecStart=${base_dir}/bin/backlight
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM
@@ -232,28 +236,17 @@ UMask=0027
 WantedBy=multi-user.target
 EOF
 
-mkdir -p "/etc/systemd/system/${service_name}.d"
-cat >"/etc/systemd/system/${service_name}.d/10-foundry-path.conf" <<EOF
-[Service]
-Environment="PATH=${base_dir}/.foundry/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-EOF
-cat >"/etc/systemd/system/${service_name}.d/20-foundry-cache.conf" <<EOF
-[Service]
-Environment="SVM_HOME=${base_dir}/data/.svm"
-Environment="XDG_DATA_HOME=${base_dir}/data/.local/share"
-EOF
-
 systemctl daemon-reload
 
 cat <<EOF
 ==> Runtime installed
 Backlight checkout:   ${helios_dir} @ $(run_git "${helios_dir}" rev-parse --short HEAD)
 LumosKit checkout: ${lumoskit_dir} @ $(run_git "${lumoskit_dir}" rev-parse --short HEAD)
-Backlight binary:     ${base_dir}/bin/helios
+Backlight binary:     ${base_dir}/bin/backlight
 LumosKit binary:   ${lumoskit_dir}/bin/lumoskit
 Service:           ${service_name}
 
-Expected in ${base_dir}/env/helios.env:
+Expected in ${base_dir}/env/backlight.env:
 HELIOS_LUMOSKIT_BIN=${lumoskit_dir}/bin/lumoskit
 EOF
 

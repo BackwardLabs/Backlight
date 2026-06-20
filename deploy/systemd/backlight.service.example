@@ -1,0 +1,29 @@
+[Unit]
+Description=Backlight orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=backlight
+Group=backlight
+WorkingDirectory=/srv/backlight
+EnvironmentFile=/srv/backlight/env/backlight.env
+Environment="HOME=/srv/backlight"
+Environment="PATH=/srv/backlight/.foundry/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="SVM_HOME=/srv/backlight/data/.svm"
+Environment="XDG_DATA_HOME=/srv/backlight/data/.local/share"
+ExecStart=/srv/backlight/bin/backlight
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Conservative hardening while preserving writes to SQLite, outputs, and logs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/srv/backlight/data /srv/backlight/logs
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
