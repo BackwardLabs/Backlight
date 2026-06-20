@@ -23,6 +23,3 @@ Flow:
 Attacker CA:
 - Attack contract: {{ .AttackContract }}
 - Attacker EOA: {{ .AttackerEOA }}
-
-Image:
-- {{ .Image }}
