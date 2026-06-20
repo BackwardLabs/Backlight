@@ -97,13 +97,14 @@ func main() {
 		"branch", cfg.GitHubBranch,
 	)
 	xPublisher := xpublish.New(xpublish.Config{
-		Enabled:      cfg.XPublishEnabled,
-		ClientID:     cfg.XClientID,
-		ClientSecret: cfg.XClientSecret,
-		RefreshToken: cfg.XRefreshToken,
-		APIBase:      cfg.XAPIBase,
-		Username:     cfg.XUsername,
-		DryRun:       cfg.XDryRun,
+		Enabled:          cfg.XPublishEnabled,
+		ClientID:         cfg.XClientID,
+		ClientSecret:     cfg.XClientSecret,
+		RefreshToken:     cfg.XRefreshToken,
+		RefreshTokenFile: cfg.XRefreshTokenFile,
+		APIBase:          cfg.XAPIBase,
+		Username:         cfg.XUsername,
+		DryRun:           cfg.XDryRun,
 	})
 	xPublisher.Client = httpClient
 	logger.Info("x publisher configured",

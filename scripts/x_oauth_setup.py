@@ -142,7 +142,11 @@ def main():
         nargs="+",
         default=["tweet.read", "tweet.write", "users.read", "media.write", "offline.access"],
     )
-    parser.add_argument("--token-output", type=Path, default=Path("/private/tmp/backlight_x_oauth_tokens.json"))
+    parser.add_argument(
+        "--token-output",
+        type=Path,
+        default=Path(os.environ.get("X_REFRESH_TOKEN_FILE", "/private/tmp/backlight_x_oauth_tokens.json")),
+    )
     args = parser.parse_args()
 
     client_id = args.client_id.strip() or input("X Client ID: ").strip()

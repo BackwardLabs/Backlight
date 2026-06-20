@@ -125,6 +125,10 @@ func TestPublishDryRunDoesNotCallXAPI(t *testing.T) {
 
 func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 	root := writeArtifacts(t)
+	tokenFile := filepath.Join(t.TempDir(), "x_refresh_token.json")
+	if err := os.WriteFile(tokenFile, []byte(`{"refresh_token":"refresh-token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var sawRefresh, sawPost bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -167,13 +171,14 @@ func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 	defer server.Close()
 
 	pub := New(Config{
-		Enabled:      true,
-		ClientID:     "client-id",
-		ClientSecret: "client-secret",
-		RefreshToken: "refresh-token",
-		APIBase:      server.URL,
-		Username:     "BackwardLabs",
-		DryRun:       false,
+		Enabled:          true,
+		ClientID:         "client-id",
+		ClientSecret:     "client-secret",
+		RefreshToken:     "stale-env-refresh-token",
+		RefreshTokenFile: tokenFile,
+		APIBase:          server.URL,
+		Username:         "BackwardLabs",
+		DryRun:           false,
 	})
 	pub.Client = server.Client()
 	res, err := pub.Publish(context.Background(), Case{Chain: "ethereum", TxHash: "0x" + strings.Repeat("1", 64), OutputRoot: root})
@@ -183,8 +188,77 @@ func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 	if !sawRefresh || !sawPost {
 		t.Fatalf("saw refresh=%v post=%v", sawRefresh, sawPost)
 	}
-	if !res.Published || res.PostID != "12345" || res.PostURL != "https://x.com/BackwardLabs/status/12345" || !res.RefreshReturned {
+	if !res.Published || res.PostID != "12345" || res.PostURL != "https://x.com/BackwardLabs/status/12345" || !res.RefreshReturned || !res.RefreshTokenUpdated || !res.PostTextVerified {
 		t.Fatalf("publish result = %+v", res)
+	}
+	tokenData, err := os.ReadFile(tokenFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tokenData), "rotated-refresh-token") {
+		t.Fatalf("rotated refresh token was not persisted: %s", tokenData)
+	}
+	if info, err := os.Stat(tokenFile); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Fatalf("token file permissions = %v", info.Mode().Perm())
+	}
+}
+
+func TestPublishDeletesMismatchedPost(t *testing.T) {
+	root := writeArtifacts(t)
+	var sawDelete bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/2/oauth2/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-token",
+				"expires_in":   7200,
+				"token_type":   "bearer",
+			})
+		case "/2/tweets":
+			if r.Method != http.MethodPost {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]string{"id": "12345", "text": "[Backlight Verified Incident]"},
+			})
+		case "/2/tweets/12345":
+			switch r.Method {
+			case http.MethodGet:
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": map[string]string{"id": "12345", "text": "[Backlight Verified Incident]"},
+				})
+			case http.MethodDelete:
+				sawDelete = true
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": map[string]bool{"deleted": true},
+				})
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	pub := New(Config{
+		Enabled:      true,
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		RefreshToken: "refresh-token",
+		APIBase:      server.URL,
+		DryRun:       false,
+	})
+	pub.Client = server.Client()
+	_, err := pub.Publish(context.Background(), Case{Chain: "ethereum", TxHash: "0x" + strings.Repeat("1", 64), OutputRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "text differed from requested text and was deleted") {
+		t.Fatalf("publish err = %v", err)
+	}
+	if !sawDelete {
+		t.Fatal("mismatched X post was not deleted")
 	}
 }
 

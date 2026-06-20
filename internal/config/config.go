@@ -31,6 +31,7 @@ type Config struct {
 	XClientID               string
 	XClientSecret           string
 	XRefreshToken           string
+	XRefreshTokenFile       string
 	XAPIBase                string
 	XUsername               string
 	XDryRun                 bool
@@ -84,6 +85,7 @@ func Load() (*Config, error) {
 		XClientID:                      os.Getenv("X_CLIENT_ID"),
 		XClientSecret:                  os.Getenv("X_CLIENT_SECRET"),
 		XRefreshToken:                  os.Getenv("X_REFRESH_TOKEN"),
+		XRefreshTokenFile:              os.Getenv("X_REFRESH_TOKEN_FILE"),
 		XAPIBase:                       envDefault("X_API_BASE", "https://api.x.com"),
 		XUsername:                      os.Getenv("X_ACCOUNT_USERNAME"),
 		XDryRun:                        envBool("X_DRY_RUN", true),

@@ -431,15 +431,17 @@ func (w *Worker) publishX(ctx context.Context, c *store.Case, mappedOutcome stri
 			return
 		}
 		if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "x_publish", map[string]any{
-			"published":        res.Published,
-			"dry_run":          res.DryRun,
-			"platform":         res.Platform,
-			"post_id":          res.PostID,
-			"post_url":         res.PostURL,
-			"text":             res.Text,
-			"template":         res.Template,
-			"refresh_returned": res.RefreshReturned,
-			"outcome":          mappedOutcome,
+			"published":             res.Published,
+			"dry_run":               res.DryRun,
+			"platform":              res.Platform,
+			"post_id":               res.PostID,
+			"post_url":              res.PostURL,
+			"text":                  res.Text,
+			"template":              res.Template,
+			"refresh_returned":      res.RefreshReturned,
+			"refresh_token_updated": res.RefreshTokenUpdated,
+			"post_text_verified":    res.PostTextVerified,
+			"outcome":               mappedOutcome,
 		}); err != nil {
 			w.Logger.Error("record x publish event failed", "case_id", publishCase.CaseID, "err", err)
 		}

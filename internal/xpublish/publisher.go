@@ -23,13 +23,14 @@ const (
 )
 
 type Config struct {
-	Enabled      bool
-	ClientID     string
-	ClientSecret string
-	RefreshToken string
-	APIBase      string
-	Username     string
-	DryRun       bool
+	Enabled          bool
+	ClientID         string
+	ClientSecret     string
+	RefreshToken     string
+	RefreshTokenFile string
+	APIBase          string
+	Username         string
+	DryRun           bool
 }
 
 type Publisher struct {
@@ -49,14 +50,16 @@ type Case struct {
 }
 
 type Result struct {
-	Published       bool   `json:"published"`
-	DryRun          bool   `json:"dry_run,omitempty"`
-	Platform        string `json:"platform"`
-	PostID          string `json:"post_id,omitempty"`
-	PostURL         string `json:"post_url,omitempty"`
-	Text            string `json:"text"`
-	Template        string `json:"template"`
-	RefreshReturned bool   `json:"refresh_returned,omitempty"`
+	Published           bool   `json:"published"`
+	DryRun              bool   `json:"dry_run,omitempty"`
+	Platform            string `json:"platform"`
+	PostID              string `json:"post_id,omitempty"`
+	PostURL             string `json:"post_url,omitempty"`
+	Text                string `json:"text"`
+	Template            string `json:"template"`
+	RefreshReturned     bool   `json:"refresh_returned,omitempty"`
+	RefreshTokenUpdated bool   `json:"refresh_token_updated,omitempty"`
+	PostTextVerified    bool   `json:"post_text_verified,omitempty"`
 }
 
 type tokenResponse struct {
@@ -68,6 +71,13 @@ type tokenResponse struct {
 }
 
 type createPostResponse struct {
+	Data struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+	} `json:"data"`
+}
+
+type fetchPostResponse struct {
 	Data struct {
 		ID   string `json:"id"`
 		Text string `json:"text"`
@@ -101,18 +111,29 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if p.Config.DryRun {
 		return result, nil
 	}
-	if strings.TrimSpace(p.Config.ClientID) == "" || strings.TrimSpace(p.Config.ClientSecret) == "" || strings.TrimSpace(p.Config.RefreshToken) == "" {
+	refreshToken, err := p.refreshToken()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.Config.ClientID) == "" || strings.TrimSpace(p.Config.ClientSecret) == "" || refreshToken == "" {
 		return nil, errors.New("x publisher requires X_CLIENT_ID, X_CLIENT_SECRET, and X_REFRESH_TOKEN")
 	}
 	client := p.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
-	token, err := p.refreshAccessToken(ctx, client)
+	token, err := p.refreshAccessToken(ctx, client, refreshToken)
 	if err != nil {
 		return nil, err
 	}
 	post, err := p.createPost(ctx, client, token.AccessToken, text)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.verifyCreatedPost(ctx, client, token.AccessToken, post.Data.ID, text, post.Data.Text); err != nil {
+		return nil, err
+	}
+	refreshUpdated, err := p.storeRotatedRefreshToken(token)
 	if err != nil {
 		return nil, err
 	}
@@ -121,16 +142,15 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	result.PostID = post.Data.ID
 	result.PostURL = p.postURL(post.Data.ID)
 	result.RefreshReturned = strings.TrimSpace(token.RefreshToken) != ""
-	if post.Data.Text != "" {
-		result.Text = post.Data.Text
-	}
+	result.RefreshTokenUpdated = refreshUpdated
+	result.PostTextVerified = true
 	return result, nil
 }
 
-func (p *Publisher) refreshAccessToken(ctx context.Context, client *http.Client) (*tokenResponse, error) {
+func (p *Publisher) refreshAccessToken(ctx context.Context, client *http.Client, refreshToken string) (*tokenResponse, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", p.Config.RefreshToken)
+	form.Set("refresh_token", refreshToken)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.APIBase+"/2/oauth2/token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
@@ -146,6 +166,93 @@ func (p *Publisher) refreshAccessToken(ctx context.Context, client *http.Client)
 		return nil, errors.New("x token refresh response did not include access_token")
 	}
 	return &out, nil
+}
+
+func (p *Publisher) refreshToken() (string, error) {
+	if tokenFile := strings.TrimSpace(p.Config.RefreshTokenFile); tokenFile != "" {
+		if token, err := readRefreshTokenFile(tokenFile); err == nil && token != "" {
+			return token, nil
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	return strings.TrimSpace(p.Config.RefreshToken), nil
+}
+
+func readRefreshTokenFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return "", nil
+	}
+	var payload map[string]any
+	if json.Unmarshal(data, &payload) == nil {
+		if token, ok := payload["refresh_token"].(string); ok {
+			return strings.TrimSpace(token), nil
+		}
+	}
+	return trimmed, nil
+}
+
+func (p *Publisher) storeRotatedRefreshToken(token *tokenResponse) (bool, error) {
+	refresh := strings.TrimSpace(token.RefreshToken)
+	if refresh == "" {
+		return false, nil
+	}
+	if refresh == strings.TrimSpace(p.Config.RefreshToken) && strings.TrimSpace(p.Config.RefreshTokenFile) == "" {
+		return false, nil
+	}
+	p.Config.RefreshToken = refresh
+	if strings.TrimSpace(p.Config.RefreshTokenFile) == "" {
+		return false, nil
+	}
+	payload := map[string]any{
+		"refresh_token": refresh,
+		"token_type":    token.TokenType,
+		"expires_in":    token.ExpiresIn,
+		"scope":         token.Scope,
+	}
+	if strings.TrimSpace(p.Config.ClientID) != "" {
+		payload["client_id"] = strings.TrimSpace(p.Config.ClientID)
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	data = append(data, '\n')
+	if err := writeSecretFile(p.Config.RefreshTokenFile, data); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func writeSecretFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func (p *Publisher) createPost(ctx context.Context, client *http.Client, accessToken, text string) (*createPostResponse, error) {
@@ -169,6 +276,51 @@ func (p *Publisher) createPost(ctx context.Context, client *http.Client, accessT
 		return nil, errors.New("x create post response did not include data.id")
 	}
 	return &out, nil
+}
+
+func (p *Publisher) verifyCreatedPost(ctx context.Context, client *http.Client, accessToken, postID, requestedText, responseText string) error {
+	if responseText == requestedText {
+		return nil
+	}
+	fetched, err := p.fetchPost(ctx, client, accessToken, postID)
+	if err != nil {
+		_ = p.deletePost(context.WithoutCancel(ctx), client, accessToken, postID)
+		return fmt.Errorf("x post %s could not be verified and was deleted: %w", postID, err)
+	}
+	if fetched.Data.Text == requestedText {
+		return nil
+	}
+	if err := p.deletePost(context.WithoutCancel(ctx), client, accessToken, postID); err != nil {
+		return fmt.Errorf("x post %s text differed from requested text and delete failed: %w", postID, err)
+	}
+	return fmt.Errorf("x post %s text differed from requested text and was deleted", postID)
+}
+
+func (p *Publisher) fetchPost(ctx context.Context, client *http.Client, accessToken, postID string) (*fetchPostResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Config.APIBase+"/2/tweets/"+url.PathEscape(postID), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", "backlight-x-publisher/1")
+	var out fetchPostResponse
+	if err := doJSON(client, req, &out); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out.Data.ID) == "" {
+		return nil, errors.New("x fetch post response did not include data.id")
+	}
+	return &out, nil
+}
+
+func (p *Publisher) deletePost(ctx context.Context, client *http.Client, accessToken, postID string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, p.Config.APIBase+"/2/tweets/"+url.PathEscape(postID), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", "backlight-x-publisher/1")
+	return doJSON(client, req, nil)
 }
 
 func doJSON(client *http.Client, req *http.Request, out any) error {
