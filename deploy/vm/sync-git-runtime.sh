@@ -105,6 +105,8 @@ run_in_worktree() {
 grant_lumoskit_runtime_read_access() {
   local path
   local runtime_paths=(
+    "${lumoskit_dir}/bin"
+    "${lumoskit_dir}/.venv-agents"
     "${lumoskit_dir}/scripts"
     "${lumoskit_dir}/prompts"
     "${lumoskit_dir}/external"
