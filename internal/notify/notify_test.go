@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,6 +163,31 @@ func TestRenderTelegramText_OmitsEmptyOptionalFields(t *testing.T) {
 		if strings.Contains(text, removed) {
 			t.Errorf("expected no noisy field %q, got:\n%s", removed, text)
 		}
+	}
+}
+
+func TestTelegramDeliverUsesExactPublishText(t *testing.T) {
+	want := "[Backlight Initial Analysis]\n\nmain body\n\nGitHub:\nhttps://github.com/BackwardLabs/Q1-2026/tree/main/test/2026-01/truebit"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bottoken/sendMessage" {
+			http.NotFound(w, r)
+			return
+		}
+		var body telegramRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.ChatID != "chat" || body.Text != want || body.ParseMode != "" {
+			t.Fatalf("telegram body = %+v", body)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	ch := &TelegramChannel{BotToken: "token", ChatID: "chat", APIBase: server.URL, Client: server.Client()}
+	status, err := ch.Deliver(context.Background(), Payload{Event: EventTelegramPublish, TelegramText: want})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("deliver status=%d err=%v", status, err)
 	}
 }
 

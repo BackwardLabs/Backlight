@@ -36,6 +36,10 @@ type Config struct {
 	XAPIBase                string
 	XUsername               string
 	XDryRun                 bool
+	XFeedEnabled            bool
+	XFeedSkillDir           string
+	XFeedIncludeAttackerCA  bool
+	TelegramPublishEnabled  bool
 	PreLumosEnabled         bool
 	PreLumosPythonBin       string
 	PreLumosAgentScript     string
@@ -91,6 +95,10 @@ func Load() (*Config, error) {
 		XAPIBase:                       envDefault("X_API_BASE", "https://api.x.com"),
 		XUsername:                      os.Getenv("X_ACCOUNT_USERNAME"),
 		XDryRun:                        envBool("X_DRY_RUN", true),
+		XFeedEnabled:                   envBool("HELIOS_X_FEED_ENABLED", false),
+		XFeedSkillDir:                  envDefault("HELIOS_X_FEED_SKILL_DIR", "skills/x-feed"),
+		XFeedIncludeAttackerCA:         envBool("HELIOS_X_FEED_INCLUDE_ATTACKER_CA", false),
+		TelegramPublishEnabled:         envBool("TELEGRAM_PUBLISH_ENABLED", false),
 		PreLumosEnabled:                envBool("HELIOS_PRE_LUMOS_ENABLED", false),
 		PreLumosPythonBin:              envDefault("HELIOS_PRE_LUMOS_PYTHON_BIN", "python3"),
 		PreLumosAgentScript:            envDefault("HELIOS_PRE_LUMOS_AGENT_SCRIPT", "scripts/pre_lumos_agent.py"),

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,11 +26,12 @@ import (
 )
 
 const (
-	EventVerified      = "verified"
-	EventPartial       = "partial"
-	EventUnverified    = "unverified"
-	EventEngineError   = "engine_error"
-	EventHandoffFailed = "handoff_failed"
+	EventVerified        = "verified"
+	EventPartial         = "partial"
+	EventUnverified      = "unverified"
+	EventEngineError     = "engine_error"
+	EventHandoffFailed   = "handoff_failed"
+	EventTelegramPublish = "telegram_publish"
 )
 
 // Channel is the surface every notification transport implements.
@@ -74,6 +76,7 @@ type Payload struct {
 	AutoRerunResumeStage string  `json:"auto_rerun_resume_stage,omitempty"`
 	ResumeStage          string  `json:"resume_stage,omitempty"`
 	LumoskitStage        string  `json:"lumoskit_stage,omitempty"`
+	TelegramText         string  `json:"telegram_text,omitempty"`
 }
 
 func PayloadFromCase(c *store.Case, event string) Payload {
@@ -324,6 +327,35 @@ func (n *Notifier) Notify(ctx context.Context, c *store.Case, event string) {
 	if err := n.Store.SetNotificationStatus(ctx, c.CaseID, final); err != nil {
 		log.Warn("set notification_status final failed", "err", err, "final", final)
 	}
+}
+
+// NotifyTelegramText delivers an already-rendered public publish message to
+// Telegram only. It records notification attempts but does not mutate the case's
+// lifecycle notification_status because this is a publish side effect, not the
+// operator outcome alert.
+func (n *Notifier) NotifyTelegramText(ctx context.Context, c *store.Case, event, text string) bool {
+	if !n.Configured() || strings.TrimSpace(text) == "" {
+		return false
+	}
+	logger := n.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	log := logger.With("case_id", c.CaseID, "event", event)
+	payload := PayloadFromCase(c, event)
+	payload.TelegramText = text
+	allOK := true
+	delivered := false
+	for _, ch := range n.Channels {
+		if ch.Name() != "telegram" {
+			continue
+		}
+		delivered = true
+		if !n.deliverChannel(ctx, ch, payload, log) {
+			allOK = false
+		}
+	}
+	return delivered && allOK
 }
 
 // deliverChannel runs the bounded exp backoff loop for one channel.

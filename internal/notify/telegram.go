@@ -39,9 +39,13 @@ func (t *TelegramChannel) endpoint() string {
 }
 
 func (t *TelegramChannel) Deliver(ctx context.Context, p Payload) (int, error) {
+	text := p.TelegramText
+	if text == "" {
+		text = renderTelegramText(p)
+	}
 	body, err := json.Marshal(telegramRequest{
 		ChatID: t.ChatID,
-		Text:   renderTelegramText(p),
+		Text:   text,
 	})
 	if err != nil {
 		return 0, err

@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/outcome"
 	"github.com/UPside-Lumos-V2/helios/internal/prelumos"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
+	"github.com/UPside-Lumos-V2/helios/internal/xfeed"
 	"github.com/UPside-Lumos-V2/helios/internal/xpublish"
 )
 
@@ -35,7 +37,9 @@ type Worker struct {
 	Dispatcher                  *handoff.Dispatcher // nil iff no downstream URLs are configured
 	Notifier                    *notify.Notifier    // nil iff no operator channel is configured
 	GitHubPublisher             *githubpublish.Publisher
+	XFeedRunner                 *xfeed.Runner
 	XPublisher                  *xpublish.Publisher
+	TelegramPublishEnabled      bool
 	PreLumosRunner              *prelumos.Runner
 	PartialAutoRerunMaxAttempts int
 	OutputRootParent            string
@@ -408,25 +412,30 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mapped outcom
 				"case_id", publishCase.CaseID,
 				"reason", res.SkipReason,
 			)
-			w.publishX(ctx, c, mapped)
+			if !w.xFeedConfigured() {
+				w.publishX(ctx, c, mapped)
+			}
 			return
 		}
 		if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish", map[string]any{
-			"published":    true,
-			"commit_sha":   res.CommitSHA,
-			"target_dir":   res.TargetDir,
-			"poc_url":      res.PoCURL,
-			"report_url":   res.ReportURL,
-			"commit_url":   res.CommitURL,
-			"target_urls":  res.TargetURLs,
-			"outcome":      mapped.Outcome,
-			"publish_tier": mapped.PublishTier,
-			"poc_state":    mapped.PoCState,
-			"rca_state":    mapped.RCAState,
+			"published":      true,
+			"commit_sha":     res.CommitSHA,
+			"target_dir":     res.TargetDir,
+			"target_dir_url": res.TargetDirURL,
+			"poc_url":        res.PoCURL,
+			"report_url":     res.ReportURL,
+			"commit_url":     res.CommitURL,
+			"target_urls":    res.TargetURLs,
+			"outcome":        mapped.Outcome,
+			"publish_tier":   mapped.PublishTier,
+			"poc_state":      mapped.PoCState,
+			"rca_state":      mapped.RCAState,
 		}); err != nil {
 			w.Logger.Error("record github publish event failed", "case_id", publishCase.CaseID, "err", err)
 		}
-		w.publishX(ctx, c, mapped)
+		if !w.publishXFeedThread(ctx, c, mapped, res) {
+			w.publishX(ctx, c, mapped)
+		}
 		w.Logger.Info("github publish complete",
 			"case_id", publishCase.CaseID,
 			"commit_sha", res.CommitSHA,
@@ -434,6 +443,184 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mapped outcom
 		)
 	}()
 	return true
+}
+
+func (w *Worker) xFeedConfigured() bool {
+	return w.XFeedRunner != nil && w.XFeedRunner.Configured()
+}
+
+func (w *Worker) publishXFeedThread(ctx context.Context, c *store.Case, mapped outcome.Result, githubRes *githubpublish.Result) bool {
+	if !w.xFeedConfigured() || c.OutputRoot == nil {
+		return false
+	}
+	if githubRes == nil || !githubRes.Published {
+		return true
+	}
+	draft, err := w.XFeedRunner.Run(ctx, xfeed.Case{
+		CaseID:       c.CaseID,
+		Chain:        c.Chain,
+		TxHash:       c.TxHash,
+		OutputRoot:   *c.OutputRoot,
+		IncidentSlug: store.IncidentSlug(c),
+		Outcome:      mapped.Outcome,
+		PublishTier:  mapped.PublishTier,
+		PoCState:     mapped.PoCState,
+		RCAState:     mapped.RCAState,
+		ReportURL:    githubRes.ReportURL,
+		PoCURL:       githubRes.PoCURL,
+		GitHubURL:    githubRes.TargetDirURL,
+	})
+	if err != nil {
+		w.Logger.Error("x feed draft failed", "case_id", c.CaseID, "err", err)
+		if recordErr := w.Store.AppendCaseEvent(ctx, c.CaseID, "x_feed_draft_failed", map[string]any{
+			"ready_to_publish": false,
+			"error":            err.Error(),
+			"outcome":          mapped.Outcome,
+			"publish_tier":     mapped.PublishTier,
+			"poc_state":        mapped.PoCState,
+			"rca_state":        mapped.RCAState,
+		}); recordErr != nil {
+			w.Logger.Error("record x feed draft failure event failed", "case_id", c.CaseID, "err", recordErr)
+		}
+		return true
+	}
+	if err := w.Store.AppendCaseEvent(ctx, c.CaseID, "x_feed_draft", map[string]any{
+		"ready_to_publish":   draft.ReadyToPublish,
+		"status_label":       draft.StatusLabel,
+		"main_post":          draft.MainPost,
+		"reply_post":         draft.ReplyPost,
+		"telegram_post":      draft.TelegramPost,
+		"image_mode":         draft.ImageMode,
+		"image_path":         draft.ImagePath,
+		"format":             draft.Format,
+		"source_format_path": draft.SourceFormat,
+		"status_path":        draft.StatusPath,
+		"main_post_path":     draft.MainPostPath,
+		"reply_post_path":    draft.ReplyPostPath,
+		"telegram_post_path": draft.TelegramPostPath,
+		"explorer_url":       draft.ExplorerURL,
+		"github_url":         draft.GitHubURL,
+		"report_url":         draft.ReportURL,
+		"poc_url":            draft.PoCURL,
+		"blockers":           draft.Blockers,
+		"outcome":            mapped.Outcome,
+		"publish_tier":       mapped.PublishTier,
+		"poc_state":          mapped.PoCState,
+		"rca_state":          mapped.RCAState,
+	}); err != nil {
+		w.Logger.Error("record x feed draft event failed", "case_id", c.CaseID, "err", err)
+	}
+	if !draft.ReadyToPublish || !outcome.ShouldPublishX(mapped) || w.XPublisher == nil || !w.XPublisher.Configured() {
+		return true
+	}
+	res, err := w.XPublisher.PublishThread(ctx, xpublish.Thread{
+		MainText:  draft.MainPost,
+		ReplyText: draft.ReplyPost,
+		MediaPath: draft.ImagePath,
+	})
+	if err != nil {
+		w.Logger.Error("x publish failed", "case_id", c.CaseID, "err", err)
+		if recordErr := w.Store.AppendCaseEvent(ctx, c.CaseID, "x_publish_failed", map[string]any{
+			"published":    false,
+			"platform":     "x",
+			"error":        err.Error(),
+			"format":       draft.Format,
+			"outcome":      mapped.Outcome,
+			"publish_tier": mapped.PublishTier,
+			"poc_state":    mapped.PoCState,
+			"rca_state":    mapped.RCAState,
+		}); recordErr != nil {
+			w.Logger.Error("record x publish failure event failed", "case_id", c.CaseID, "err", recordErr)
+		}
+		return true
+	}
+	if err := w.Store.AppendCaseEvent(ctx, c.CaseID, "x_publish", map[string]any{
+		"published":             res.Published,
+		"dry_run":               res.DryRun,
+		"platform":              res.Platform,
+		"post_id":               res.PostID,
+		"post_url":              res.PostURL,
+		"reply_post_id":         res.ReplyPostID,
+		"reply_post_url":        res.ReplyPostURL,
+		"text":                  res.Text,
+		"reply_text":            res.ReplyText,
+		"template":              res.Template,
+		"media_id":              res.MediaID,
+		"refresh_returned":      res.RefreshReturned,
+		"refresh_token_updated": res.RefreshTokenUpdated,
+		"post_text_verified":    res.PostTextVerified,
+		"reply_text_verified":   res.ReplyTextVerified,
+		"outcome":               mapped.Outcome,
+		"publish_tier":          mapped.PublishTier,
+		"poc_state":             mapped.PoCState,
+		"rca_state":             mapped.RCAState,
+	}); err != nil {
+		w.Logger.Error("record x publish event failed", "case_id", c.CaseID, "err", err)
+	}
+	w.Logger.Info("x publish complete",
+		"case_id", c.CaseID,
+		"published", res.Published,
+		"dry_run", res.DryRun,
+		"post_id", res.PostID,
+		"reply_post_id", res.ReplyPostID,
+	)
+	if res.Published && !res.DryRun && w.TelegramPublishEnabled {
+		w.publishTelegramPost(ctx, c, mapped, draft, res.PostURL)
+	}
+	return true
+}
+
+func (w *Worker) publishTelegramPost(ctx context.Context, c *store.Case, mapped outcome.Result, draft *xfeed.Result, xURL string) {
+	text := telegramPostWithXURL(draft.TelegramPost, xURL)
+	sent := false
+	errText := ""
+	if w.Notifier == nil || !w.Notifier.Configured() {
+		errText = "telegram notifier is not configured"
+	} else {
+		refreshed, err := w.Store.GetCase(ctx, c.CaseID)
+		if err != nil || refreshed == nil {
+			errText = "could not refresh case before telegram publish"
+			w.Logger.Warn("telegram publish skipped: could not refresh case", "case_id", c.CaseID, "err", err)
+		} else {
+			sent = w.Notifier.NotifyTelegramText(ctx, refreshed, notify.EventTelegramPublish, text)
+			if !sent {
+				errText = "telegram delivery failed or no telegram channel configured"
+			}
+		}
+	}
+	payload := map[string]any{
+		"published":    sent,
+		"platform":     "telegram",
+		"text":         text,
+		"github_url":   draft.GitHubURL,
+		"x_url":        strings.TrimSpace(xURL),
+		"report_url":   draft.ReportURL,
+		"outcome":      mapped.Outcome,
+		"publish_tier": mapped.PublishTier,
+		"poc_state":    mapped.PoCState,
+		"rca_state":    mapped.RCAState,
+	}
+	if errText != "" {
+		payload["error"] = errText
+	}
+	if err := w.Store.AppendCaseEvent(ctx, c.CaseID, notify.EventTelegramPublish, payload); err != nil {
+		w.Logger.Error("record telegram publish event failed", "case_id", c.CaseID, "err", err)
+	}
+}
+
+func telegramPostWithXURL(text, xURL string) string {
+	text = strings.TrimSpace(text)
+	xURL = strings.TrimSpace(xURL)
+	if xURL == "" {
+		return text
+	}
+	if strings.Contains(text, "\nX:\n"+xURL) {
+		return text
+	}
+	if text == "" {
+		return "X:\n" + xURL
+	}
+	return text + "\n\nX:\n" + xURL
 }
 
 func (w *Worker) publishX(ctx context.Context, c *store.Case, mapped outcome.Result) bool {

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,8 +22,10 @@ import (
 )
 
 const (
-	defaultAPIBase  = "https://api.x.com"
-	templateVersion = "backlight_verified_incident_v1"
+	defaultAPIBase       = "https://api.x.com"
+	templateVersion      = "backlight_verified_incident_v1"
+	threadFormatVersion  = "backlight_x_feed_thread_v1"
+	defaultMediaCategory = "tweet_image"
 )
 
 //go:embed templates/x_verified_incident.md
@@ -55,17 +59,28 @@ type Case struct {
 	Outcome      string
 }
 
+type Thread struct {
+	MainText  string
+	ReplyText string
+	MediaPath string
+}
+
 type Result struct {
 	Published           bool   `json:"published"`
 	DryRun              bool   `json:"dry_run,omitempty"`
 	Platform            string `json:"platform"`
 	PostID              string `json:"post_id,omitempty"`
 	PostURL             string `json:"post_url,omitempty"`
+	ReplyPostID         string `json:"reply_post_id,omitempty"`
+	ReplyPostURL        string `json:"reply_post_url,omitempty"`
 	Text                string `json:"text"`
+	ReplyText           string `json:"reply_text,omitempty"`
 	Template            string `json:"template"`
+	MediaID             string `json:"media_id,omitempty"`
 	RefreshReturned     bool   `json:"refresh_returned,omitempty"`
 	RefreshTokenUpdated bool   `json:"refresh_token_updated,omitempty"`
 	PostTextVerified    bool   `json:"post_text_verified,omitempty"`
+	ReplyTextVerified   bool   `json:"reply_text_verified,omitempty"`
 }
 
 type tokenResponse struct {
@@ -88,6 +103,18 @@ type fetchPostResponse struct {
 		ID   string `json:"id"`
 		Text string `json:"text"`
 	} `json:"data"`
+}
+
+type uploadMediaResponse struct {
+	Data struct {
+		ID       string `json:"id"`
+		MediaKey string `json:"media_key"`
+	} `json:"data"`
+}
+
+type postOptions struct {
+	ReplyToID string
+	MediaIDs  []string
 }
 
 type postTemplateData struct {
@@ -122,12 +149,29 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	return p.publishThread(ctx, Thread{MainText: text}, templateVersion)
+}
+
+func (p *Publisher) PublishThread(ctx context.Context, thread Thread) (*Result, error) {
+	if !p.Configured() {
+		return nil, errors.New("x publisher is not enabled")
+	}
+	return p.publishThread(ctx, thread, threadFormatVersion)
+}
+
+func (p *Publisher) publishThread(ctx context.Context, thread Thread, template string) (*Result, error) {
+	text := strings.TrimSpace(thread.MainText)
+	if text == "" {
+		return nil, errors.New("x publish main text is required")
+	}
+	replyText := strings.TrimSpace(thread.ReplyText)
 	result := &Result{
 		Published: false,
 		DryRun:    p.Config.DryRun,
 		Platform:  "x",
 		Text:      text,
-		Template:  templateVersion,
+		ReplyText: replyText,
+		Template:  template,
 	}
 	if p.Config.DryRun {
 		return result, nil
@@ -151,18 +195,41 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	post, err := p.createPost(ctx, client, token.AccessToken, text)
+	var mediaIDs []string
+	if mediaPath := strings.TrimSpace(thread.MediaPath); mediaPath != "" {
+		media, err := p.uploadMedia(ctx, client, token.AccessToken, mediaPath)
+		if err != nil {
+			return nil, err
+		}
+		result.MediaID = media.Data.ID
+		mediaIDs = append(mediaIDs, media.Data.ID)
+	}
+	post, err := p.createPost(ctx, client, token.AccessToken, text, postOptions{MediaIDs: mediaIDs})
 	if err != nil {
 		return nil, err
 	}
 	textVerified := p.verifyCreatedPost(ctx, client, token.AccessToken, post.Data.ID, text, post.Data.Text)
+	var replyVerified bool
+	var reply *createPostResponse
+	if replyText != "" {
+		reply, err = p.createPost(ctx, client, token.AccessToken, replyText, postOptions{ReplyToID: post.Data.ID})
+		if err != nil {
+			return nil, err
+		}
+		replyVerified = p.verifyCreatedPost(ctx, client, token.AccessToken, reply.Data.ID, replyText, reply.Data.Text)
+	}
 	result.Published = true
 	result.DryRun = false
 	result.PostID = post.Data.ID
 	result.PostURL = p.postURL(post.Data.ID)
+	if reply != nil {
+		result.ReplyPostID = reply.Data.ID
+		result.ReplyPostURL = p.postURL(reply.Data.ID)
+	}
 	result.RefreshReturned = strings.TrimSpace(token.RefreshToken) != ""
 	result.RefreshTokenUpdated = refreshUpdated
 	result.PostTextVerified = textVerified
+	result.ReplyTextVerified = replyVerified
 	return result, nil
 }
 
@@ -274,8 +341,104 @@ func writeSecretFile(path string, data []byte) error {
 	return os.Rename(tmpName, path)
 }
 
-func (p *Publisher) createPost(ctx context.Context, client *http.Client, accessToken, text string) (*createPostResponse, error) {
+func (p *Publisher) uploadMedia(ctx context.Context, client *http.Client, accessToken, mediaPath string) (*uploadMediaResponse, error) {
+	source, fileName, mediaType, err := p.openMediaSource(ctx, client, mediaPath)
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("media", fileName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(part, source); err != nil {
+		return nil, err
+	}
+	if err := writer.WriteField("media_category", defaultMediaCategory); err != nil {
+		return nil, err
+	}
+	if err := writer.WriteField("media_type", mediaType); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.APIBase+"/2/media/upload", &body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("User-Agent", "backlight-x-publisher/1")
+	var out uploadMediaResponse
+	if err := doJSON(client, req, &out); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out.Data.ID) == "" {
+		return nil, errors.New("x media upload response did not include data.id")
+	}
+	return &out, nil
+}
+
+func (p *Publisher) openMediaSource(ctx context.Context, client *http.Client, mediaPath string) (io.ReadCloser, string, string, error) {
+	parsed, err := url.Parse(mediaPath)
+	if err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaPath, nil)
+		if err != nil {
+			return nil, "", "", err
+		}
+		req.Header.Set("User-Agent", "backlight-x-publisher/1")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, "", "", err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			defer resp.Body.Close()
+			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			return nil, "", "", fmt.Errorf("download x media %s returned HTTP %d: %s", mediaPath, resp.StatusCode, strings.TrimSpace(string(data)))
+		}
+		fileName := filepath.Base(parsed.Path)
+		if fileName == "." || fileName == "/" || fileName == "" {
+			fileName = "media"
+		}
+		return resp.Body, fileName, mediaMIMETypeFromHeaderOrPath(resp.Header.Get("Content-Type"), parsed.Path), nil
+	}
+	file, err := os.Open(mediaPath)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("open x media %s: %w", mediaPath, err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, "", "", fmt.Errorf("stat x media %s: %w", mediaPath, err)
+	}
+	if info.IsDir() {
+		file.Close()
+		return nil, "", "", fmt.Errorf("x media path %s is a directory", mediaPath)
+	}
+	return file, filepath.Base(mediaPath), mediaMIMETypeFromHeaderOrPath("", mediaPath), nil
+}
+
+func mediaMIMETypeFromHeaderOrPath(header, path string) string {
+	if header = strings.TrimSpace(header); header != "" {
+		return strings.Split(header, ";")[0]
+	}
+	if detected := mime.TypeByExtension(strings.ToLower(filepath.Ext(path))); detected != "" {
+		return strings.Split(detected, ";")[0]
+	}
+	return "application/octet-stream"
+}
+
+func (p *Publisher) createPost(ctx context.Context, client *http.Client, accessToken, text string, opts postOptions) (*createPostResponse, error) {
 	body := map[string]any{"text": text}
+	if strings.TrimSpace(opts.ReplyToID) != "" {
+		body["reply"] = map[string]string{"in_reply_to_tweet_id": strings.TrimSpace(opts.ReplyToID)}
+	}
+	if len(opts.MediaIDs) > 0 {
+		body["media"] = map[string]any{"media_ids": opts.MediaIDs}
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

@@ -369,6 +369,24 @@ to `outcome=verified`; `Report.md` is copied to `README.md` under
 generic fallback such as `unknown`, `lumos_*`, or `LumosKit-Run`, Backlight records
 a skipped publish event instead of creating a GitHub commit or failing the case.
 
+To enable the Backlight x-feed publish flow after GitHub publish succeeds:
+
+```bash
+X_PUBLISH_ENABLED=true
+X_DRY_RUN=false
+X_CLIENT_ID=<x-oauth-client-id>
+X_CLIENT_SECRET=<x-oauth-client-secret>
+X_REFRESH_TOKEN_FILE=/srv/backlight/data/x_refresh_token.json
+X_ACCOUNT_USERNAME=BackwardLabs
+HELIOS_X_FEED_ENABLED=true
+HELIOS_X_FEED_SKILL_DIR=skills/x-feed
+TELEGRAM_PUBLISH_ENABLED=true
+```
+
+The flow is GitHub publish -> x-feed draft -> X main post/reply -> Telegram
+publish. Telegram gets the same main X body with `GitHub:` and `X:` links
+appended.
+
 To enable Pre-Lumos importer JSON generation, install `uv` or provide a Python
 environment that already has `requirements-pre-lumos.txt` installed, then add:
 

@@ -15,8 +15,10 @@ import (
 
 	"github.com/UPside-Lumos-V2/helios/internal/githubpublish"
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
+	"github.com/UPside-Lumos-V2/helios/internal/notify"
 	"github.com/UPside-Lumos-V2/helios/internal/outcome"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
+	"github.com/UPside-Lumos-V2/helios/internal/xfeed"
 	"github.com/UPside-Lumos-V2/helios/internal/xpublish"
 )
 
@@ -241,6 +243,175 @@ func TestWorkerPublishesPartialProductArtifacts(t *testing.T) {
 	}
 	if !sawXPublish {
 		t.Fatalf("scope-limited partial x_publish event not found: %#v", events)
+	}
+}
+
+func TestWorkerXFeedPublishesXThreadThenTelegram(t *testing.T) {
+	ctx := context.Background()
+	outputParent := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("8", 64), nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = st.ClaimNextQueued(ctx, outputParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	github := newFakeGitHub(t)
+	defer github.server.Close()
+	githubPublisher := githubpublish.New(githubpublish.Config{Token: "test-token", APIBase: github.server.URL})
+	githubPublisher.Client = github.server.Client()
+
+	var xPostCount int
+	xServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/2/oauth2/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-token",
+				"expires_in":   7200,
+				"token_type":   "bearer",
+			})
+		case "/2/tweets":
+			xPostCount++
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			switch xPostCount {
+			case 1:
+				text := body["text"].(string)
+				if !strings.Contains(text, "[Backlight Initial Analysis]") || !strings.Contains(text, "Need more detail? Check our repo and analysis thread below ↓ 🧵") {
+					t.Fatalf("main X body = %q", text)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": "main-id", "text": text}})
+			case 2:
+				text := body["text"].(string)
+				reply, ok := body["reply"].(map[string]any)
+				if !ok || reply["in_reply_to_tweet_id"] != "main-id" || !strings.Contains(text, "1/ Artifacts + analysis 🧾") {
+					t.Fatalf("reply X body = %#v", body)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": "reply-id", "text": text}})
+			default:
+				t.Fatalf("unexpected X post count %d", xPostCount)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer xServer.Close()
+
+	var telegramMu sync.Mutex
+	var telegramTexts []string
+	telegramServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		telegramMu.Lock()
+		telegramTexts = append(telegramTexts, body.Text)
+		telegramMu.Unlock()
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer telegramServer.Close()
+
+	xPublisher := xpublish.New(xpublish.Config{
+		Enabled:      true,
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		RefreshToken: "refresh-token",
+		APIBase:      xServer.URL,
+		Username:     "BackwardLabs",
+		DryRun:       false,
+	})
+	xPublisher.Client = xServer.Client()
+	notifier := &notify.Notifier{
+		Store:       st,
+		Channels:    []notify.Channel{&notify.TelegramChannel{BotToken: "token", ChatID: "chat", APIBase: telegramServer.URL, Client: telegramServer.Client()}},
+		MaxAttempts: 1,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	w := &Worker{
+		Store:                  st,
+		Runner:                 &lumoskit.Runner{Binary: writePartialPublishLumoskit(t, t.TempDir())},
+		GitHubPublisher:        githubPublisher,
+		XFeedRunner:            &xfeed.Runner{Enabled: true, SkillDir: writeWorkerSkillDir(t)},
+		XPublisher:             xPublisher,
+		Notifier:               notifier,
+		TelegramPublishEnabled: true,
+		Logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	w.process(ctx, c)
+	w.Wait()
+
+	if xPostCount != 2 {
+		t.Fatalf("X post count = %d, want 2", xPostCount)
+	}
+	events, err := st.CaseEvents(ctx, c.CaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var draftText, xText, tgText, githubURL, xURL string
+	var sawDraft, sawX, sawTelegram bool
+	for _, event := range events {
+		var payload map[string]any
+		if len(event.Payload) > 0 {
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal event %s: %v", event.EventType, err)
+			}
+		}
+		switch event.EventType {
+		case "x_feed_draft":
+			sawDraft = true
+			if payload["ready_to_publish"] != true {
+				t.Fatalf("x_feed_draft payload = %#v", payload)
+			}
+			draftText = payload["main_post"].(string)
+			githubURL = payload["github_url"].(string)
+		case "x_publish":
+			sawX = true
+			if payload["published"] != true || payload["reply_post_id"] != "reply-id" {
+				t.Fatalf("x_publish payload = %#v", payload)
+			}
+			xText = payload["text"].(string)
+			xURL = payload["post_url"].(string)
+		case notify.EventTelegramPublish:
+			sawTelegram = true
+			if payload["published"] != true {
+				t.Fatalf("telegram_publish payload = %#v", payload)
+			}
+			if payload["x_url"] != "https://x.com/BackwardLabs/status/main-id" {
+				t.Fatalf("telegram_publish x_url = %#v", payload["x_url"])
+			}
+			tgText = payload["text"].(string)
+		}
+	}
+	if !sawDraft || !sawX || !sawTelegram {
+		t.Fatalf("missing publish events draft=%v x=%v telegram=%v events=%#v", sawDraft, sawX, sawTelegram, events)
+	}
+	if draftText == "" || draftText != xText {
+		t.Fatalf("draft/main X mismatch draft=%q x=%q", draftText, xText)
+	}
+	telegramMu.Lock()
+	deliveredTelegramTexts := append([]string(nil), telegramTexts...)
+	telegramMu.Unlock()
+	foundDeliveredPublish := false
+	for _, text := range deliveredTelegramTexts {
+		if text == tgText && strings.Contains(text, draftText+"\n\nGitHub:\n"+githubURL+"\n\nX:\n"+xURL) {
+			foundDeliveredPublish = true
+		}
+	}
+	if !foundDeliveredPublish {
+		t.Fatalf("telegram publish text not delivered texts=%q event=%q github=%q", deliveredTelegramTexts, tgText, githubURL)
 	}
 }
 
@@ -608,6 +779,19 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		}
 	}))
 	return f
+}
+
+func writeWorkerSkillDir(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	path := filepath.Join(root, "skills", "draft-x-exploit-thread", "references", "incident-post-format.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# Backlight Incident Post Format\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 func writePublishLumoskit(t *testing.T, dir string) string {

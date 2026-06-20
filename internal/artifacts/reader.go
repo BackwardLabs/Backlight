@@ -38,6 +38,10 @@ var defaultArtifacts = []artifactSpec{
 	{PublicPath: "report_bundle/evidence/fund_flows.json", SourcePath: "report_bundle/evidence/fund_flows.json"},
 	{PublicPath: "report_bundle/visuals/asset_deltas.dot", SourcePath: "report_bundle/visuals/asset_deltas.dot"},
 	{PublicPath: "report_bundle/visuals/fund_flows.dot", SourcePath: "report_bundle/visuals/fund_flows.dot"},
+	{PublicPath: "x-feed-status.json", SourcePath: "x-feed-status.json"},
+	{PublicPath: "x-feed-main-post.txt", SourcePath: "x-feed-main-post.txt"},
+	{PublicPath: "x-feed-reply-post.txt", SourcePath: "x-feed-reply-post.txt"},
+	{PublicPath: "x-feed-telegram-post.txt", SourcePath: "x-feed-telegram-post.txt"},
 }
 
 var ecwArtifacts = []artifactSpec{
@@ -59,6 +63,10 @@ var ecwArtifacts = []artifactSpec{
 	{PublicPath: "report_bundle/evidence/fund_flows.json", SourcePath: "report_bundle/evidence/fund_flows.json"},
 	{PublicPath: "report_bundle/visuals/asset_deltas.dot", SourcePath: "report_bundle/visuals/asset_deltas.dot"},
 	{PublicPath: "report_bundle/visuals/fund_flows.dot", SourcePath: "report_bundle/visuals/fund_flows.dot"},
+	{PublicPath: "x-feed-status.json", SourcePath: "x-feed-status.json"},
+	{PublicPath: "x-feed-main-post.txt", SourcePath: "x-feed-main-post.txt"},
+	{PublicPath: "x-feed-reply-post.txt", SourcePath: "x-feed-reply-post.txt"},
+	{PublicPath: "x-feed-telegram-post.txt", SourcePath: "x-feed-telegram-post.txt"},
 	{PublicPath: "artifacts/agent_poc/attack_flow.md", SourcePath: "artifacts/agent_poc/attack_flow.md"},
 	{PublicPath: "artifacts/agent_poc/multi_leg_reconciliation.md", SourcePath: "artifacts/agent_poc/multi_leg_reconciliation.md"},
 	{PublicPath: "artifacts/agent_poc/multi_leg_reconciliation.json", SourcePath: "artifacts/agent_poc/multi_leg_reconciliation.json"},

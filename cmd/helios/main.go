@@ -21,6 +21,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/prelumos"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 	"github.com/UPside-Lumos-V2/helios/internal/worker"
+	"github.com/UPside-Lumos-V2/helios/internal/xfeed"
 	"github.com/UPside-Lumos-V2/helios/internal/xpublish"
 )
 
@@ -113,6 +114,17 @@ func main() {
 		"dry_run", cfg.XDryRun,
 		"username_set", cfg.XUsername != "",
 	)
+	xFeedRunner := &xfeed.Runner{
+		Enabled:           cfg.XFeedEnabled,
+		SkillDir:          cfg.XFeedSkillDir,
+		IncludeAttackerCA: cfg.XFeedIncludeAttackerCA,
+	}
+	logger.Info("x feed runner configured",
+		"enabled", xFeedRunner.Configured(),
+		"skill_dir", cfg.XFeedSkillDir,
+		"include_attacker_ca", cfg.XFeedIncludeAttackerCA,
+		"telegram_publish_enabled", cfg.TelegramPublishEnabled,
+	)
 	preLumosRunner := &prelumos.Runner{
 		Enabled:       cfg.PreLumosEnabled,
 		PythonBin:     cfg.PreLumosPythonBin,
@@ -149,7 +161,9 @@ func main() {
 		Dispatcher:                  dispatcher,
 		Notifier:                    notifier,
 		GitHubPublisher:             githubPublisher,
+		XFeedRunner:                 xFeedRunner,
 		XPublisher:                  xPublisher,
+		TelegramPublishEnabled:      cfg.TelegramPublishEnabled,
 		PreLumosRunner:              preLumosRunner,
 		PartialAutoRerunMaxAttempts: cfg.PartialAutoRerunMaxAttempts,
 		OutputRootParent:            cfg.OutputRoot,

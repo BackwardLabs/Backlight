@@ -88,6 +88,10 @@ precedence; `.env.local` can override `.env`.
 | `X_API_BASE` | no | `https://api.x.com` | override for tests or proxies |
 | `X_ACCOUNT_USERNAME` | no | empty | optional username used to build the public `post_url`; omit to use `https://x.com/i/web/status/{id}` |
 | `X_DRY_RUN` | no | `true` | when true, records the generated X post text as `x_publish` without calling X |
+| `HELIOS_X_FEED_ENABLED` | no | `false` | enables the structured x-feed draft path after successful GitHub publish |
+| `HELIOS_X_FEED_SKILL_DIR` | no | `skills/x-feed` | vendored x-feed skill directory containing `incident-post-format.md` |
+| `HELIOS_X_FEED_INCLUDE_ATTACKER_CA` | no | `false` | opt-in switch for attacker CA details in the X reply |
+| `TELEGRAM_PUBLISH_ENABLED` | no | `false` | after live X thread publish succeeds, sends the same main X body plus GitHub and X links to Telegram |
 | `HELIOS_PRE_LUMOS_ENABLED` | no | `false` | enables the Pre-Lumos Agent SDK sidecar for verified cases |
 | `HELIOS_PRE_LUMOS_SEED_ROOT` | when enabled | empty | repo/root where `seed/import_{YEAR}.json` should be merged by slug |
 | `HELIOS_PRE_LUMOS_OPENAI_BASE_URL` | no | `http://127.0.0.1:10631/v1` | OpenAI-compatible API proxy for the Agent SDK runner |
@@ -150,11 +154,22 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   Backlight can persist rotated refresh tokens with `0600` permissions. SQLite
   events record only `refresh_returned` / `refresh_token_updated`; token
   material is never stored in case events.
-- **X post verification.** Backlight sends one X post and does not split long
-  incident text into a thread. After create, it verifies the returned/fetched
-  post text matches the requested template. If X truncates or mutates the body,
-  Backlight keeps the post and records `post_text_verified=false` in the
-  `x_publish` event.
+- **x-feed publish sequence.** When `HELIOS_X_FEED_ENABLED=true`, Backlight waits
+  for GitHub artifact publish to succeed, drafts `x-feed-main-post.txt`,
+  `x-feed-reply-post.txt`, `x-feed-telegram-post.txt`, and `x-feed-status.json`,
+  then publishes the X main post and reply. `ready_to_publish=false` blocks X
+  posting when required public URLs or the vendored format file are missing.
+- **X media upload.** If the x-feed draft supplies `image_path`, Backlight uploads
+  it through X API v2 media upload before creating the main post, then attaches
+  the returned media id to `POST /2/tweets`.
+- **X post verification.** After each create call, Backlight verifies the
+  returned/fetched post text matches the requested text. If X truncates or
+  mutates the body, Backlight keeps the post and records
+  `post_text_verified=false` or `reply_text_verified=false` in `x_publish`.
+- **Telegram publish.** With `TELEGRAM_PUBLISH_ENABLED=true`, Telegram receives
+  the main X body exactly plus `GitHub:\n<target directory URL>` and
+  `X:\n<main post URL>` after live X publishing succeeds. X dry runs do not send
+  Telegram publish messages.
 - **X post template.** The default template is embedded from
   `internal/xpublish/templates/x_verified_incident.md`. Set
   `X_POST_TEMPLATE_PATH` to point at a Markdown Go `text/template` file when

@@ -13,7 +13,7 @@ Usage:
 
 Defaults:
   WORKSPACE_DIR=/home/ubuntu/lumos
-  HELIOS_WORKTREE=$WORKSPACE_DIR/helios
+  HELIOS_WORKTREE=$WORKSPACE_DIR/backlight
   LUMOSKIT_WORKTREE=$WORKSPACE_DIR/lumoskit
   HELIOS_BASE_DIR=/srv/backlight
   HELIOS_SERVICE_USER=backlight
@@ -38,7 +38,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 workspace_dir="${WORKSPACE_DIR:-/home/ubuntu/lumos}"
-helios_dir="${HELIOS_WORKTREE:-${workspace_dir}/helios}"
+helios_dir="${HELIOS_WORKTREE:-${workspace_dir}/backlight}"
 lumoskit_dir="${LUMOSKIT_WORKTREE:-${workspace_dir}/lumoskit}"
 base_dir="${HELIOS_BASE_DIR:-/srv/backlight}"
 service_user="${HELIOS_SERVICE_USER:-backlight}"
@@ -175,7 +175,8 @@ mkdir -p \
   "${base_dir}/data/.svm" \
   "${base_dir}/data/.local/share" \
   "${base_dir}/env" \
-  "${base_dir}/logs"
+  "${base_dir}/logs" \
+  "${base_dir}/skills"
 
 chmod 750 "${base_dir}/data" "${base_dir}/data/outputs" "${base_dir}/logs"
 chmod 750 "${base_dir}/data/.svm" "${base_dir}/data/.local" "${base_dir}/data/.local/share"
@@ -192,6 +193,12 @@ run_in_worktree "${lumoskit_dir}" cargo build --release --bin lumoskit
 
 echo "==> Installing binaries"
 install -o root -g root -m 0755 "${helios_dir}/dist/backlight" "${base_dir}/bin/backlight"
+rm -rf "${base_dir}/skills"
+if [[ -d "${helios_dir}/skills" ]]; then
+  cp -a "${helios_dir}/skills" "${base_dir}/skills"
+  chown -R root:"${service_user}" "${base_dir}/skills"
+  chmod -R g+rX "${base_dir}/skills"
+fi
 install -o "$(git_user_for "${lumoskit_dir}")" -g "${service_user}" -m 0755 \
   "${lumoskit_dir}/target/release/lumoskit" \
   "${lumoskit_dir}/bin/lumoskit"

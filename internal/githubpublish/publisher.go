@@ -54,14 +54,15 @@ type Case struct {
 }
 
 type Result struct {
-	Published  bool     `json:"published"`
-	SkipReason string   `json:"skip_reason,omitempty"`
-	CommitSHA  string   `json:"commit_sha,omitempty"`
-	TargetDir  string   `json:"target_dir,omitempty"`
-	PoCURL     string   `json:"poc_url,omitempty"`
-	ReportURL  string   `json:"report_url,omitempty"`
-	CommitURL  string   `json:"commit_url,omitempty"`
-	TargetURLs []string `json:"target_urls,omitempty"`
+	Published    bool     `json:"published"`
+	SkipReason   string   `json:"skip_reason,omitempty"`
+	CommitSHA    string   `json:"commit_sha,omitempty"`
+	TargetDir    string   `json:"target_dir,omitempty"`
+	TargetDirURL string   `json:"target_dir_url,omitempty"`
+	PoCURL       string   `json:"poc_url,omitempty"`
+	ReportURL    string   `json:"report_url,omitempty"`
+	CommitURL    string   `json:"commit_url,omitempty"`
+	TargetURLs   []string `json:"target_urls,omitempty"`
 }
 
 type targetFile struct {
@@ -119,14 +120,17 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	targetDir := path.Join("test", spec.Month, spec.Protocol)
 	pocURL := p.githubBlobURL(spec.Files[0].Path)
 	reportURL := p.githubBlobURL(spec.Files[1].Path)
+	targetDirURL := p.githubTreeURL(targetDir)
 	return &Result{
-		Published: true,
-		CommitSHA: commitSHA,
-		TargetDir: targetDir,
-		PoCURL:    pocURL,
-		ReportURL: reportURL,
-		CommitURL: p.githubCommitURL(commitSHA),
+		Published:    true,
+		CommitSHA:    commitSHA,
+		TargetDir:    targetDir,
+		TargetDirURL: targetDirURL,
+		PoCURL:       pocURL,
+		ReportURL:    reportURL,
+		CommitURL:    p.githubCommitURL(commitSHA),
 		TargetURLs: []string{
+			targetDirURL,
 			pocURL,
 			reportURL,
 		},
@@ -278,6 +282,10 @@ Not-tested: Foundry re-run inside BackwardLabs/Q1-2026
 
 func (p *Publisher) githubBlobURL(filePath string) string {
 	return fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", p.Config.Owner, p.Config.Repo, p.Config.Branch, filePath)
+}
+
+func (p *Publisher) githubTreeURL(dirPath string) string {
+	return fmt.Sprintf("https://github.com/%s/%s/tree/%s/%s", p.Config.Owner, p.Config.Repo, p.Config.Branch, dirPath)
 }
 
 func (p *Publisher) githubCommitURL(sha string) string {

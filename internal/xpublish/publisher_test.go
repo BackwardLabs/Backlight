@@ -203,6 +203,28 @@ func TestPublishDryRunDoesNotCallXAPI(t *testing.T) {
 	}
 }
 
+func TestPublishThreadDryRunDoesNotCallXAPI(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	pub := New(Config{Enabled: true, DryRun: true, APIBase: server.URL})
+	pub.Client = server.Client()
+	res, err := pub.PublishThread(context.Background(), Thread{MainText: "main", ReplyText: "reply"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("X API was called during dry run")
+	}
+	if res.Published || !res.DryRun || res.Text != "main" || res.ReplyText != "reply" || res.Template != threadFormatVersion {
+		t.Fatalf("dry run thread result = %+v", res)
+	}
+}
+
 func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 	root := writeArtifacts(t)
 	tokenFile := filepath.Join(t.TempDir(), "x_refresh_token.json")
@@ -282,6 +304,109 @@ func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 		t.Fatal(err)
 	} else if info.Mode().Perm() != 0o600 {
 		t.Fatalf("token file permissions = %v", info.Mode().Perm())
+	}
+}
+
+func TestPublishThreadUploadsMediaAndCreatesReply(t *testing.T) {
+	mediaPath := filepath.Join(t.TempDir(), "card.png")
+	if err := os.WriteFile(mediaPath, []byte("png-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var sawRefresh, sawMedia bool
+	var postCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/2/oauth2/token":
+			sawRefresh = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-token",
+				"expires_in":   7200,
+				"token_type":   "bearer",
+			})
+		case "/2/media/upload":
+			sawMedia = true
+			if got := r.Header.Get("Authorization"); got != "Bearer access-token" {
+				t.Fatalf("media auth header = %q", got)
+			}
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Fatal(err)
+			}
+			if r.FormValue("media_category") != defaultMediaCategory || r.FormValue("media_type") != "image/png" {
+				t.Fatalf("media form category/type = %q/%q", r.FormValue("media_category"), r.FormValue("media_type"))
+			}
+			if _, _, err := r.FormFile("media"); err != nil {
+				t.Fatalf("media form file missing: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]string{"id": "media-1"},
+			})
+		case "/2/tweets":
+			postCount++
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			switch postCount {
+			case 1:
+				if body["text"] != "main text" {
+					t.Fatalf("main post body = %#v", body)
+				}
+				media, ok := body["media"].(map[string]any)
+				if !ok {
+					t.Fatalf("main post missing media: %#v", body)
+				}
+				ids, ok := media["media_ids"].([]any)
+				if !ok || len(ids) != 1 || ids[0] != "media-1" {
+					t.Fatalf("main post media ids = %#v", media["media_ids"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": map[string]string{"id": "main-id", "text": "main text"},
+				})
+			case 2:
+				if body["text"] != "reply text" {
+					t.Fatalf("reply post body = %#v", body)
+				}
+				reply, ok := body["reply"].(map[string]any)
+				if !ok || reply["in_reply_to_tweet_id"] != "main-id" {
+					t.Fatalf("reply linkage = %#v", body["reply"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": map[string]string{"id": "reply-id", "text": "reply text"},
+				})
+			default:
+				t.Fatalf("unexpected tweet create #%d", postCount)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	pub := New(Config{
+		Enabled:      true,
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		RefreshToken: "refresh-token",
+		APIBase:      server.URL,
+		Username:     "BackwardLabs",
+		DryRun:       false,
+	})
+	pub.Client = server.Client()
+	res, err := pub.PublishThread(context.Background(), Thread{MainText: "main text", ReplyText: "reply text", MediaPath: mediaPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sawRefresh || !sawMedia || postCount != 2 {
+		t.Fatalf("saw refresh=%v media=%v post_count=%d", sawRefresh, sawMedia, postCount)
+	}
+	if !res.Published || res.PostID != "main-id" || res.ReplyPostID != "reply-id" || res.MediaID != "media-1" {
+		t.Fatalf("thread publish result = %+v", res)
+	}
+	if res.PostURL != "https://x.com/BackwardLabs/status/main-id" || res.ReplyPostURL != "https://x.com/BackwardLabs/status/reply-id" {
+		t.Fatalf("thread publish urls = %+v", res)
+	}
+	if !res.PostTextVerified || !res.ReplyTextVerified {
+		t.Fatalf("thread text verification = %+v", res)
 	}
 }
 
