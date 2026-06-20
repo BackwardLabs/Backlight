@@ -387,7 +387,7 @@ func BuildPostWithTemplate(c Case, templatePath string) (string, error) {
 	attackFlow := readFile(filepath.Join(c.OutputRoot, "artifacts", "agent_poc", "attack_flow.md"))
 	allText := strings.Join([]string{report, rca, attackFlow, string(summary), string(reportJSON), string(assetDeltas)}, "\n")
 
-	protocol := firstText(jsonString(summary, "protocol_name"), jsonString(summary, "protocol"), field(report, "Protocol"), jsonString(reportJSON, "protocol_name", "protocol"), jsonString(reportJSON, "attacker_profit_symbol", "token_symbol"), titleFromSlug(c.IncidentSlug), titleFromSlug(filepath.Base(c.OutputRoot)), "unknown")
+	protocol := firstText(jsonString(summary, "protocol_name"), jsonString(summary, "protocol"), protocolFromSlug(c.IncidentSlug), protocolFromSlug(filepath.Base(c.OutputRoot)), field(report, "Protocol"), jsonString(reportJSON, "protocol_name", "protocol"), titleFromSlug(c.IncidentSlug), titleFromSlug(filepath.Base(c.OutputRoot)), "unknown")
 	chain := firstText(c.Chain, jsonString(summary, "chain"), jsonString(reportJSON, "chain"), field(report, "Chain"), "unknown")
 	tx := firstText(c.TxHash, txHash(allText), "unknown")
 	rootCause := rootCauseLine(reportJSON, rca, report)
@@ -660,7 +660,7 @@ func flowSteps(reportJSON []byte, attackFlow, report string) []string {
 		return []string{
 			"Attacker entry created tx-local helper contracts.",
 			fmt.Sprintf("Helpers repeatedly called %s.", fallback(entrypoint, "earned(address) then claimReward()")),
-			"Helpers forwarded PRXVT rewards back to the attacker entry.",
+			"Helpers forwarded proceeds back to the attacker entry.",
 		}
 	}
 	flow := headingBullets(report, 3, "Exploit flow", "Attack flow", "Flow")
@@ -808,6 +808,29 @@ func titleFromSlug(slug string) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+func protocolFromSlug(slug string) string {
+	slug = strings.Trim(strings.TrimSpace(slug), "_-/ ")
+	if slug == "" {
+		return ""
+	}
+	parts := regexp.MustCompile(`[_\-/\s]+`).Split(slug, -1)
+	var kept []string
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		lower := strings.ToLower(trimmed)
+		if trimmed == "" || regexp.MustCompile(`^\d+$`).MatchString(lower) || regexp.MustCompile(`^a\d+$`).MatchString(lower) || regexp.MustCompile(`^[0-9a-f]{8}$`).MatchString(lower) {
+			continue
+		}
+		switch lower {
+		case "ethereum", "eth", "base", "bsc", "arbitrum", "arb", "polygon", "poly", "txunknown", "unknown":
+			continue
+		default:
+			kept = append(kept, trimmed)
+		}
+	}
+	return strings.Join(kept, "_")
 }
 
 func oneLine(text string) string {

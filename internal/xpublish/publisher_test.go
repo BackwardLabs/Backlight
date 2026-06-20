@@ -100,6 +100,67 @@ func TestBuildPostUsesReportJSONAndAssetDeltas(t *testing.T) {
 	}
 }
 
+func TestBuildPostPrefersIncidentSlugOverTokenSymbol(t *testing.T) {
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "report_bundle", "report")
+	evidenceDir := filepath.Join(root, "report_bundle", "evidence")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := `{
+  "tx_hash": "0x` + strings.Repeat("b", 64) + `",
+  "chain": "bsc",
+  "token_symbol": "USDT",
+  "vulnerability": {
+    "root_cause": "OLPCToken._update burns transfer value during skim-triggered transfers."
+  },
+  "attack_summary": {
+    "public_entrypoint_called_per_iteration": "OLPC transfer -> PancakePair.skim(address) -> PancakePair.sync()"
+  },
+  "impact": {
+    "attacker_profit_symbol": "USDT",
+    "attacker_profit_formatted": "108753.775"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(reportDir, "report.json"), []byte(reportJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assetDeltas := `{
+  "asset_deltas": [
+    {"holder_role":"storage_contract","holder":"0x2222222222222222222222222222222222222222","asset_symbol":"USDT","balance_delta_raw":"-108753775731175923000000","asset_decimals":18},
+    {"holder_role":"attacker_entry","holder":"0x1111111111111111111111111111111111111111","asset_symbol":"WBNB","balance_delta_raw":"195568340183655000000","asset_decimals":18}
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(evidenceDir, "asset_deltas.json"), []byte(assetDeltas), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	text, err := BuildPost(Case{Chain: "bsc", TxHash: "0x" + strings.Repeat("b", 64), OutputRoot: root, IncidentSlug: "260620_bsc_pancakeswap_v2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Protocol: pancakeswap_v2",
+		"Helpers repeatedly called OLPC transfer -> PancakePair.skim(address) -> PancakePair.sync().",
+		"Helpers forwarded proceeds back to the attacker entry.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("post text missing %q:\n%s", want, text)
+		}
+	}
+	for _, notWant := range []string{
+		"Protocol: USDT",
+		"PRXVT rewards",
+	} {
+		if strings.Contains(text, notWant) {
+			t.Fatalf("post text contains %q:\n%s", notWant, text)
+		}
+	}
+}
+
 func TestBuildPostUsesTemplatePath(t *testing.T) {
 	root := writeArtifacts(t)
 	templatePath := filepath.Join(t.TempDir(), "x-template.md")
