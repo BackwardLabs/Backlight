@@ -28,8 +28,9 @@ type Result struct {
 }
 
 // RunOptions configures a LumosKit attempt. Empty Stage runs the default
-// all-stage pipeline. Stage agent_poc runs agent_poc followed by rca so a PoC
-// retry can still produce a complete product summary when it succeeds.
+// all-stage pipeline. Stage agent_poc or agent_poc_repair runs the PoC stage
+// followed by rca so a PoC retry can still produce a complete product summary
+// when it succeeds.
 type RunOptions struct {
 	Stage string
 }
@@ -40,6 +41,8 @@ func (o RunOptions) stages() []string {
 		return []string{""}
 	case "agent_poc", "poc":
 		return []string{"agent_poc", "rca"}
+	case "agent_poc_repair", "poc_repair", "economic_proof_repair":
+		return []string{"agent_poc_repair", "rca"}
 	default:
 		return []string{o.Stage}
 	}

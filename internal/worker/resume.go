@@ -15,12 +15,17 @@ import (
 )
 
 type autoRerunResumeMetadata struct {
-	Reason       string `json:"reason"`
-	ResumeStage  string `json:"resume_stage"`
-	SourceCaseID string `json:"source_case_id"`
+	Reason         string `json:"reason"`
+	ResumeStage    string `json:"resume_stage"`
+	Decision       string `json:"decision"`
+	RepairStrategy string `json:"repair_strategy"`
+	SourceCaseID   string `json:"source_case_id"`
 }
 
 func autoRerunResumeStage(mapped outcome.Result) string {
+	if mapped.RerunDecision == outcome.RerunDecisionGuidedRepair || mapped.AnalysisStage == outcome.AnalysisStageReachablePoC {
+		return "agent_poc_repair"
+	}
 	switch mapped.AnalysisStage {
 	case outcome.AnalysisStageRCABlocked:
 		return "rca"
@@ -67,6 +72,12 @@ func (w *Worker) prepareResume(ctx context.Context, c *store.Case) (lumoskit.Run
 	if meta.Reason != "" {
 		payload["resume_reason"] = meta.Reason
 	}
+	if meta.Decision != "" {
+		payload["resume_decision"] = meta.Decision
+	}
+	if meta.RepairStrategy != "" {
+		payload["resume_repair_strategy"] = meta.RepairStrategy
+	}
 	return lumoskit.RunOptions{Stage: stage}, payload, nil
 }
 
@@ -90,6 +101,8 @@ func normalizeResumeStage(stage string) string {
 		return "all"
 	case "poc", "agent_poc":
 		return "agent_poc"
+	case "agent_poc_repair", "poc_repair", "economic_proof_repair":
+		return "agent_poc_repair"
 	case "rca":
 		return "rca"
 	default:
@@ -103,6 +116,11 @@ func prepareResumeOutput(sourceRoot, destRoot, stage string) error {
 	}
 	if err := copyDir(sourceRoot, destRoot); err != nil {
 		return fmt.Errorf("copy resume artifacts: %w", err)
+	}
+	if stage == "agent_poc_repair" {
+		if err := preserveAgentPoCRepairPriorProductSummary(destRoot); err != nil {
+			return fmt.Errorf("preserve prior product summary: %w", err)
+		}
 	}
 	if err := pruneResumeOutputs(destRoot, stage); err != nil {
 		return fmt.Errorf("prune stale resume artifacts: %w", err)
@@ -168,6 +186,25 @@ func copyFile(source, dest string, mode os.FileMode) error {
 	return closeErr
 }
 
+func preserveAgentPoCRepairPriorProductSummary(root string) error {
+	candidates := []string{
+		filepath.Join(root, "report_bundle", "report", "run_summary.json"),
+		filepath.Join(root, "summary.json"),
+	}
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		dest := filepath.Join(root, "artifacts", "agent_poc", "prior_product_summary.json")
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		return copyFile(candidate, dest, info.Mode().Perm())
+	}
+	return nil
+}
+
 func pruneResumeOutputs(root, stage string) error {
 	paths := []string{
 		"summary.json",
@@ -182,6 +219,12 @@ func pruneResumeOutputs(root, stage string) error {
 		paths = append(paths,
 			"PoC.t.sol",
 			filepath.Join("artifacts", "agent_poc"),
+			filepath.Join("artifacts", "rca"),
+			filepath.Join("report_bundle", "poc"),
+		)
+	case "agent_poc_repair":
+		paths = append(paths,
+			"PoC.t.sol",
 			filepath.Join("artifacts", "rca"),
 			filepath.Join("report_bundle", "poc"),
 		)

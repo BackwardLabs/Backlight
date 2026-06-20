@@ -193,17 +193,22 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 
 	switch mapped.State {
 	case outcome.StateDone:
-		if w.shouldAutoRerun(mapped, c.AttemptNumber) {
-			rerunReason := firstNonEmpty(mapped.RerunReason, mapped.AnalysisStage, "auto_rerun")
+		if w.shouldQueueRerun(mapped, c.AttemptNumber) {
+			rerunReason := firstNonEmpty(mapped.RerunReason, mapped.AnalysisStage, mapped.RerunDecision, "rerun")
 			resumeStage := autoRerunResumeStage(mapped)
-			request := store.AutoRerunRequest{Reason: rerunReason, ResumeStage: resumeStage}
+			request := store.AutoRerunRequest{
+				Reason:         rerunReason,
+				ResumeStage:    resumeStage,
+				Decision:       mapped.RerunDecision,
+				RepairStrategy: rerunRepairStrategy(mapped),
+			}
 			child, queued, err := w.Store.MarkDoneAndQueueAutoRerun(ctx, c.CaseID, mapped.Outcome, eventPayload, request, w.PartialAutoRerunMaxAttempts)
 			if err != nil {
 				log.Error("auto rerun queue failed", "err", err, "outcome", mapped.Outcome)
 				return
 			}
 			if queued {
-				log.Info("auto rerun queued",
+				log.Info("rerun queued",
 					"parent_case_id", c.CaseID,
 					"child_case_id", child.CaseID,
 					"next_attempt_number", child.AttemptNumber,
@@ -218,9 +223,9 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 			return
 		}
 		log.Info("case complete", "state", mapped.State, "outcome", mapped.Outcome, "rule", mapped.Rule)
-		githubPublishQueued := w.publishGitHub(ctx, c, mapped.Outcome)
+		githubPublishQueued := w.publishGitHub(ctx, c, mapped)
 		if !githubPublishQueued {
-			w.publishX(ctx, c, mapped.Outcome)
+			w.publishX(ctx, c, mapped)
 		}
 		w.runPreLumos(ctx, c, mapped.Outcome)
 		// Trigger downstream fan-out asynchronously. With no URLs configured,
@@ -266,24 +271,46 @@ func (w *Worker) mergeIncidentMetadata(ctx context.Context, c *store.Case) {
 	}
 }
 
-func (w *Worker) shouldAutoRerun(mapped outcome.Result, attemptNumber int) bool {
-	return mapped.RerunDecision == outcome.RerunDecisionAutoRerun && w.PartialAutoRerunMaxAttempts > 0 && attemptNumber < w.PartialAutoRerunMaxAttempts
+func (w *Worker) shouldQueueRerun(mapped outcome.Result, attemptNumber int) bool {
+	return isQueuedRerunDecision(mapped.RerunDecision) && w.PartialAutoRerunMaxAttempts > 0 && attemptNumber < w.PartialAutoRerunMaxAttempts
 }
 
 func (w *Worker) annotateRerunEligibility(payload map[string]any, mapped outcome.Result, attemptNumber int) {
-	if mapped.RerunDecision != outcome.RerunDecisionAutoRerun {
+	if !isQueuedRerunDecision(mapped.RerunDecision) {
 		return
 	}
-	payload["auto_rerun_eligible"] = w.shouldAutoRerun(mapped, attemptNumber)
-	payload["auto_rerun_resume_stage"] = autoRerunResumeStage(mapped)
+	eligible := w.shouldQueueRerun(mapped, attemptNumber)
+	resumeStage := autoRerunResumeStage(mapped)
+	payload["rerun_eligible"] = eligible
+	payload["rerun_resume_stage"] = resumeStage
+	payload["rerun_max_attempts"] = w.PartialAutoRerunMaxAttempts
+	if strategy := rerunRepairStrategy(mapped); strategy != "" {
+		payload["rerun_repair_strategy"] = strategy
+	}
+	// Preserve legacy auto_rerun fields for existing UI/tests/operators.
+	payload["auto_rerun_eligible"] = eligible
+	payload["auto_rerun_resume_stage"] = resumeStage
 	payload["auto_rerun_max_attempts"] = w.PartialAutoRerunMaxAttempts
 	if w.PartialAutoRerunMaxAttempts <= 0 {
+		payload["rerun_blocked_reason"] = "disabled"
 		payload["auto_rerun_blocked_reason"] = "disabled"
 		return
 	}
 	if attemptNumber >= w.PartialAutoRerunMaxAttempts {
+		payload["rerun_blocked_reason"] = "max_attempts_reached"
 		payload["auto_rerun_blocked_reason"] = "max_attempts_reached"
 	}
+}
+
+func isQueuedRerunDecision(decision string) bool {
+	return decision == outcome.RerunDecisionAutoRerun || decision == outcome.RerunDecisionGuidedRepair
+}
+
+func rerunRepairStrategy(mapped outcome.Result) string {
+	if mapped.RerunDecision == outcome.RerunDecisionGuidedRepair {
+		return "economic_proof_guided_repair"
+	}
+	return ""
 }
 
 func firstNonEmpty(values ...string) string {
@@ -334,8 +361,8 @@ func writeSignalContext(c *store.Case) error {
 	return os.WriteFile(filepath.Join(*c.OutputRoot, "helios_signal_context.json"), append(data, '\n'), 0o644)
 }
 
-func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome string) bool {
-	if !shouldPublishGitHubOutcome(mappedOutcome) || w.GitHubPublisher == nil || !w.GitHubPublisher.Configured() || c.OutputRoot == nil {
+func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mapped outcome.Result) bool {
+	if !outcome.ShouldPublishGitHub(mapped) || w.GitHubPublisher == nil || !w.GitHubPublisher.Configured() || c.OutputRoot == nil {
 		return false
 	}
 	publishCase := githubpublish.Case{
@@ -344,18 +371,22 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 		TxHash:       c.TxHash,
 		OutputRoot:   *c.OutputRoot,
 		IncidentSlug: store.IncidentSlug(c),
-		Outcome:      mappedOutcome,
+		Outcome:      mapped.Outcome,
 	}
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
-		defer w.notifyOutcome(ctx, publishCase.CaseID, mappedOutcome)
+		defer w.notifyOutcome(ctx, publishCase.CaseID, mapped.Outcome)
 		res, err := w.GitHubPublisher.Publish(ctx, publishCase)
 		if err != nil {
 			w.Logger.Error("github publish failed", "case_id", publishCase.CaseID, "err", err)
 			if recordErr := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish_failed", map[string]any{
-				"published": false,
-				"error":     err.Error(),
+				"published":    false,
+				"error":        err.Error(),
+				"outcome":      mapped.Outcome,
+				"publish_tier": mapped.PublishTier,
+				"poc_state":    mapped.PoCState,
+				"rca_state":    mapped.RCAState,
 			}); recordErr != nil {
 				w.Logger.Error("record github publish failure event failed", "case_id", publishCase.CaseID, "err", recordErr)
 			}
@@ -363,10 +394,13 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 		}
 		if res != nil && !res.Published {
 			if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish", map[string]any{
-				"published":   false,
-				"skipped":     true,
-				"skip_reason": res.SkipReason,
-				"outcome":     mappedOutcome,
+				"published":    false,
+				"skipped":      true,
+				"skip_reason":  res.SkipReason,
+				"outcome":      mapped.Outcome,
+				"publish_tier": mapped.PublishTier,
+				"poc_state":    mapped.PoCState,
+				"rca_state":    mapped.RCAState,
 			}); err != nil {
 				w.Logger.Error("record github publish skip event failed", "case_id", publishCase.CaseID, "err", err)
 			}
@@ -374,22 +408,25 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 				"case_id", publishCase.CaseID,
 				"reason", res.SkipReason,
 			)
-			w.publishX(ctx, c, mappedOutcome)
+			w.publishX(ctx, c, mapped)
 			return
 		}
 		if err := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "github_publish", map[string]any{
-			"published":   true,
-			"commit_sha":  res.CommitSHA,
-			"target_dir":  res.TargetDir,
-			"poc_url":     res.PoCURL,
-			"report_url":  res.ReportURL,
-			"commit_url":  res.CommitURL,
-			"target_urls": res.TargetURLs,
-			"outcome":     mappedOutcome,
+			"published":    true,
+			"commit_sha":   res.CommitSHA,
+			"target_dir":   res.TargetDir,
+			"poc_url":      res.PoCURL,
+			"report_url":   res.ReportURL,
+			"commit_url":   res.CommitURL,
+			"target_urls":  res.TargetURLs,
+			"outcome":      mapped.Outcome,
+			"publish_tier": mapped.PublishTier,
+			"poc_state":    mapped.PoCState,
+			"rca_state":    mapped.RCAState,
 		}); err != nil {
 			w.Logger.Error("record github publish event failed", "case_id", publishCase.CaseID, "err", err)
 		}
-		w.publishX(ctx, c, mappedOutcome)
+		w.publishX(ctx, c, mapped)
 		w.Logger.Info("github publish complete",
 			"case_id", publishCase.CaseID,
 			"commit_sha", res.CommitSHA,
@@ -399,8 +436,8 @@ func (w *Worker) publishGitHub(ctx context.Context, c *store.Case, mappedOutcome
 	return true
 }
 
-func (w *Worker) publishX(ctx context.Context, c *store.Case, mappedOutcome string) bool {
-	if mappedOutcome != outcome.OutcomeVerified || w.XPublisher == nil || !w.XPublisher.Configured() || c.OutputRoot == nil {
+func (w *Worker) publishX(ctx context.Context, c *store.Case, mapped outcome.Result) bool {
+	if !outcome.ShouldPublishX(mapped) || w.XPublisher == nil || !w.XPublisher.Configured() || c.OutputRoot == nil {
 		return false
 	}
 	reportURL, pocURL := w.githubArtifactURLs(ctx, c.CaseID)
@@ -412,7 +449,7 @@ func (w *Worker) publishX(ctx context.Context, c *store.Case, mappedOutcome stri
 		IncidentSlug: store.IncidentSlug(c),
 		ReportURL:    reportURL,
 		PoCURL:       pocURL,
-		Outcome:      mappedOutcome,
+		Outcome:      mapped.Outcome,
 	}
 	w.wg.Add(1)
 	go func() {
@@ -421,10 +458,13 @@ func (w *Worker) publishX(ctx context.Context, c *store.Case, mappedOutcome stri
 		if err != nil {
 			w.Logger.Error("x publish failed", "case_id", publishCase.CaseID, "err", err)
 			if recordErr := w.Store.AppendCaseEvent(ctx, publishCase.CaseID, "x_publish_failed", map[string]any{
-				"published": false,
-				"platform":  "x",
-				"error":     err.Error(),
-				"outcome":   mappedOutcome,
+				"published":    false,
+				"platform":     "x",
+				"error":        err.Error(),
+				"outcome":      mapped.Outcome,
+				"publish_tier": mapped.PublishTier,
+				"poc_state":    mapped.PoCState,
+				"rca_state":    mapped.RCAState,
 			}); recordErr != nil {
 				w.Logger.Error("record x publish failure event failed", "case_id", publishCase.CaseID, "err", recordErr)
 			}
@@ -441,7 +481,10 @@ func (w *Worker) publishX(ctx context.Context, c *store.Case, mappedOutcome stri
 			"refresh_returned":      res.RefreshReturned,
 			"refresh_token_updated": res.RefreshTokenUpdated,
 			"post_text_verified":    res.PostTextVerified,
-			"outcome":               mappedOutcome,
+			"outcome":               mapped.Outcome,
+			"publish_tier":          mapped.PublishTier,
+			"poc_state":             mapped.PoCState,
+			"rca_state":             mapped.RCAState,
 		}); err != nil {
 			w.Logger.Error("record x publish event failed", "case_id", publishCase.CaseID, "err", err)
 		}
@@ -477,10 +520,6 @@ func (w *Worker) githubArtifactURLs(ctx context.Context, caseID string) (reportU
 		}
 	}
 	return reportURL, pocURL
-}
-
-func shouldPublishGitHubOutcome(mappedOutcome string) bool {
-	return mappedOutcome == outcome.OutcomeVerified || mappedOutcome == outcome.OutcomePartial
 }
 
 func (w *Worker) runPreLumos(ctx context.Context, c *store.Case, mappedOutcome string) {

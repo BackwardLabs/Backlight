@@ -187,6 +187,7 @@ func TestWorkerPublishesPartialProductArtifacts(t *testing.T) {
 		Store:           st,
 		Runner:          &lumoskit.Runner{Binary: writePartialPublishLumoskit(t, t.TempDir())},
 		GitHubPublisher: publisher,
+		XPublisher:      xpublish.New(xpublish.Config{Enabled: true, DryRun: true, Username: "BackwardLabs"}),
 		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
@@ -216,21 +217,30 @@ func TestWorkerPublishesPartialProductArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawPublish bool
+	var sawPublish, sawXPublish bool
 	for _, event := range events {
-		if event.EventType != "github_publish" {
+		if event.EventType != "github_publish" && event.EventType != "x_publish" {
 			continue
 		}
 		var payload map[string]any
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
-			t.Fatalf("unmarshal github_publish payload: %v", err)
+			t.Fatalf("unmarshal publish payload: %v", err)
 		}
-		if payload["published"] == true && payload["outcome"] == "partial" {
+		if event.EventType == "github_publish" && payload["published"] == true && payload["outcome"] == "partial" && payload["publish_tier"] == outcome.PublishTierEconomicIncompleteRCA {
 			sawPublish = true
+		}
+		if event.EventType == "x_publish" && payload["dry_run"] == true && payload["rca_state"] == outcome.RCAStateScopeLimited {
+			sawXPublish = true
+			if !strings.Contains(payload["text"].(string), "[Backlight Verified Incident]") {
+				t.Fatalf("x publish title changed: %#v", payload["text"])
+			}
 		}
 	}
 	if !sawPublish {
 		t.Fatalf("partial github_publish event not found: %#v", events)
+	}
+	if !sawXPublish {
+		t.Fatalf("scope-limited partial x_publish event not found: %#v", events)
 	}
 }
 
@@ -307,7 +317,7 @@ func TestWorkerSkipsGenericGitHubPublishWithoutFailingCase(t *testing.T) {
 	}
 }
 
-func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
+func TestWorkerGuidedRepairsReachablePoCBeforePublishOrHandoff(t *testing.T) {
 	ctx := context.Background()
 	outputParent := t.TempDir()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
@@ -341,14 +351,14 @@ func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
 		t.Fatalf("parent after auto rerun = %+v", parent)
 	}
 	payload := terminalStatePayload(t, ctx, st, c.CaseID)
-	if payload["analysis_stage"] != outcome.AnalysisStagePoCBlocked {
-		t.Fatalf("analysis_stage = %v, want %s", payload["analysis_stage"], outcome.AnalysisStagePoCBlocked)
+	if payload["analysis_stage"] != outcome.AnalysisStageReachablePoC {
+		t.Fatalf("analysis_stage = %v, want %s", payload["analysis_stage"], outcome.AnalysisStageReachablePoC)
 	}
-	if payload["rerun_decision"] != outcome.RerunDecisionAutoRerun {
-		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], outcome.RerunDecisionAutoRerun)
+	if payload["rerun_decision"] != outcome.RerunDecisionGuidedRepair {
+		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], outcome.RerunDecisionGuidedRepair)
 	}
-	if payload["auto_rerun_eligible"] != true {
-		t.Fatalf("auto_rerun_eligible = %v, want true", payload["auto_rerun_eligible"])
+	if payload["rerun_eligible"] != true || payload["rerun_resume_stage"] != "agent_poc_repair" {
+		t.Fatalf("rerun eligibility payload = %#v", payload)
 	}
 	items, total, err := st.ListCases(ctx, store.CaseListFilter{TxHash: &c.TxHash, Limit: 10})
 	if err != nil {
@@ -367,8 +377,8 @@ func TestWorkerAutoRerunsPartialBeforePublishOrHandoff(t *testing.T) {
 		t.Fatalf("auto rerun child = %+v", child)
 	}
 	auto := autoRerunMetadata(t, child)
-	if auto["resume_stage"] != "agent_poc" {
-		t.Fatalf("child resume_stage = %v, want agent_poc; metadata=%#v", auto["resume_stage"], auto)
+	if auto["resume_stage"] != "agent_poc_repair" || auto["decision"] != outcome.RerunDecisionGuidedRepair || auto["repair_strategy"] != "economic_proof_guided_repair" {
+		t.Fatalf("child guided repair metadata=%#v", auto)
 	}
 }
 
@@ -616,7 +626,7 @@ while [ "$#" -gt 0 ]; do
 done
 mkdir -p "$out"
 cat > "$out/summary.json" <<'JSON'
-{"status":"pass","poc":{"status":"verified"}}
+{"status":"pass","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"complete"}}
 JSON
 printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
 printf '%s\n' '# yETH Incident Report' 'Protocol: yETH' 'Date: 2026-01-25' > "$out/Report.md"
@@ -643,7 +653,7 @@ while [ "$#" -gt 0 ]; do
 done
 mkdir -p "$out"
 cat > "$out/summary.json" <<'JSON'
-{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"partial","blocker_code":"missing_assumption"}}
+{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc","proof_kind":"economic_proof"},"rca":{"status":"partial","blocker_code":"scope_limited"}}
 JSON
 printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
 printf '%s\n' '# yETH Incident Report' 'Protocol: yETH' 'Date: 2026-01-25' > "$out/Report.md"
@@ -670,7 +680,7 @@ while [ "$#" -gt 0 ]; do
 done
 mkdir -p "$out"
 cat > "$out/summary.json" <<'JSON'
-{"status":"pass","poc":{"status":"verified"},"tx_timestamp":1779811222}
+{"status":"pass","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"complete"},"tx_timestamp":1779811222}
 JSON
 printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
 printf '%s\n' '# LumosKit Run Report — bsc 0x33333333…33333333' '- **Finding**: generic generated report heading' > "$out/Report.md"
@@ -697,7 +707,7 @@ while [ "$#" -gt 0 ]; do
 done
 mkdir -p "$out"
 cat > "$out/summary.json" <<'JSON'
-{"status":"partial","poc":{"status":"unverified","proof_kind":"reachability_only"},"rca":{"status":"blocked","blocker_code":"economic_proof_gap"}}
+{"status":"partial","poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass","failure_kind":"missing_profit_or_economic_oracle"},"rca":{"status":"blocked","blocker_code":"economic_proof_gap"}}
 JSON
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -728,7 +738,7 @@ if [ "$stage" = "rca" ]; then
   test -f "$out/artifacts/agent_poc/result.json"
   mkdir -p "$out/artifacts/rca"
   cat > "$out/report_bundle/report/run_summary.json" <<'JSON'
-{"status":"pass","poc":{"status":"verified"},"rca":{"status":"complete"}}
+{"status":"pass","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"complete"}}
 JSON
   exit 0
 fi
@@ -737,7 +747,7 @@ cat > "$out/artifacts/agent_poc/result.json" <<'JSON'
 {"status":"pass","poc_status":"pass"}
 JSON
 cat > "$out/report_bundle/report/run_summary.json" <<'JSON'
-{"status":"partial","poc":{"status":"verified"},"rca":{"status":"blocked","blocker_code":"source_gap"}}
+{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"blocked","blocker_code":"rca_agent_timeout"}}
 JSON
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -762,7 +772,7 @@ while [ "$#" -gt 0 ]; do
 done
 mkdir -p "$out"
 cat > "$out/summary.json" <<'JSON'
-{"status":"fail","poc":{"status":"missing","failure_kind":"poc_missing"},"failure":{"kind":"poc_missing"}}
+{"status":"fail","poc":{"status":"unverified","execution_state":"no_working_poc","failure_kind":"forge_test_failed"},"failure":{"kind":"forge_test_failed"}}
 JSON
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {

@@ -215,47 +215,128 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 		summary      string
 		wantOutcome  string
 		wantStage    string
+		wantPoC      string
+		wantRCA      string
+		wantTier     string
 		wantDecision string
 		wantReason   string
+		wantGitHub   bool
+		wantX        bool
 	}{
 		{
-			name:         "success does not rerun",
-			summary:      `{"status":"pass","poc":{"status":"verified"},"rca":{"status":"complete"}}`,
+			name:         "economic poc and complete rca publishes publicly",
+			summary:      `{"status":"pass","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"complete"}}`,
 			wantOutcome:  OutcomeVerified,
 			wantStage:    AnalysisStageSuccess,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateComplete,
+			wantTier:     PublishTierPublicVerified,
 			wantDecision: RerunDecisionNoRerun,
 			wantReason:   "verified_result",
+			wantGitHub:   true,
+			wantX:        true,
 		},
 		{
-			name:         "poc failed without rca is manual review",
-			summary:      `{"status":"fail","poc":{"status":"missing","failure_kind":"poc_missing"},"failure":{"kind":"poc_missing"}}`,
+			name:         "economic poc with rca not run auto reruns rca",
+			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"not_run"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateNotRun,
+			wantTier:     PublishTierNoPublish,
+			wantDecision: RerunDecisionAutoRerun,
+			wantReason:   "not_run",
+		},
+		{
+			name:         "economic poc with rca runtime error auto reruns rca",
+			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"blocked","blocker_code":"rca_agent_timeout"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateRuntimeError,
+			wantTier:     PublishTierNoPublish,
+			wantDecision: RerunDecisionAutoRerun,
+			wantReason:   "rca_agent_timeout",
+		},
+		{
+			name:         "economic poc with low confidence rca does not rerun but can publish github",
+			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateLowConfidence,
+			wantTier:     PublishTierEconomicIncompleteRCA,
+			wantDecision: RerunDecisionNoRerun,
+			wantReason:   "root_cause_gap",
+			wantGitHub:   true,
+		},
+		{
+			name:         "economic poc with missing rca evidence does not rerun but can publish github",
+			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"blocked","blocker_code":"source_gap"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateMissingEvidence,
+			wantTier:     PublishTierEconomicIncompleteRCA,
+			wantDecision: RerunDecisionNoRerun,
+			wantReason:   "source_gap",
+			wantGitHub:   true,
+		},
+		{
+			name:         "economic poc with scope limited rca can publish github and x",
+			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"partial","blocker_code":"scope_limited"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateScopeLimited,
+			wantTier:     PublishTierEconomicIncompleteRCA,
+			wantDecision: RerunDecisionNoRerun,
+			wantReason:   "scope_limited",
+			wantGitHub:   true,
+			wantX:        true,
+		},
+		{
+			name:         "economic poc with conflicting rca evidence requires manual review",
+			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"blocked","blocker_code":"conflicting_evidence"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateConflictingEvidence,
+			wantTier:     PublishTierNoPublish,
+			wantDecision: RerunDecisionManualReview,
+			wantReason:   "conflicting_evidence",
+		},
+		{
+			name:         "reachable poc queues guided repair but does not publish",
+			summary:      `{"status":"partial","poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass","failure_kind":"missing_profit_or_economic_oracle"},"rca":{"status":"blocked","blocker_code":"economic_proof_gap"}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageReachablePoC,
+			wantPoC:      PoCStateReachable,
+			wantRCA:      RCAStatePoCDependent,
+			wantTier:     PublishTierNoPublish,
+			wantDecision: RerunDecisionGuidedRepair,
+			wantReason:   "missing_profit_or_economic_oracle",
+		},
+		{
+			name:         "poc missing is manual review and no publish",
+			summary:      `{"status":"fail","poc":{"status":"missing","execution_state":"no_working_poc","failure_kind":"poc_missing"},"failure":{"kind":"poc_missing"}}`,
 			wantOutcome:  OutcomeUnverified,
-			wantStage:    AnalysisStagePoCFailed,
+			wantStage:    AnalysisStagePoCMissing,
+			wantPoC:      PoCStateMissing,
+			wantRCA:      RCAStateNotRun,
+			wantTier:     PublishTierNoPublish,
 			wantDecision: RerunDecisionManualReview,
 			wantReason:   "poc_missing",
 		},
 		{
-			name:         "poc verified but rca blocked auto reruns",
-			summary:      `{"status":"partial","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"}}`,
+			name:         "poc failed is manual review and no publish",
+			summary:      `{"status":"partial","poc":{"status":"unverified","execution_state":"no_working_poc","failure_kind":"forge_test_failed"},"rca":{"status":"not_run"}}`,
 			wantOutcome:  OutcomePartial,
-			wantStage:    AnalysisStageRCABlocked,
-			wantDecision: RerunDecisionAutoRerun,
-			wantReason:   "root_cause_gap",
-		},
-		{
-			name:         "blocked summary with verified poc and rca blocker auto reruns",
-			summary:      `{"status":"blocked","poc":{"status":"verified","proof_kind":"economic_proof"},"rca":{"status":"blocked","blocker_code":"root_cause_gap"},"failure":{"kind":"rca_blocked"}}`,
-			wantOutcome:  OutcomePartial,
-			wantStage:    AnalysisStageRCABlocked,
-			wantDecision: RerunDecisionAutoRerun,
-			wantReason:   "root_cause_gap",
-		},
-		{
-			name:         "poc blocked auto reruns",
-			summary:      `{"status":"partial","poc":{"status":"unverified","failure_kind":"forge_test_failed"},"rca":{"status":"not_run"}}`,
-			wantOutcome:  OutcomePartial,
-			wantStage:    AnalysisStagePoCBlocked,
-			wantDecision: RerunDecisionAutoRerun,
+			wantStage:    AnalysisStagePoCFailed,
+			wantPoC:      PoCStateFailed,
+			wantRCA:      RCAStateNotRun,
+			wantTier:     PublishTierNoPublish,
+			wantDecision: RerunDecisionManualReview,
 			wantReason:   "forge_test_failed",
 		},
 		{
@@ -281,6 +362,21 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			got := Map(Input{ExitCode: 0, SummaryBytes: []byte(tc.summary)})
 			if got.Outcome != tc.wantOutcome || got.AnalysisStage != tc.wantStage || got.RerunDecision != tc.wantDecision || got.RerunReason != tc.wantReason {
 				t.Fatalf("got outcome/stage/decision/reason = %s/%s/%s/%s, want %s/%s/%s/%s", got.Outcome, got.AnalysisStage, got.RerunDecision, got.RerunReason, tc.wantOutcome, tc.wantStage, tc.wantDecision, tc.wantReason)
+			}
+			if tc.wantPoC != "" && got.PoCState != tc.wantPoC {
+				t.Fatalf("poc_state = %s, want %s", got.PoCState, tc.wantPoC)
+			}
+			if tc.wantRCA != "" && got.RCAState != tc.wantRCA {
+				t.Fatalf("rca_state = %s, want %s", got.RCAState, tc.wantRCA)
+			}
+			if tc.wantTier != "" && got.PublishTier != tc.wantTier {
+				t.Fatalf("publish_tier = %s, want %s", got.PublishTier, tc.wantTier)
+			}
+			if ShouldPublishGitHub(got) != tc.wantGitHub {
+				t.Fatalf("ShouldPublishGitHub = %v, want %v", ShouldPublishGitHub(got), tc.wantGitHub)
+			}
+			if ShouldPublishX(got) != tc.wantX {
+				t.Fatalf("ShouldPublishX = %v, want %v", ShouldPublishX(got), tc.wantX)
 			}
 		})
 	}
@@ -328,11 +424,20 @@ func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 	if got["summary_status"] != "partial" {
 		t.Fatalf("summary_status = %v, want partial", got["summary_status"])
 	}
-	if got["analysis_stage"] != AnalysisStagePoCBlocked {
-		t.Fatalf("analysis_stage = %v, want %s", got["analysis_stage"], AnalysisStagePoCBlocked)
+	if got["analysis_stage"] != AnalysisStageReachablePoC {
+		t.Fatalf("analysis_stage = %v, want %s", got["analysis_stage"], AnalysisStageReachablePoC)
 	}
-	if got["rerun_decision"] != RerunDecisionAutoRerun {
-		t.Fatalf("rerun_decision = %v, want %s", got["rerun_decision"], RerunDecisionAutoRerun)
+	if got["poc_state"] != PoCStateReachable {
+		t.Fatalf("poc_state = %v, want %s", got["poc_state"], PoCStateReachable)
+	}
+	if got["rca_state"] != RCAStatePoCDependent {
+		t.Fatalf("rca_state = %v, want %s", got["rca_state"], RCAStatePoCDependent)
+	}
+	if got["publish_tier"] != PublishTierNoPublish || got["github_publish_eligible"] != false || got["x_publish_eligible"] != false {
+		t.Fatalf("publish payload = tier %v github %v x %v", got["publish_tier"], got["github_publish_eligible"], got["x_publish_eligible"])
+	}
+	if got["rerun_decision"] != RerunDecisionGuidedRepair {
+		t.Fatalf("rerun_decision = %v, want %s", got["rerun_decision"], RerunDecisionGuidedRepair)
 	}
 	if got["rerun_reason"] != "missing_profit_or_economic_oracle" {
 		t.Fatalf("rerun_reason = %v", got["rerun_reason"])

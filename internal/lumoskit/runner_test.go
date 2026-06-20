@@ -103,6 +103,23 @@ func TestRunnerRunsAgentPoCThenRCAForPoCResume(t *testing.T) {
 	}
 }
 
+func TestRunnerRunsAgentPoCRepairThenRCAForReachablePoCResume(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "scripts", "fake-lumoskit.sh")
+	writeStageCaptureLumoskit(t, helper)
+
+	outputRoot := filepath.Join(t.TempDir(), "out")
+	res := (&Runner{Binary: helper}).RunWithOptions(context.Background(), "ethereum", strings.Repeat("0", 64), outputRoot, RunOptions{Stage: "agent_poc_repair"})
+
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", res.ExitCode, string(res.Stderr))
+	}
+	got := strings.TrimSpace(mustRead(t, filepath.Join(outputRoot, "stages.txt")))
+	if got != "agent_poc_repair\nrca" {
+		t.Fatalf("stages = %q, want agent_poc_repair then rca", got)
+	}
+}
+
 func writeCwdLumoskit(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
