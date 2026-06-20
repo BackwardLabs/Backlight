@@ -130,9 +130,7 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := p.verifyCreatedPost(ctx, client, token.AccessToken, post.Data.ID, text, post.Data.Text); err != nil {
-		return nil, err
-	}
+	textVerified := p.verifyCreatedPost(ctx, client, token.AccessToken, post.Data.ID, text, post.Data.Text)
 	refreshUpdated, err := p.storeRotatedRefreshToken(token)
 	if err != nil {
 		return nil, err
@@ -143,7 +141,7 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	result.PostURL = p.postURL(post.Data.ID)
 	result.RefreshReturned = strings.TrimSpace(token.RefreshToken) != ""
 	result.RefreshTokenUpdated = refreshUpdated
-	result.PostTextVerified = true
+	result.PostTextVerified = textVerified
 	return result, nil
 }
 
@@ -278,22 +276,15 @@ func (p *Publisher) createPost(ctx context.Context, client *http.Client, accessT
 	return &out, nil
 }
 
-func (p *Publisher) verifyCreatedPost(ctx context.Context, client *http.Client, accessToken, postID, requestedText, responseText string) error {
+func (p *Publisher) verifyCreatedPost(ctx context.Context, client *http.Client, accessToken, postID, requestedText, responseText string) bool {
 	if responseText == requestedText {
-		return nil
+		return true
 	}
 	fetched, err := p.fetchPost(ctx, client, accessToken, postID)
 	if err != nil {
-		_ = p.deletePost(context.WithoutCancel(ctx), client, accessToken, postID)
-		return fmt.Errorf("x post %s could not be verified and was deleted: %w", postID, err)
+		return false
 	}
-	if fetched.Data.Text == requestedText {
-		return nil
-	}
-	if err := p.deletePost(context.WithoutCancel(ctx), client, accessToken, postID); err != nil {
-		return fmt.Errorf("x post %s text differed from requested text and delete failed: %w", postID, err)
-	}
-	return fmt.Errorf("x post %s text differed from requested text and was deleted", postID)
+	return fetched.Data.Text == requestedText
 }
 
 func (p *Publisher) fetchPost(ctx context.Context, client *http.Client, accessToken, postID string) (*fetchPostResponse, error) {
@@ -311,16 +302,6 @@ func (p *Publisher) fetchPost(ctx context.Context, client *http.Client, accessTo
 		return nil, errors.New("x fetch post response did not include data.id")
 	}
 	return &out, nil
-}
-
-func (p *Publisher) deletePost(ctx context.Context, client *http.Client, accessToken, postID string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, p.Config.APIBase+"/2/tweets/"+url.PathEscape(postID), nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", "backlight-x-publisher/1")
-	return doJSON(client, req, nil)
 }
 
 func doJSON(client *http.Client, req *http.Request, out any) error {

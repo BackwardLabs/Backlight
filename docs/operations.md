@@ -151,8 +151,9 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   material is never stored in case events.
 - **X post verification.** Backlight sends one X post and does not split long
   incident text into a thread. After create, it verifies the returned/fetched
-  post text matches the requested template; if X truncates or mutates the body,
-  Backlight deletes that post and records `x_publish_failed`.
+  post text matches the requested template. If X truncates or mutates the body,
+  Backlight keeps the post and records `post_text_verified=false` in the
+  `x_publish` event.
 
 Telegram message shape:
 

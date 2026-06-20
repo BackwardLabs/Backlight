@@ -205,7 +205,7 @@ func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 	}
 }
 
-func TestPublishDeletesMismatchedPost(t *testing.T) {
+func TestPublishKeepsMismatchedPost(t *testing.T) {
 	root := writeArtifacts(t)
 	var sawDelete bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -253,12 +253,15 @@ func TestPublishDeletesMismatchedPost(t *testing.T) {
 		DryRun:       false,
 	})
 	pub.Client = server.Client()
-	_, err := pub.Publish(context.Background(), Case{Chain: "ethereum", TxHash: "0x" + strings.Repeat("1", 64), OutputRoot: root})
-	if err == nil || !strings.Contains(err.Error(), "text differed from requested text and was deleted") {
+	res, err := pub.Publish(context.Background(), Case{Chain: "ethereum", TxHash: "0x" + strings.Repeat("1", 64), OutputRoot: root})
+	if err != nil {
 		t.Fatalf("publish err = %v", err)
 	}
-	if !sawDelete {
-		t.Fatal("mismatched X post was not deleted")
+	if !res.Published || res.PostID != "12345" || res.PostTextVerified {
+		t.Fatalf("publish result = %+v", res)
+	}
+	if sawDelete {
+		t.Fatal("mismatched X post was deleted")
 	}
 }
 
