@@ -84,6 +84,7 @@ precedence; `.env.local` can override `.env`.
 | `X_CLIENT_SECRET` | when X publish enabled and dry-run false | empty | OAuth 2.0 client secret for the X app |
 | `X_REFRESH_TOKEN` | when X publish enabled and dry-run false | empty | OAuth refresh token with `tweet.write`, `tweet.read`, `users.read`, `media.write`, and `offline.access` scopes |
 | `X_REFRESH_TOKEN_FILE` | no | empty | optional 0600 JSON/raw-token file used before `X_REFRESH_TOKEN` and updated when X rotates the refresh token |
+| `X_POST_TEMPLATE_PATH` | no | embedded default | optional Markdown `text/template` file for the X verified-incident post body |
 | `X_API_BASE` | no | `https://api.x.com` | override for tests or proxies |
 | `X_ACCOUNT_USERNAME` | no | empty | optional username used to build the public `post_url`; omit to use `https://x.com/i/web/status/{id}` |
 | `X_DRY_RUN` | no | `true` | when true, records the generated X post text as `x_publish` without calling X |
@@ -154,6 +155,10 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   post text matches the requested template. If X truncates or mutates the body,
   Backlight keeps the post and records `post_text_verified=false` in the
   `x_publish` event.
+- **X post template.** The default template is embedded from
+  `internal/xpublish/templates/x_verified_incident.md`. Set
+  `X_POST_TEMPLATE_PATH` to point at a Markdown Go `text/template` file when
+  operators need to edit the public post shape without rebuilding Backlight.
 
 Telegram message shape:
 

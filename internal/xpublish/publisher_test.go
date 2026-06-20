@@ -100,6 +100,25 @@ func TestBuildPostUsesReportJSONAndAssetDeltas(t *testing.T) {
 	}
 }
 
+func TestBuildPostUsesTemplatePath(t *testing.T) {
+	root := writeArtifacts(t)
+	templatePath := filepath.Join(t.TempDir(), "x-template.md")
+	if err := os.WriteFile(templatePath, []byte("{{ .Protocol }} on {{ .Chain }} via {{ index .Flow 0 }}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text, err := BuildPostWithTemplate(Case{
+		Chain:      "ethereum",
+		TxHash:     "0x" + strings.Repeat("1", 64),
+		OutputRoot: root,
+	}, templatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "ExampleFi on ethereum via The attacker funded the attack contract" {
+		t.Fatalf("custom template text = %q", text)
+	}
+}
+
 func TestPublishDryRunDoesNotCallXAPI(t *testing.T) {
 	root := writeArtifacts(t)
 	called := false

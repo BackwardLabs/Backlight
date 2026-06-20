@@ -102,6 +102,7 @@ func main() {
 		ClientSecret:     cfg.XClientSecret,
 		RefreshToken:     cfg.XRefreshToken,
 		RefreshTokenFile: cfg.XRefreshTokenFile,
+		TemplatePath:     cfg.XPostTemplatePath,
 		APIBase:          cfg.XAPIBase,
 		Username:         cfg.XUsername,
 		DryRun:           cfg.XDryRun,

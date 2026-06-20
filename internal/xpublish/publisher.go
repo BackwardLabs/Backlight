@@ -3,6 +3,7 @@ package xpublish
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"text/template"
 )
 
 const (
@@ -22,12 +24,16 @@ const (
 	templateVersion = "backlight_verified_incident_v1"
 )
 
+//go:embed templates/x_verified_incident.md
+var defaultPostTemplate string
+
 type Config struct {
 	Enabled          bool
 	ClientID         string
 	ClientSecret     string
 	RefreshToken     string
 	RefreshTokenFile string
+	TemplatePath     string
 	APIBase          string
 	Username         string
 	DryRun           bool
@@ -84,6 +90,21 @@ type fetchPostResponse struct {
 	} `json:"data"`
 }
 
+type postTemplateData struct {
+	Protocol       string
+	Chain          string
+	Tx             string
+	ImpactLoss     string
+	ImpactGain     string
+	RootCause      string
+	ReportURL      string
+	PoCURL         string
+	Flow           []string
+	AttackContract string
+	AttackerEOA    string
+	Image          string
+}
+
 func New(cfg Config) *Publisher {
 	cfg.APIBase = strings.TrimRight(defaultString(cfg.APIBase, defaultAPIBase), "/")
 	return &Publisher{Config: cfg}
@@ -97,7 +118,7 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if !p.Configured() {
 		return nil, errors.New("x publisher is not enabled")
 	}
-	text, err := BuildPost(c)
+	text, err := BuildPostWithTemplate(c, p.Config.TemplatePath)
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +355,10 @@ func (p *Publisher) postURL(postID string) string {
 }
 
 func BuildPost(c Case) (string, error) {
+	return BuildPostWithTemplate(c, "")
+}
+
+func BuildPostWithTemplate(c Case, templatePath string) (string, error) {
 	if strings.TrimSpace(c.OutputRoot) == "" {
 		return "", errors.New("output_root is required for x publish")
 	}
@@ -370,44 +395,63 @@ func BuildPost(c Case) (string, error) {
 	impactLoss, impactGain := impactLines(reportJSON, assetDeltas)
 	attackContract := firstText(addressForRole(assetDeltas, "attacker_entry"), addressNear(allText, "attack contract", "attacker contract", "exploit contract"))
 	attackerEOA := firstText(addressForRole(assetDeltas, "tx_from_eoa"), addressNear(allText, "attacker eoa", "attacker address", "attacker"))
-	if image := findImage(c.OutputRoot); image != "" {
-		return formatPost(protocol, chain, tx, impactLoss, impactGain, rootCause, c.ReportURL, c.PoCURL, flow, attackContract, attackerEOA, image), nil
+	image := findImage(c.OutputRoot)
+	if image == "" {
+		image = "attach the generated PoC flow image"
 	}
-	return formatPost(protocol, chain, tx, impactLoss, impactGain, rootCause, c.ReportURL, c.PoCURL, flow, attackContract, attackerEOA, "attach the generated PoC flow image"), nil
+	return formatPost(templatePath, postTemplateData{
+		Protocol:       protocol,
+		Chain:          chain,
+		Tx:             tx,
+		ImpactLoss:     impactLoss,
+		ImpactGain:     impactGain,
+		RootCause:      rootCause,
+		ReportURL:      c.ReportURL,
+		PoCURL:         c.PoCURL,
+		Flow:           flow,
+		AttackContract: attackContract,
+		AttackerEOA:    attackerEOA,
+		Image:          image,
+	})
 }
 
-func formatPost(protocol, chain, tx, impactLoss, impactGain, rootCause, reportURL, pocURL string, flow []string, attackContract, attackerEOA, image string) string {
-	for len(flow) < 3 {
-		flow = append(flow, "under review")
+func formatPost(templatePath string, data postTemplateData) (string, error) {
+	for len(data.Flow) < 3 {
+		data.Flow = append(data.Flow, "under review")
 	}
-	return fmt.Sprintf(`[Backlight Verified Incident]
+	data.ImpactLoss = fallback(data.ImpactLoss, "under review")
+	data.ImpactGain = fallback(data.ImpactGain, "under review")
+	data.RootCause = oneLine(fallback(data.RootCause, "under review"))
+	data.ReportURL = fallback(data.ReportURL, "under review")
+	data.PoCURL = fallback(data.PoCURL, "under review")
+	data.AttackContract = fallback(data.AttackContract, "unknown")
+	data.AttackerEOA = fallback(data.AttackerEOA, "unknown")
+	data.Image = fallback(data.Image, "attach the generated PoC flow image")
 
-Protocol: %s
-Chain: %s
-Tx: %s
+	tmplText, err := postTemplateText(templatePath)
+	if err != nil {
+		return "", err
+	}
+	tmpl, err := template.New("x_verified_incident").Option("missingkey=error").Parse(tmplText)
+	if err != nil {
+		return "", fmt.Errorf("parse x post template: %w", err)
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, data); err != nil {
+		return "", fmt.Errorf("render x post template: %w", err)
+	}
+	return strings.TrimRight(out.String(), "\n"), nil
+}
 
-Impact:
-- %s
-- %s
-
-Root cause:
-- %s
-
-Artifacts:
-- Report: %s
-- PoC: %s
-
-Flow:
-- %s
-- %s
-- %s
-
-Attacker CA:
-- Attack contract: %s
-- Attacker EOA: %s
-
-Image:
-- %s`, protocol, chain, tx, fallback(impactLoss, "under review"), fallback(impactGain, "under review"), oneLine(rootCause), fallback(reportURL, "under review"), fallback(pocURL, "under review"), flow[0], flow[1], flow[2], fallback(attackContract, "unknown"), fallback(attackerEOA, "unknown"), image)
+func postTemplateText(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return defaultPostTemplate, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read x post template %s: %w", path, err)
+	}
+	return string(data), nil
 }
 
 func readFile(path string) string {
