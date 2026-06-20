@@ -126,15 +126,15 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	refreshUpdated, err := p.storeRotatedRefreshToken(token)
+	if err != nil {
+		return nil, err
+	}
 	post, err := p.createPost(ctx, client, token.AccessToken, text)
 	if err != nil {
 		return nil, err
 	}
 	textVerified := p.verifyCreatedPost(ctx, client, token.AccessToken, post.Data.ID, text, post.Data.Text)
-	refreshUpdated, err := p.storeRotatedRefreshToken(token)
-	if err != nil {
-		return nil, err
-	}
 	result.Published = true
 	result.DryRun = false
 	result.PostID = post.Data.ID

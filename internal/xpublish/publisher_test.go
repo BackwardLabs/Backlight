@@ -265,6 +265,51 @@ func TestPublishKeepsMismatchedPost(t *testing.T) {
 	}
 }
 
+func TestPublishPersistsRotatedRefreshTokenBeforePostFailure(t *testing.T) {
+	root := writeArtifacts(t)
+	tokenFile := filepath.Join(t.TempDir(), "x_refresh_token.json")
+	if err := os.WriteFile(tokenFile, []byte(`{"refresh_token":"refresh-token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/2/oauth2/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "access-token",
+				"refresh_token": "rotated-refresh-token",
+				"expires_in":    7200,
+				"token_type":    "bearer",
+			})
+		case "/2/tweets":
+			http.Error(w, "post rejected", http.StatusBadRequest)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	pub := New(Config{
+		Enabled:          true,
+		ClientID:         "client-id",
+		ClientSecret:     "client-secret",
+		RefreshTokenFile: tokenFile,
+		APIBase:          server.URL,
+		DryRun:           false,
+	})
+	pub.Client = server.Client()
+	_, err := pub.Publish(context.Background(), Case{Chain: "ethereum", TxHash: "0x" + strings.Repeat("1", 64), OutputRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "post rejected") {
+		t.Fatalf("publish err = %v", err)
+	}
+	tokenData, err := os.ReadFile(tokenFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tokenData), "rotated-refresh-token") {
+		t.Fatalf("rotated refresh token was not persisted after post failure: %s", tokenData)
+	}
+}
+
 func writeArtifacts(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
