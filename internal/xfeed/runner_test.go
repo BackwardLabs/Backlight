@@ -190,7 +190,8 @@ func TestRunnerCardBriefUsesRCAFlowAndImpact(t *testing.T) {
 		"- **Impact card**: ~$1.1M USDT",
 		"- **Flow step 2**: 2. skim() starts transfer",
 		"- **Flow step 3**: 3. pool balance drops",
-		"- **Exploit result**: swap pays attacker",
+		"- **Flow step 4**: 4. attacker cashes out",
+		"- **Exploit result**: attacker cashes out",
 	} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("card brief missing %q:\n%s", want, brief)
