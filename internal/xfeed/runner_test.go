@@ -188,9 +188,9 @@ func TestRunnerCardBriefUsesRCAFlowAndImpact(t *testing.T) {
 		"- **Vulnerable contract**: OLPCToken (0x5881...0000)",
 		"- **Victim**: PancakePair (impacted OLPC/LABUBU AMM pair)",
 		"- **Impact card**: ~$1.1M USDT",
-		"- **Flow step 2**: 2. skim() triggers burn",
-		"- **Flow step 3**: 3. pair shrinks",
-		"- **Exploit result**: lower reserves -> swap profit",
+		"- **Flow step 2**: 2. skim() starts transfer",
+		"- **Flow step 3**: 3. pool balance drops",
+		"- **Exploit result**: swap pays attacker",
 	} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("card brief missing %q:\n%s", want, brief)
