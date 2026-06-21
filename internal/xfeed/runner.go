@@ -340,7 +340,6 @@ func (r *Runner) applyExploitFlowCard(ctx context.Context, c Case, f *incidentFa
 		"--out-dir", outDir,
 		"--basename", "exploit-flow-card",
 		"--title", fmt.Sprintf("%s Exploit Flow", f.Protocol),
-		"--footer", "Full report: GitHub",
 	)
 	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	output, err := cmd.CombinedOutput()
@@ -610,7 +609,7 @@ func victimFromImpact(summary []byte) string {
 		return ""
 	}
 	if len(symbols) > 0 {
-		return strings.TrimSpace(holder + " lost " + strings.Join(symbols, " + "))
+		return "Holder lost " + strings.Join(symbols[:min(len(symbols), 2)], " + ")
 	}
 	return holder
 }
@@ -717,7 +716,10 @@ func cardFlowSteps(path, rootCause, attackerGain string) []string {
 		if len(steps) >= 3 {
 			break
 		}
-		steps = append(steps, fmt.Sprintf("%d. %s", len(steps)+1, part))
+		label := publicCallStep(part)
+		if label != "" {
+			steps = append(steps, fmt.Sprintf("%d. %s", len(steps)+1, label))
+		}
 	}
 	if len(steps) == 0 {
 		steps = append(steps, "1. enter exploit path")
@@ -727,10 +729,53 @@ func cardFlowSteps(path, rootCause, attackerGain string) []string {
 	}
 	final := "4. value extracted"
 	if attackerGain != "" {
-		final = "4. extract " + attackerGain
+		final = "4. attacker receives " + attackerGain
 	}
 	steps = append(steps, final)
 	return steps
+}
+
+func publicCallStep(part string) string {
+	part = cleanCardText(part)
+	lower := strings.ToLower(part)
+	switch {
+	case part == "":
+		return ""
+	case strings.Contains(lower, "claimreward"):
+		return "claim rewards"
+	case strings.Contains(lower, "withdraw"):
+		return "call withdraw"
+	case strings.Contains(lower, "transferfrom"):
+		return "move victim assets"
+	case looksLikeRawCall(part):
+		return "enter exploit path"
+	default:
+		label := stripCallArgs(part)
+		if strings.EqualFold(label, "execute()") || strings.EqualFold(label, "call()") || strings.EqualFold(label, "fallback()") {
+			return "enter exploit path"
+		}
+		return truncateText(label, 30)
+	}
+}
+
+func looksLikeRawCall(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if regexp.MustCompile(`^0x[a-f0-9]{6,}`).MatchString(lower) {
+		return true
+	}
+	return regexp.MustCompile(`\((address|uint|bytes|bool|int)`).MatchString(lower)
+}
+
+func stripCallArgs(value string) string {
+	value = cleanCardText(value)
+	if idx := strings.Index(value, "("); idx >= 0 {
+		name := strings.TrimSpace(value[:idx])
+		if name == "" {
+			return "entry call"
+		}
+		return name + "()"
+	}
+	return value
 }
 
 func splitCallPath(path string) []string {
@@ -867,6 +912,7 @@ func cleanCardText(value string) string {
 	value = regexp.MustCompile("\\[`?([^`\\]]+)`?\\]\\([^)]+\\)").ReplaceAllString(value, "$1")
 	value = strings.ReplaceAll(value, "`", "")
 	value = regexp.MustCompile(`\s+`).ReplaceAllString(value, " ")
+	value = strings.Trim(value, "_*")
 	return correctProtocolTypos(strings.TrimSpace(value))
 }
 
