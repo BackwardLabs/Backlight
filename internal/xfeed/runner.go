@@ -97,8 +97,24 @@ type incidentFacts struct {
 	CardError      string
 	ImpactUSD      float64
 	ReproducedUSD  float64
+	Card           cardFacts
 	ReadyToPublish bool
 	Blockers       []string
+}
+
+type cardFacts struct {
+	Subtitle           string
+	VulnerablePath     string
+	VulnerableContract string
+	Vulnerability      string
+	ExploitResult      string
+	Victim             string
+	Impact             string
+	AttackerGain       string
+	LoopLabel          string
+	FlowSteps          []string
+	Mechanism          []string
+	KeyEvidence        []string
 }
 
 func (r *Runner) Configured() bool {
@@ -160,11 +176,13 @@ func buildFacts(c Case) incidentFacts {
 		protocolFromSlug(filepath.Base(c.OutputRoot)),
 		"Incident",
 	)
+	protocol = correctProtocolTypos(protocol)
 	chain := chainTitle(firstText(c.Chain, jsonString(summary, "chain"), jsonString(reportJSON, "chain"), "unknown"))
 	tx := firstText(c.TxHash, jsonString(summary, "tx_hash"), jsonString(reportJSON, "tx_hash"), txHash(allText))
 	attackType := attackType(reportJSON)
 	impact := impactText(summary, reportJSON)
 	impactUSD := impactUSDValue(summary)
+	reproducedUSD := reproducedUSDValue(summary)
 	occurred := occurredText(summary, reportJSON, poc)
 	rootCause := publicRootCause(protocol, reportJSON, c)
 	whatHappened := publicWhatHappened(protocol, reportJSON, summary)
@@ -193,7 +211,8 @@ func buildFacts(c Case) incidentFacts {
 		StatusLabel:    statusLabel,
 		ImageMode:      "none",
 		ImpactUSD:      impactUSD,
-		ReproducedUSD:  reproducedUSDValue(summary),
+		ReproducedUSD:  reproducedUSD,
+		Card:           buildCardFacts(protocol, summary, reportJSON, report, impact, impactUSD, reproducedUSD),
 		ReadyToPublish: len(blockers) == 0,
 		Blockers:       blockers,
 	}
@@ -323,6 +342,7 @@ func (r *Runner) applyExploitFlowCard(ctx context.Context, c Case, f *incidentFa
 		"--title", fmt.Sprintf("%s Exploit Flow", f.Protocol),
 		"--footer", "Full report: GitHub",
 	)
+	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	output, err := cmd.CombinedOutput()
 	svgPath := filepath.Join(outDir, "exploit-flow-card.svg")
 	pngPath := filepath.Join(outDir, "exploit-flow-card.png")
@@ -379,6 +399,9 @@ func writeCardBrief(outputRoot string, c Case, f incidentFacts) (string, error) 
 		pocStatus = "verified"
 	}
 	mechanism := append([]string(nil), f.WhatHappened...)
+	if len(f.Card.FlowSteps) > 0 {
+		mechanism = append([]string(nil), f.Card.FlowSteps...)
+	}
 	for len(mechanism) < 3 {
 		mechanism = append(mechanism, "Details remain under review.")
 	}
@@ -389,16 +412,59 @@ func writeCardBrief(outputRoot string, c Case, f incidentFacts) (string, error) 
 	fmt.Fprintf(&b, "- **Chain**: %s\n", f.Chain)
 	fmt.Fprintf(&b, "- **Estimated loss**: %s\n", moneyForCard(f.ImpactUSD, f.Impact))
 	fmt.Fprintf(&b, "- **Attacker gain reproduced**: %s\n", moneyForCard(reproduced, "unknown"))
+	if f.Card.Impact != "" {
+		fmt.Fprintf(&b, "- **Impact card**: %s\n", f.Card.Impact)
+	}
+	if f.Card.AttackerGain != "" {
+		fmt.Fprintf(&b, "- **Attacker gain card**: %s\n", f.Card.AttackerGain)
+	}
+	if f.Card.VulnerablePath != "" {
+		fmt.Fprintf(&b, "- **Vulnerable path**: %s\n", f.Card.VulnerablePath)
+	}
+	if f.Card.VulnerableContract != "" {
+		fmt.Fprintf(&b, "- **Vulnerable contract**: %s\n", f.Card.VulnerableContract)
+	}
+	if f.Card.Vulnerability != "" {
+		fmt.Fprintf(&b, "- **Vulnerability**: %s\n", f.Card.Vulnerability)
+	}
+	if f.Card.ExploitResult != "" {
+		fmt.Fprintf(&b, "- **Exploit result**: %s\n", f.Card.ExploitResult)
+	}
+	if f.Card.Victim != "" {
+		fmt.Fprintf(&b, "- **Victim**: %s\n", f.Card.Victim)
+	}
+	if f.Card.LoopLabel != "" {
+		fmt.Fprintf(&b, "- **Loop label**: %s\n", f.Card.LoopLabel)
+	}
+	for i, step := range f.Card.FlowSteps {
+		if i >= 4 {
+			break
+		}
+		fmt.Fprintf(&b, "- **Flow step %d**: %s\n", i+1, step)
+	}
 	fmt.Fprintf(&b, "- **PoC status**: %s\n", pocStatus)
 	fmt.Fprintf(&b, "- **Proof kind**: %s\n", proofKind)
 	fmt.Fprintf(&b, "- **Tx**: %s\n\n", f.TxHash)
-	fmt.Fprintf(&b, "## Root Cause\n\n%s\n\n", f.RootCause)
+	fmt.Fprintf(&b, "## Root Cause\n\n%s\n\n", firstText(f.Card.Subtitle, f.RootCause))
 	fmt.Fprintf(&b, "Mechanism:\n")
-	for _, line := range mechanism[:3] {
+	cardMechanism := append([]string(nil), f.Card.Mechanism...)
+	if len(cardMechanism) == 0 {
+		cardMechanism = mechanism
+	}
+	for len(cardMechanism) < 3 {
+		cardMechanism = append(cardMechanism, "Details remain under review.")
+	}
+	for _, line := range cardMechanism[:3] {
 		fmt.Fprintf(&b, "- %s\n", line)
 	}
 	fmt.Fprintf(&b, "\nKey evidence:\n")
-	fmt.Fprintf(&b, "- Impact scale: %s.\n", f.Impact)
+	if len(f.Card.KeyEvidence) > 0 {
+		for _, line := range f.Card.KeyEvidence {
+			fmt.Fprintf(&b, "- %s\n", strings.TrimSuffix(line, ".")+".")
+		}
+	} else {
+		fmt.Fprintf(&b, "- Impact scale: %s.\n", f.Impact)
+	}
 	if f.ReproducedUSD > 0 {
 		fmt.Fprintf(&b, "- Economic reproduction matched approximately %s.\n", moneyForCard(f.ReproducedUSD, "unknown"))
 	}
@@ -409,6 +475,445 @@ func writeCardBrief(outputRoot string, c Case, f incidentFacts) (string, error) 
 		return "", err
 	}
 	return path, nil
+}
+
+func buildCardFacts(protocol string, summary, reportJSON []byte, report, impact string, impactUSD, reproducedUSD float64) cardFacts {
+	vulnerablePath := cleanCardText(firstText(
+		jsonPathString(reportJSON, "attack_summary", "public_entrypoint_called_per_iteration"),
+		markdownField(report, "In short"),
+	))
+	vulnerability := cleanCardText(firstText(
+		jsonPathString(reportJSON, "vulnerability", "title"),
+		markdownField(report, "Finding"),
+	))
+	rootCause := cleanCardText(firstText(
+		jsonPathString(reportJSON, "vulnerability", "root_cause"),
+		firstNonemptyLine(markdownSection(report, "Root Cause")),
+	))
+	if vulnerability == "" {
+		vulnerability = rootCause
+	}
+
+	primaryContract := affectedContractLabel(reportJSON, []string{"primary vulnerable", "vulnerable"})
+	victim := affectedContractLabel(reportJSON, []string{"impacted", "victim", "amm pair", "pool", "market", "reserve"})
+	if victim == "" || victim == primaryContract {
+		victim = firstText(victimFromImpact(summary), "Affected protocol")
+	}
+
+	attackerGain := attackerGainCard(summary, reportJSON, reproducedUSD)
+	impactCard := firstText(impactCardText(impactUSD, impact, attackerGain), attackerGain, "under review")
+	loopLabel := loopLabelFromSummary(reportJSON)
+	exploitResult := exploitResultText(vulnerablePath, rootCause, attackerGain)
+	steps := cardFlowSteps(vulnerablePath, rootCause, attackerGain)
+	mechanism := reportBullets(report, "Mechanism")
+	if len(mechanism) == 0 {
+		mechanism = cardMechanism(vulnerablePath, rootCause, victim, attackerGain)
+	}
+	evidence := cardEvidence(report, summary, reportJSON, victim, attackerGain)
+	subtitle := firstText(vulnerability, rootCause, fmt.Sprintf("%s exploit path under review", protocol))
+
+	return cardFacts{
+		Subtitle:           truncateText(subtitle, 180),
+		VulnerablePath:     truncateText(vulnerablePath, 160),
+		VulnerableContract: truncateText(primaryContract, 90),
+		Vulnerability:      truncateText(firstText(vulnerability, rootCause), 170),
+		ExploitResult:      truncateText(exploitResult, 110),
+		Victim:             truncateText(victim, 90),
+		Impact:             truncateText(impactCard, 60),
+		AttackerGain:       truncateText(attackerGain, 60),
+		LoopLabel:          truncateText(loopLabel, 80),
+		FlowSteps:          steps,
+		Mechanism:          mechanism,
+		KeyEvidence:        evidence,
+	}
+}
+
+func affectedContractLabel(reportJSON []byte, roleNeedles []string) string {
+	arr, _ := jsonValue(reportJSON, "vulnerability", "affected_contracts").([]any)
+	if len(arr) == 0 {
+		return ""
+	}
+	pick := func(requireRole bool) string {
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			role := strings.ToLower(fmt.Sprint(m["role"]))
+			if requireRole {
+				matched := false
+				for _, needle := range roleNeedles {
+					if strings.Contains(role, needle) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			if label := contractLabel(m); label != "" {
+				return label
+			}
+		}
+		return ""
+	}
+	if label := pick(true); label != "" {
+		return label
+	}
+	return pick(false)
+}
+
+func contractLabel(m map[string]any) string {
+	name := cleanCardText(fmt.Sprint(m["name"]))
+	address := strings.TrimSpace(fmt.Sprint(m["address"]))
+	role := cleanCardText(fmt.Sprint(m["role"]))
+	if name == "" || strings.EqualFold(name, "<nil>") || strings.EqualFold(name, "unknown") {
+		name = shortAddress(address)
+	}
+	switch {
+	case name != "" && role != "" && !strings.Contains(strings.ToLower(role), "primary vulnerable"):
+		return fmt.Sprintf("%s (%s)", name, role)
+	case name != "" && address != "":
+		return fmt.Sprintf("%s (%s)", name, shortAddress(address))
+	case name != "":
+		return name
+	default:
+		return shortAddress(address)
+	}
+}
+
+func victimFromImpact(summary []byte) string {
+	arr, _ := jsonValue(summary, "economic_reproduction", "incident", "asset_legs").([]any)
+	if len(arr) == 0 {
+		arr, _ = jsonValue(summary, "economic_reproduction", "incident", "drain_legs").([]any)
+	}
+	symbols := make([]string, 0, 3)
+	holder := ""
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if holder == "" {
+			holder = shortAddress(fmt.Sprint(m["holder"]))
+		}
+		symbol := cleanCardText(fmt.Sprint(m["symbol"]))
+		if symbol != "" && !containsValue(symbols, symbol) {
+			symbols = append(symbols, symbol)
+		}
+		if len(symbols) >= 3 {
+			break
+		}
+	}
+	if holder == "" && len(symbols) == 0 {
+		return ""
+	}
+	if len(symbols) > 0 {
+		return strings.TrimSpace(holder + " lost " + strings.Join(symbols, " + "))
+	}
+	return holder
+}
+
+func attackerGainCard(summary, reportJSON []byte, reproducedUSD float64) string {
+	symbol := jsonPathString(reportJSON, "impact", "attacker_profit_symbol")
+	if symbol == "" {
+		symbol = firstGainSymbol(summary)
+	}
+	if reproducedUSD > 0 {
+		if symbol != "" {
+			return usdApprox(reproducedUSD) + " " + symbol
+		}
+		return usdApprox(reproducedUSD)
+	}
+	formatted := jsonPathString(reportJSON, "impact", "attacker_profit_formatted")
+	if formatted != "" && symbol != "" {
+		return compactTokenAmount(formatted) + " " + symbol
+	}
+	return ""
+}
+
+func firstGainSymbol(summary []byte) string {
+	for _, path := range [][]string{
+		{"economic_reproduction", "poc", "included_legs"},
+		{"economic_reproduction", "poc", "gain_family_selection", "included_legs"},
+	} {
+		arr, _ := jsonValue(summary, path...).([]any)
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if symbol := cleanCardText(fmt.Sprint(m["symbol"])); symbol != "" {
+				return symbol
+			}
+		}
+	}
+	return ""
+}
+
+func impactCardText(impactUSD float64, impact, attackerGain string) string {
+	if impactUSD > 0 {
+		return usdApprox(impactUSD)
+	}
+	if strings.Contains(impact, "$") {
+		return impact
+	}
+	return attackerGain
+}
+
+func loopLabelFromSummary(reportJSON []byte) string {
+	loopCount := jsonPathNumber(reportJSON, "attack_summary", "loop_count")
+	if loopCount > 1 {
+		return fmt.Sprintf("Loop repeats %.0f times", loopCount)
+	}
+	return "Repeated calls amplify the effect"
+}
+
+func exploitResultText(path, rootCause, attackerGain string) string {
+	hay := strings.ToLower(path + " " + rootCause)
+	switch {
+	case strings.Contains(hay, "skim") && strings.Contains(hay, "sync"):
+		if attackerGain != "" {
+			return "sync commits lower reserves; swap extracts " + attackerGain
+		}
+		return "sync commits lower reserves; value is extracted"
+	case strings.Contains(hay, "withdraw"):
+		return "withdrawal moves victim assets out"
+	case strings.Contains(hay, "buytru") && strings.Contains(hay, "selltru"):
+		return "sell path returns excessive ETH"
+	case attackerGain != "":
+		return "attacker realizes " + attackerGain
+	default:
+		return "exploit effect remains under review"
+	}
+}
+
+func cardFlowSteps(path, rootCause, attackerGain string) []string {
+	hay := strings.ToLower(path + " " + rootCause)
+	switch {
+	case strings.Contains(hay, "skim") && strings.Contains(hay, "sync"):
+		return []string{
+			"1. create small pair excess",
+			"2. skim() triggers token transfer",
+			"3. amplified pair burn",
+			"4. sync + swap to profit",
+		}
+	case strings.Contains(hay, "buytru") && strings.Contains(hay, "selltru"):
+		return []string{
+			"1. buyTRU",
+			"2. hold / approve TRU",
+			"3. sellTRU",
+			"4. excessive ETH payout",
+		}
+	case strings.Contains(hay, "withdraw"):
+		return []string{
+			"1. call withdraw(victim)",
+			"2. helper spends allowance",
+			"3. victim assets move out",
+			"4. attacker-controlled recipient gains",
+		}
+	}
+	parts := splitCallPath(path)
+	steps := make([]string, 0, 4)
+	for _, part := range parts {
+		if len(steps) >= 3 {
+			break
+		}
+		steps = append(steps, fmt.Sprintf("%d. %s", len(steps)+1, part))
+	}
+	if len(steps) == 0 {
+		steps = append(steps, "1. enter exploit path")
+	}
+	for len(steps) < 3 {
+		steps = append(steps, fmt.Sprintf("%d. protocol state changes", len(steps)+1))
+	}
+	final := "4. value extracted"
+	if attackerGain != "" {
+		final = "4. extract " + attackerGain
+	}
+	steps = append(steps, final)
+	return steps
+}
+
+func splitCallPath(path string) []string {
+	raw := strings.FieldsFunc(path, func(r rune) bool {
+		return r == '>' || r == '→'
+	})
+	parts := make([]string, 0, len(raw))
+	for _, part := range raw {
+		part = strings.Trim(strings.TrimSpace(part), "- ")
+		if part != "" {
+			parts = append(parts, cleanCardText(part))
+		}
+	}
+	return parts
+}
+
+func cardMechanism(path, rootCause, victim, attackerGain string) []string {
+	out := make([]string, 0, 3)
+	if path != "" {
+		out = append(out, "The attacker drove the path: "+path+".")
+	}
+	if rootCause != "" {
+		out = append(out, rootCause)
+	}
+	if victim != "" || attackerGain != "" {
+		out = append(out, strings.TrimSpace(fmt.Sprintf("The affected target was %s; attacker gain was %s.", fallback(victim, "under review"), fallback(attackerGain, "under review"))))
+	}
+	return out
+}
+
+func cardEvidence(report string, summary, reportJSON []byte, victim, attackerGain string) []string {
+	evidence := reportBullets(report, "Key evidence")
+	if len(evidence) > 0 {
+		if len(evidence) > 3 {
+			return evidence[:3]
+		}
+		return evidence
+	}
+	out := make([]string, 0, 3)
+	if victim != "" {
+		out = append(out, "Affected target: "+victim)
+	}
+	if attackerGain != "" {
+		out = append(out, "Attacker gain reproduced: "+attackerGain)
+	}
+	if proof := jsonPathString(summary, "economic_reproduction", "verdict"); proof != "" {
+		out = append(out, "Economic reproduction verdict: "+proof)
+	}
+	if len(out) == 0 {
+		if title := jsonPathString(reportJSON, "vulnerability", "title"); title != "" {
+			out = append(out, "RCA finding: "+title)
+		}
+	}
+	return out
+}
+
+func markdownField(text, label string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`(?m)^\s*-\s+\*\*` + regexp.QuoteMeta(label) + `\*\*:\s*(.+?)\s*$`)
+	if match := re.FindStringSubmatch(text); len(match) == 2 {
+		return cleanCardText(match[1])
+	}
+	return ""
+}
+
+func markdownSection(text, heading string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`(?m)^##\s+` + regexp.QuoteMeta(heading) + `\s*$`)
+	match := re.FindStringIndex(text)
+	if match == nil {
+		return ""
+	}
+	start := match[1]
+	next := regexp.MustCompile(`(?m)^##\s+`).FindStringIndex(text[start:])
+	end := len(text)
+	if next != nil {
+		end = start + next[0]
+	}
+	return strings.TrimSpace(text[start:end])
+}
+
+func reportBullets(text, label string) []string {
+	lines := strings.Split(text, "\n")
+	target := strings.ToLower(label) + ":"
+	out := make([]string, 0, 3)
+	inBlock := false
+	for _, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if !inBlock {
+			if strings.EqualFold(stripped, target) {
+				inBlock = true
+			}
+			continue
+		}
+		if strings.HasPrefix(stripped, "- ") {
+			cleaned := cleanCardText(strings.TrimPrefix(stripped, "- "))
+			if cleaned != "" {
+				out = append(out, cleaned)
+			}
+			continue
+		}
+		if stripped == "" {
+			if len(out) > 0 {
+				break
+			}
+			continue
+		}
+		if strings.HasSuffix(stripped, ":") || strings.HasPrefix(stripped, "## ") {
+			break
+		}
+	}
+	return out
+}
+
+func firstNonemptyLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = cleanCardText(strings.TrimSpace(strings.TrimPrefix(line, "-")))
+		if line != "" && !strings.HasSuffix(line, ":") {
+			return line
+		}
+	}
+	return ""
+}
+
+func cleanCardText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "<nil>") {
+		return ""
+	}
+	value = regexp.MustCompile("\\[`?([^`\\]]+)`?\\]\\([^)]+\\)").ReplaceAllString(value, "$1")
+	value = strings.ReplaceAll(value, "`", "")
+	value = regexp.MustCompile(`\s+`).ReplaceAllString(value, " ")
+	return correctProtocolTypos(strings.TrimSpace(value))
+}
+
+func containsValue(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func correctProtocolTypos(value string) string {
+	replacer := strings.NewReplacer(
+		"Pnacakeswap", "Pancakeswap",
+		"pnacakeswap", "pancakeswap",
+		"PNACAKESWAP", "PANCAKESWAP",
+	)
+	return replacer.Replace(value)
+}
+
+func shortAddress(address string) string {
+	address = strings.TrimSpace(address)
+	if len(address) == 42 && strings.HasPrefix(strings.ToLower(address), "0x") {
+		return address[:6] + "..." + address[len(address)-4:]
+	}
+	return address
+}
+
+func compactTokenAmount(value string) string {
+	n, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(value), ",", ""), 64)
+	if err != nil || n <= 0 {
+		return cleanCardText(value)
+	}
+	switch {
+	case n >= 1_000_000_000:
+		return fmt.Sprintf("%.2fB", n/1_000_000_000)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.2fM", n/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.2fK", n/1_000)
+	default:
+		return fmt.Sprintf("%.4g", n)
+	}
 }
 
 func writeArtifacts(outputRoot string, result *Result) error {

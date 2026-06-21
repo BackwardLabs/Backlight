@@ -1,11 +1,21 @@
-# Backlight x-feed Skill Vendor
+# x-feed-skills
 
-This directory vendors the public-posting guidance used by Backlight's
-structured X/Telegram incident publisher. Runtime code reads the incident
-format path as a readiness check and records it in `x-feed-status.json`.
+Private skills for turning internal exploit-analysis outputs into safe, curated X and Typefully feed material.
 
-When `HELIOS_X_FEED_CARD_ENABLED=true`, Backlight also calls the vendored
-`skills/exploit-flow-card/scripts/render_card.py` script to create a public-safe
-SVG/PNG card from `x-feed-card-brief.md`. X media upload uses the generated PNG
-when available; PNG conversion requires `cairosvg` in the configured Python
-environment.
+This repository is for editorial workflows around public-facing posts derived from private TraceExp/report artifacts. It should help agents:
+
+- sanitize private report details before any public draft is written
+- preserve the meaningful exploit perspective without leaking reproduction detail
+- produce concise X/Typefully-ready threads with clear claims and caveats
+- create high-level diagrams that explain impact and flow without operational specificity
+- render X-ready exploit-flow cards from sanitized/public report material
+
+## Skills
+
+- `skills/sanitize-exploit-report`: convert private report artifacts into a public-safe brief.
+- `skills/draft-x-exploit-thread`: turn a sanitized brief into an X/Typefully thread.
+- `skills/exploit-flow-card`: render a public-safe social card showing attack flow and money movement.
+
+## Operating Rule
+
+Do not draft public posts or visual cards directly from private reports. First produce a sanitized brief, then write the feed draft or render the social card from that public-safe material.

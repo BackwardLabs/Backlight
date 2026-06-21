@@ -157,6 +157,56 @@ func TestRunnerGeneratesExploitFlowCardImagePath(t *testing.T) {
 	}
 }
 
+func TestRunnerCardBriefUsesRCAFlowAndImpact(t *testing.T) {
+	root := writePancakeArtifacts(t)
+	r := &Runner{
+		Enabled:       true,
+		SkillDir:      writeSkillDirWithCard(t),
+		CardEnabled:   true,
+		CardPythonBin: writeFakeCardPython(t),
+	}
+	res, err := r.Run(context.Background(), Case{
+		CaseID:       "pancakeswap_v2",
+		Chain:        "bsc",
+		TxHash:       "0x8dabb60a94e5124462e5f494a25c14bcd52f6f4d1f7c665a249496f4c6c24764",
+		OutputRoot:   root,
+		IncidentSlug: "pnacakeswap_v2",
+		Outcome:      outcome.OutcomeVerified,
+		PublishTier:  outcome.PublishTierPublicVerified,
+		PoCState:     outcome.PoCStateEconomic,
+		RCAState:     outcome.RCAStateComplete,
+		ReportURL:    "https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-06/pancakeswap_v2/README.md",
+		GitHubURL:    "https://github.com/BackwardLabs/Q1-2026/tree/main/test/2026-06/pancakeswap_v2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := mustReadFile(t, res.CardBriefPath)
+	for _, want := range []string{
+		"# Pancakeswap V2 Exploit Flow",
+		"- **Vulnerable path**: OLPCToken.transfer -> PancakePair.skim -> PancakePair.sync",
+		"- **Vulnerable contract**: OLPCToken (0x5881...0000)",
+		"- **Victim**: PancakePair (impacted OLPC/LABUBU AMM pair)",
+		"- **Impact card**: ~$1.1M USDT",
+		"- **Flow step 2**: 2. skim() triggers token transfer",
+		"- **Flow step 3**: 3. amplified pair burn",
+		"- **Exploit result**: sync commits lower reserves; swap extracts ~$1.1M USDT",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("card brief missing %q:\n%s", want, brief)
+		}
+	}
+	for _, bad := range []string{
+		"accounting or pricing mismatch",
+		"payout > checked value",
+		"enter vulnerable path",
+	} {
+		if strings.Contains(brief, bad) {
+			t.Fatalf("card brief contains generic fallback %q:\n%s", bad, brief)
+		}
+	}
+}
+
 func writeTruebitArtifacts(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -197,6 +247,98 @@ func writeTruebitArtifacts(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(pocDir, "PoC.t.sol"), []byte("uint256 constant TX_TIMESTAMP = 1767888155;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func writePancakeArtifacts(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "report_bundle", "report")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	summary := `{
+  "chain": "bsc",
+  "status": "pass",
+  "tx_hash": "0x8dabb60a94e5124462e5f494a25c14bcd52f6f4d1f7c665a249496f4c6c24764",
+  "economic_reproduction": {
+    "status": "pass",
+    "verdict": "exact",
+    "incident": {
+      "asset_legs": [
+        {"holder":"0xedb7dcb4cdfec957f8df5cbf5e94229a6cc9f365","symbol":"LABUBU"},
+        {"holder":"0xedb7dcb4cdfec957f8df5cbf5e94229a6cc9f365","symbol":"OLPC"}
+      ]
+    },
+    "poc": {
+      "expected_reproduced_usd": 1114815.7795317562,
+      "gain_family_selection": {
+        "included_legs": [
+          {"symbol":"USDT"}
+        ]
+      }
+    },
+    "pricing": {"tx_timestamp": 1781955063}
+  },
+  "poc": {"status":"verified","execution_state":"economic_poc"},
+  "rca": {"status":"complete","analysis_status":"complete"}
+}`
+	if err := os.WriteFile(filepath.Join(reportDir, "run_summary.json"), []byte(summary), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := `{
+  "analysis_status": "complete",
+  "chain": "bsc",
+  "attack_summary": {
+    "loop_count": 20,
+    "public_entrypoint_called_per_iteration": "OLPCToken.transfer -> PancakePair.skim -> PancakePair.sync"
+  },
+  "impact": {
+    "attacker_profit_symbol": "USDT",
+    "attacker_profit_formatted": "1115903.663412131721557252"
+  },
+  "vulnerability": {
+    "title": "OLPC pair-out transfer branch lets skim trigger amplified pair-balance burns",
+    "root_cause": "OLPCToken._update treats any transfer from its Pancake swap pair to a non-exempt address as a buy and debits value * decimalsValue from the pair to 0xdead, then sets the actual transfer value to zero. Repeated skim/sync cycles reduce the pair's OLPC balance and enable downstream conversion into USDT profit.",
+    "affected_contracts": [
+      {
+        "address": "0x58815cdf9955121a6274680ab396a36fc9e00000",
+        "name": "OLPCToken",
+        "role": "primary vulnerable contract"
+      },
+      {
+        "address": "0xedb7dcb4cdfec957f8df5cbf5e94229a6cc9f365",
+        "name": "PancakePair",
+        "role": "impacted OLPC/LABUBU AMM pair"
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(reportDir, "report.json"), []byte(reportJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := `# pnacakeswap_v2 Incident Report
+
+## Root Cause
+
+- **Finding**: OLPC pair-out transfer branch lets skim trigger amplified pair-balance burns
+- **In short**: The vulnerable path is the ` + "`OLPCToken.transfer -> PancakePair.skim -> PancakePair.sync`" + ` flow.
+
+Mechanism:
+
+- The attacker reached the victim through the ` + "`OLPCToken.transfer -> PancakePair.skim -> PancakePair.sync`" + ` flow during the exploit.
+- OLPCToken._update treats any transfer from its Pancake swap pair to a non-exempt address as a buy and debits value * decimalsValue from the pair.
+- The accounting update reduced pair balance and reserves, enabling downstream conversion into USDT profit.
+
+Key evidence:
+
+- PoC execution, economic proof, forge build, and forge test all passed.
+- The OLPC/LABUBU pair lost OLPC and LABUBU while the attacker gained USDT.
+- The PoC primes the OLPC pair, repeatedly transfers small OLPC amounts, calls skim and sync, then swaps OLPC for USDT.
+`
+	if err := os.WriteFile(filepath.Join(reportDir, "REPORT.md"), []byte(report), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return root
