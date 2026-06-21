@@ -674,10 +674,7 @@ func exploitResultText(path, rootCause, attackerGain string) string {
 	hay := strings.ToLower(path + " " + rootCause)
 	switch {
 	case strings.Contains(hay, "skim") && strings.Contains(hay, "sync"):
-		if attackerGain != "" {
-			return "sync commits lower reserves; swap extracts " + attackerGain
-		}
-		return "sync commits lower reserves; value is extracted"
+		return "lower reserves -> swap profit"
 	case strings.Contains(hay, "withdraw"):
 		return "withdrawal moves victim assets out"
 	case strings.Contains(hay, "buytru") && strings.Contains(hay, "selltru"):
@@ -695,8 +692,8 @@ func cardFlowSteps(path, rootCause, attackerGain string) []string {
 	case strings.Contains(hay, "skim") && strings.Contains(hay, "sync"):
 		return []string{
 			"1. create small pair excess",
-			"2. skim() triggers token transfer",
-			"3. amplified pair burn",
+			"2. skim() triggers burn",
+			"3. pair shrinks",
 			"4. sync + swap to profit",
 		}
 	case strings.Contains(hay, "buytru") && strings.Contains(hay, "selltru"):
