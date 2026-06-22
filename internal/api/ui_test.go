@@ -49,6 +49,7 @@ func TestUIRoutesArePublic(t *testing.T) {
 			"Reachable PoC",
 			"RCA blocked",
 			"RCA agent runtime error",
+			`id="retryHandoff" type="button">Retry handoff`,
 			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol</span>",
 			`id="artifactText" class="artifact-preview plain-preview"`,
 			"function renderMarkdown(md)",
@@ -73,6 +74,12 @@ func TestUIRoutesArePublic(t *testing.T) {
 		}
 		if strings.Contains(body, `<pre id="artifactText"`) {
 			t.Fatalf("GET %s still renders artifact preview as raw pre", path)
+		}
+		if strings.Contains(body, `id="retryHandoff" type="button" disabled`) {
+			t.Fatalf("GET %s still disables the retry handoff button in markup", path)
+		}
+		if strings.Contains(body, `c.state==="done"&&c.handoff_status==="failed"`) {
+			t.Fatalf("GET %s still gates the retry handoff button by case state", path)
 		}
 		if !strings.Contains(body, "function pickArtifact(files,name)") {
 			t.Fatalf("GET %s missing artifact label/path picker", path)
