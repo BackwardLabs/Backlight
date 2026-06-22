@@ -305,6 +305,27 @@ func TestCommandAtBotnameSuffixParsed(t *testing.T) {
 	}
 }
 
+func TestClientRedactsBotTokenFromTransportErrors(t *testing.T) {
+	// A closed server address forces a connection-refused transport error,
+	// whose *url.Error renders the request URL — which embeds the bot token.
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close()
+
+	token := "123456:SUPER-SECRET-TOKEN"
+	c := &apiClient{botToken: token, apiBase: base, client: &http.Client{Timeout: time.Second}}
+	err := c.sendMessage(context.Background(), 1, "hi")
+	if err == nil {
+		t.Fatal("expected a transport error from a closed server")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("error leaked the bot token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "***") {
+		t.Fatalf("expected the token to be redacted to ***, got: %v", err)
+	}
+}
+
 func TestLoopProcessesUpdatesFromGetUpdates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

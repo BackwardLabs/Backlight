@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -132,7 +133,27 @@ func (c *apiClient) deleteWebhook(ctx context.Context) error {
 	return c.doJSON(reqCtx, "deleteWebhook", []byte(`{}`), nil)
 }
 
+// doJSON performs the request and guarantees the bot token never escapes in a
+// returned error. The token is embedded in every request URL
+// (.../bot<token>/<method>), so Go renders it verbatim inside *url.Error
+// transport failures; redactToken is the single choke point that keeps it out
+// of operator logs.
 func (c *apiClient) doJSON(ctx context.Context, method string, body []byte, out any) error {
+	return c.redactToken(c.roundTrip(ctx, method, body, out))
+}
+
+func (c *apiClient) redactToken(err error) error {
+	if err == nil || c.botToken == "" {
+		return err
+	}
+	msg := strings.ReplaceAll(err.Error(), c.botToken, "***")
+	if msg == err.Error() {
+		return err
+	}
+	return errors.New(msg)
+}
+
+func (c *apiClient) roundTrip(ctx context.Context, method string, body []byte, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(method), bytes.NewReader(body))
 	if err != nil {
 		return err
