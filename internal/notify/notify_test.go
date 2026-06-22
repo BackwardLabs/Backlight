@@ -230,7 +230,7 @@ func TestPayloadAnalysisEnrichmentInfersRCABlockedFromLegacyPayload(t *testing.T
 		t.Fatalf("legacy payload not inferred as rca_blocked: %+v", payload)
 	}
 	text := renderTelegramText(payload)
-	for _, marker := range []string{"[Backlight] RCA blocked", "Result: RCA blocked · auto rerun", "Reason: missing allowance provenance"} {
+	for _, marker := range []string{"[Backlight] RCA blocked", "Result: PoC verified; RCA blocked (missing allowance provenance) · auto rerun", "Reason: missing allowance provenance"} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("telegram text missing %q:\n%s", marker, text)
 		}
@@ -282,10 +282,69 @@ func TestPayloadAnalysisEnrichmentInfersReachablePoCOverEconomicProofGap(t *test
 		t.Fatalf("legacy economic proof gap not inferred as reachable_poc: %+v", payload)
 	}
 	text := renderTelegramText(payload)
-	for _, marker := range []string{"[Backlight] Reachable PoC", "Result: reachable PoC, economic proof incomplete · guided repair", "Reason: missing_profit_or_economic_oracle"} {
+	for _, marker := range []string{"[Backlight] Reachable PoC", "Result: PoC reachable (reachability only, forge test pass, missing profit or economic oracle); RCA blocked (economic proof gap) · guided repair", "Reason: missing_profit_or_economic_oracle"} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("telegram text missing %q:\n%s", marker, text)
 		}
+	}
+}
+
+func TestPayloadAnalysisEnrichmentShowsPoCAndPartialRCA(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "ethereum", "0x"+strings.Repeat("8", 64), nil, nil, json.RawMessage(`{"protocol":"taico"}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendCaseEvent(ctx, c.CaseID, "state_transition", map[string]any{
+		"outcome":        "partial",
+		"summary_status": "partial",
+		"analysis_stage": "rca_blocked",
+		"rerun_decision": "no_rerun",
+		"rerun_reason":   "partial",
+		"poc_state":      "economic_poc",
+		"rca_state":      "rca_scope_limited",
+		"poc": map[string]any{
+			"state":              "economic_poc",
+			"status":             "verified",
+			"proof_kind":         "economic_proof",
+			"forge_build_status": "pass",
+			"forge_test_status":  "pass",
+		},
+		"rca": map[string]any{
+			"state":           "rca_scope_limited",
+			"status":          "partial",
+			"analysis_status": "partial",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := PayloadFromCase(c, EventPartial)
+	n := &Notifier{Store: st}
+	if err := n.enrichWithAnalysisPayload(ctx, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.PoCState != "economic_poc" || payload.RCAState != "rca_scope_limited" || payload.RCAStatus != "partial" {
+		t.Fatalf("PoC/RCA status not enriched: %+v", payload)
+	}
+	text := renderTelegramText(payload)
+	for _, marker := range []string{
+		"[Backlight] Partial result",
+		"Result: PoC verified (economic proof, forge test pass); RCA partial (scope limited) · no rerun",
+		"Reason: rca_scope_limited",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("telegram text missing %q:\n%s", marker, text)
+		}
+	}
+	if strings.Contains(text, "[Backlight] RCA blocked") || strings.Contains(text, "Result: RCA blocked") {
+		t.Fatalf("telegram text still collapses partial RCA to blocked:\n%s", text)
 	}
 }
 

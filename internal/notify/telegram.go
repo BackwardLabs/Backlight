@@ -119,7 +119,10 @@ func telegramDiagnosis(p Payload) (key, title, reason string) {
 	case "reachable_poc":
 		return "reachable_poc", "Reachable PoC", firstText(reason, "economic_proof_incomplete")
 	case "rca_blocked":
-		return "rca_blocked", "RCA blocked", reason
+		if rcaIsPartial(p) {
+			return "partial", "Partial result", firstText(rcaReason(p), nonGenericReason(reason))
+		}
+		return "rca_blocked", "RCA blocked", firstText(rcaReason(p), reason)
 	case "poc_blocked":
 		return "poc_blocked", "PoC blocked", reason
 	case "poc_failed":
@@ -172,6 +175,9 @@ func yesNo(b bool) string {
 
 func resultSummary(p Payload, diagnosis string) string {
 	decision := decisionText(p.RerunDecision)
+	if component := componentResultSummary(p); component != "" && !isEngineDiagnosis(diagnosis) {
+		return joinTelegramParts(component, decision)
+	}
 	switch diagnosis {
 	case "success":
 		return joinTelegramParts("verified", decision)
@@ -194,6 +200,201 @@ func resultSummary(p Payload, diagnosis string) string {
 	default:
 		return firstText(joinTelegramParts(diagnosis, decision), diagnosis, p.Outcome, p.Event, "unknown")
 	}
+}
+
+func isEngineDiagnosis(diagnosis string) bool {
+	switch diagnosis {
+	case "agent_poc_agent_runtime_error", "rca_agent_runtime_error", "engine_error":
+		return true
+	default:
+		return false
+	}
+}
+
+func componentResultSummary(p Payload) string {
+	parts := make([]string, 0, 2)
+	if text := pocResultText(p); text != "" {
+		parts = append(parts, text)
+	}
+	if text := rcaResultText(p); text != "" {
+		parts = append(parts, text)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func pocResultText(p Payload) string {
+	if p.PoCState == "" && p.PoCStatus == "" && p.PoCProofKind == "" && p.PoCForgeTestStatus == "" && p.PoCFailureKind == "" {
+		return ""
+	}
+	status := pocResultStatus(p)
+	details := make([]string, 0, 4)
+	if proof := proofKindLabel(p.PoCProofKind); proof != "" {
+		details = append(details, proof)
+	}
+	if test := forgeStatusLabel("forge test", p.PoCForgeTestStatus); test != "" {
+		details = append(details, test)
+	}
+	if build := forgeStatusLabel("forge build", p.PoCForgeBuildStatus); build != "" && p.PoCForgeTestStatus == "" {
+		details = append(details, build)
+	}
+	if p.PoCFailureKind != "" {
+		details = append(details, humanizeToken(p.PoCFailureKind))
+	}
+	return componentText("PoC", status, details)
+}
+
+func pocResultStatus(p Payload) string {
+	switch strings.TrimSpace(strings.ToLower(p.PoCState)) {
+	case "reachable_poc":
+		return "reachable"
+	case "poc_failed":
+		return "failed"
+	case "poc_missing":
+		return "missing"
+	case "poc_unknown":
+		return "unknown"
+	}
+	return firstText(pocStatusLabel(p.PoCStatus), pocStateLabel(p.PoCState), "unknown")
+}
+
+func rcaResultText(p Payload) string {
+	if p.RCAState == "" && p.RCAStatus == "" && p.RCAAnalysisStatus == "" && p.RCABlockerCode == "" && p.RCABlockerReason == "" {
+		return ""
+	}
+	status := firstText(rcaStatusLabel(p.RCAStatus), rcaStatusLabel(p.RCAAnalysisStatus), rcaStateLabel(p.RCAState), "unknown")
+	details := make([]string, 0, 3)
+	if state := rcaStateLabel(p.RCAState); state != "" && state != status {
+		details = append(details, state)
+	}
+	if blocker := firstText(p.RCABlockerCode, p.RCABlockerReason); blocker != "" {
+		details = append(details, humanizeToken(blocker))
+	}
+	return componentText("RCA", status, details)
+}
+
+func componentText(name, status string, details []string) string {
+	if len(details) == 0 {
+		return name + " " + status
+	}
+	return fmt.Sprintf("%s %s (%s)", name, status, strings.Join(details, ", "))
+}
+
+func pocStatusLabel(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "verified":
+		return "verified"
+	case "unverified":
+		return "unverified"
+	case "missing":
+		return "missing"
+	case "blocked":
+		return "blocked"
+	default:
+		return humanizeToken(status)
+	}
+}
+
+func pocStateLabel(state string) string {
+	switch strings.TrimSpace(strings.ToLower(state)) {
+	case "economic_poc":
+		return "verified"
+	case "reachable_poc":
+		return "reachable"
+	case "poc_failed":
+		return "failed"
+	case "poc_missing":
+		return "missing"
+	case "poc_unknown":
+		return "unknown"
+	default:
+		return humanizeToken(state)
+	}
+}
+
+func rcaStatusLabel(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "complete", "pass", "verified":
+		return "complete"
+	case "partial":
+		return "partial"
+	case "blocked":
+		return "blocked"
+	case "missing", "not_run":
+		return "not run"
+	default:
+		return humanizeToken(status)
+	}
+}
+
+func rcaStateLabel(state string) string {
+	switch strings.TrimSpace(strings.ToLower(state)) {
+	case "rca_complete":
+		return "complete"
+	case "rca_scope_limited":
+		return "scope limited"
+	case "rca_low_confidence":
+		return "low confidence"
+	case "rca_missing_evidence":
+		return "missing evidence"
+	case "rca_poc_dependent":
+		return "PoC dependent"
+	case "rca_runtime_error":
+		return "runtime error"
+	case "rca_conflicting_evidence":
+		return "conflicting evidence"
+	case "rca_not_run":
+		return "not run"
+	case "rca_unknown":
+		return "unknown"
+	default:
+		return humanizeToken(state)
+	}
+}
+
+func proofKindLabel(proof string) string {
+	switch strings.TrimSpace(strings.ToLower(proof)) {
+	case "economic_proof":
+		return "economic proof"
+	case "reachability_only":
+		return "reachability only"
+	default:
+		return humanizeToken(proof)
+	}
+}
+
+func forgeStatusLabel(name, status string) string {
+	status = strings.TrimSpace(strings.ToLower(status))
+	if status == "" {
+		return ""
+	}
+	return name + " " + status
+}
+
+func rcaIsPartial(p Payload) bool {
+	return p.RCAStatus == "partial" || p.RCAAnalysisStatus == "partial" || p.RCAState == "rca_scope_limited"
+}
+
+func rcaReason(p Payload) string {
+	return firstText(p.RCABlockerCode, p.RCABlockerReason, nonGenericReason(p.RerunReason), p.RCAState, p.RCAAnalysisStatus, p.RCAStatus)
+}
+
+func nonGenericReason(reason string) string {
+	switch strings.TrimSpace(strings.ToLower(reason)) {
+	case "", "partial", "blocked":
+		return ""
+	default:
+		return reason
+	}
+}
+
+func humanizeToken(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "_", " ")
+	value = strings.ReplaceAll(value, "-", " ")
+	return value
 }
 
 func decisionText(decision string) string {

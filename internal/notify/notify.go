@@ -72,6 +72,17 @@ type Payload struct {
 	FailureDetailKind    string  `json:"failure_detail_kind,omitempty"`
 	FailureStage         string  `json:"failure_stage,omitempty"`
 	FailureMessage       string  `json:"failure_message,omitempty"`
+	PoCState             string  `json:"poc_state,omitempty"`
+	PoCStatus            string  `json:"poc_status,omitempty"`
+	PoCProofKind         string  `json:"poc_proof_kind,omitempty"`
+	PoCForgeBuildStatus  string  `json:"poc_forge_build_status,omitempty"`
+	PoCForgeTestStatus   string  `json:"poc_forge_test_status,omitempty"`
+	PoCFailureKind       string  `json:"poc_failure_kind,omitempty"`
+	RCAState             string  `json:"rca_state,omitempty"`
+	RCAStatus            string  `json:"rca_status,omitempty"`
+	RCAAnalysisStatus    string  `json:"rca_analysis_status,omitempty"`
+	RCABlockerCode       string  `json:"rca_blocker_code,omitempty"`
+	RCABlockerReason     string  `json:"rca_blocker_reason,omitempty"`
 	AutoRerunEligible    *bool   `json:"auto_rerun_eligible,omitempty"`
 	AutoRerunResumeStage string  `json:"auto_rerun_resume_stage,omitempty"`
 	ResumeStage          string  `json:"resume_stage,omitempty"`
@@ -133,6 +144,12 @@ func (p *Payload) applyAnalysisPayload(raw json.RawMessage) {
 	if value := stringField(decoded, "analysis_stage"); value != "" {
 		p.AnalysisStage = value
 	}
+	if value := stringField(decoded, "poc_state"); value != "" {
+		p.PoCState = value
+	}
+	if value := stringField(decoded, "rca_state"); value != "" {
+		p.RCAState = value
+	}
 	if value := stringField(decoded, "rerun_decision"); value != "" {
 		p.RerunDecision = value
 	}
@@ -180,6 +197,45 @@ func (p *Payload) applyAnalysisPayload(raw json.RawMessage) {
 		}
 		if value := stringField(failure, "message"); value != "" {
 			p.FailureMessage = value
+		}
+	}
+	if poc := objectField(decoded, "poc"); len(poc) > 0 {
+		if value := stringField(poc, "state"); value != "" {
+			p.PoCState = value
+		} else if value := stringField(poc, "execution_state"); value != "" {
+			p.PoCState = value
+		}
+		if value := stringField(poc, "status"); value != "" {
+			p.PoCStatus = value
+		}
+		if value := stringField(poc, "proof_kind"); value != "" {
+			p.PoCProofKind = value
+		}
+		if value := stringField(poc, "forge_build_status"); value != "" {
+			p.PoCForgeBuildStatus = value
+		}
+		if value := stringField(poc, "forge_test_status"); value != "" {
+			p.PoCForgeTestStatus = value
+		}
+		if value := stringField(poc, "failure_kind"); value != "" {
+			p.PoCFailureKind = value
+		}
+	}
+	if rca := objectField(decoded, "rca"); len(rca) > 0 {
+		if value := stringField(rca, "state"); value != "" {
+			p.RCAState = value
+		}
+		if value := stringField(rca, "status"); value != "" {
+			p.RCAStatus = value
+		}
+		if value := stringField(rca, "analysis_status"); value != "" {
+			p.RCAAnalysisStatus = value
+		}
+		if value := stringField(rca, "blocker_code"); value != "" {
+			p.RCABlockerCode = value
+		}
+		if value := stringField(rca, "blocker_reason"); value != "" {
+			p.RCABlockerReason = value
 		}
 	}
 	if p.AnalysisStage == "" {

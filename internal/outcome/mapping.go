@@ -211,7 +211,7 @@ func withRerunDecision(result Result, s Summary) Result {
 		if isRCAIncompleteState(result.RCAState) {
 			result.AnalysisStage = AnalysisStageRCABlocked
 			result.RerunDecision = rerunDecisionForRCAState(result.RCAState)
-			result.RerunReason = firstNonEmpty(s.RCA.BlockerCode, s.RCA.Status, s.RCA.AnalysisStatus, s.Failure.Kind, "rca_blocked")
+			result.RerunReason = rcaIncompleteReason(result.RCAState, s)
 		} else {
 			result.AnalysisStage = AnalysisStageSuccess
 			result.RerunDecision = RerunDecisionNoRerun
@@ -233,7 +233,7 @@ func withRerunDecision(result Result, s Summary) Result {
 		} else if isRCAIncompleteState(result.RCAState) {
 			result.AnalysisStage = AnalysisStageRCABlocked
 			result.RerunDecision = rerunDecisionForRCAState(result.RCAState)
-			result.RerunReason = firstNonEmpty(s.RCA.BlockerCode, s.RCA.Status, s.RCA.AnalysisStatus, s.Failure.Kind, "rca_blocked")
+			result.RerunReason = rcaIncompleteReason(result.RCAState, s)
 		} else {
 			result.AnalysisStage = AnalysisStagePartial
 			result.RerunDecision = RerunDecisionNoRerun
@@ -254,6 +254,31 @@ func withRerunDecision(result Result, s Summary) Result {
 		result.RerunReason = "unknown_outcome"
 	}
 	return result
+}
+
+func rcaIncompleteReason(state string, s Summary) string {
+	if reason := firstNonEmpty(s.RCA.BlockerCode, s.RCA.BlockerReason); reason != "" {
+		return reason
+	}
+	if reason := nonGenericRCAReason(s.RCA.Status); reason != "" {
+		return reason
+	}
+	if reason := nonGenericRCAReason(s.RCA.AnalysisStatus); reason != "" {
+		return reason
+	}
+	if s.Failure.Kind != "" {
+		return s.Failure.Kind
+	}
+	return firstNonEmpty(state, s.RCA.Status, s.RCA.AnalysisStatus, "rca_blocked")
+}
+
+func nonGenericRCAReason(reason string) string {
+	switch strings.TrimSpace(strings.ToLower(reason)) {
+	case "", "partial", "blocked":
+		return ""
+	default:
+		return reason
+	}
 }
 
 func classifyPoCState(p SummaryPoC) string {
