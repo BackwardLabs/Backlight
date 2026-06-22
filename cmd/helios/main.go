@@ -20,6 +20,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/notify"
 	"github.com/UPside-Lumos-V2/helios/internal/prelumos"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
+	"github.com/UPside-Lumos-V2/helios/internal/telegrambot"
 	"github.com/UPside-Lumos-V2/helios/internal/worker"
 	"github.com/UPside-Lumos-V2/helios/internal/xfeed"
 	"github.com/UPside-Lumos-V2/helios/internal/xpublish"
@@ -178,6 +179,24 @@ func main() {
 	}
 	w.Start(ctx)
 
+	telegramBot := telegrambot.New(telegrambot.Config{
+		BotToken:       cfg.TelegramBotToken,
+		APIBase:        cfg.TelegramAPIBase,
+		AllowedChatIDs: cfg.TelegramCommandAllowedChats(),
+		PollTimeout:    time.Duration(cfg.TelegramCommandPollTimeoutSeconds) * time.Second,
+		Store:          st,
+		Resolver:       incidentResolver,
+		Logger:         logger,
+	})
+	if cfg.TelegramCommandEnabled {
+		telegramBot.Start(ctx)
+	}
+	logger.Info("telegram command bot configured",
+		"enabled", cfg.TelegramCommandEnabled && telegramBot.Configured(),
+		"allowed_chats", len(cfg.TelegramCommandAllowedChats()),
+		"poll_timeout_s", cfg.TelegramCommandPollTimeoutSeconds,
+	)
+
 	apiServer := api.NewServer(cfg, st, dispatcher)
 	apiServer.Resolver = incidentResolver
 	srv := &http.Server{
@@ -205,6 +224,7 @@ func main() {
 	w.Wait()
 	dispatcher.Wait()
 	notifier.Wait()
+	telegramBot.Wait()
 	logger.Info("backlight stopped")
 }
 
