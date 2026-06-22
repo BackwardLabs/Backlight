@@ -82,6 +82,31 @@ Backlight sends terminal `verified`, `partial`, `unverified`, `engine_error`, an
 `rerun_decision`, rerun stage details, and GitHub report links when publish
 completes.
 
+### Telegram command bot (inbound)
+
+The same bot can also accept operator commands. Enable it with
+`TELEGRAM_COMMAND_ENABLED=true`; it long-polls `getUpdates` (no public ingress,
+TLS cert, or webhook required) and only honours commands from the configured
+operator chat(s):
+
+```bash
+export TELEGRAM_COMMAND_ENABLED=true
+# Optional: restrict to specific chat ids (comma-separated). Defaults to TELEGRAM_CHAT_ID.
+export TELEGRAM_ALLOWED_CHAT_IDS=<chat-id>[,<chat-id>...]
+# Optional: long-poll hold time in seconds (default 30).
+export TELEGRAM_COMMAND_POLL_TIMEOUT_SECONDS=30
+```
+
+Commands:
+
+- `/signal` — register an incident through a guided prompt flow (chain → tx hash → protocol). Submitted with manual-operator (`POST /cases`) semantics — `source=telegram:<user>`, `detected_at=now` — not the strict hack-detector `/signals` contract. Repeated tx hashes dedup like any other submission.
+- `/recent` — list the 10 most recent incidents (protocol name · occurrence time).
+- `/cancel` — abort an in-progress `/signal` flow.
+- `/help` — usage.
+
+Only one process may long-poll a given bot token at a time, and the bot clears
+any stale webhook at startup so polling does not conflict.
+
 Open the UI at the address from `HELIOS_LISTEN_ADDR`:
 
 ```text

@@ -30,6 +30,7 @@ flowchart LR
     seed["Lumos importer JSON<br/>seed/import_YEAR.json"]
     downstream["Downstream agents<br/>webhook receivers"]
     notify["Operator notifications<br/>webhook / Telegram"]
+    tgbot["Telegram command bot<br/>inbound long-poll getUpdates"]
     prometheus["Prometheus<br/>metrics scrape"]
     mcp["MCP client<br/>read-only artifact access"]
     helios_mcp["backlight-mcp<br/>stdio gateway"]
@@ -48,6 +49,8 @@ flowchart LR
     helios -->|"verified / partial / unverified"| downstream
     helios -->|"optional POST /handoff"| mcp_bridge
     helios -->|"outcome and failure events"| notify
+    operator -->|"/signal /recent (Telegram)"| tgbot
+    tgbot -->|"manual submit + recent read"| helios
     prometheus -->|"GET /metrics"| helios
     mcp -->|"stdio MCP tools"| helios_mcp
     helios_mcp -->|"GET /cases + artifacts"| helios
@@ -182,6 +185,22 @@ Backlight deduplicates by `(chain, tx_hash)` against the latest lineage leaf.
 Repeated submissions for an active or completed leaf return the existing case
 instead of starting another engine run. A failed leaf, an automatic restart
 recovery, or a manual `force_rerun` creates a linked child case.
+
+### Telegram command bot (inbound)
+
+When `TELEGRAM_COMMAND_ENABLED=true`, Backlight runs an inbound Telegram bot
+alongside the worker. It long-polls `getUpdates` (outbound only — no public
+ingress, TLS cert, or webhook), so an operator chatting with the bot is answered
+in near-real time. Only chats in `TELEGRAM_ALLOWED_CHAT_IDS` (default:
+`TELEGRAM_CHAT_ID`) are honoured; messages from any other chat are ignored.
+
+`/signal` walks the operator through a guided prompt flow (chain → tx hash →
+optional protocol) and submits with the same manual-operator semantics as
+`POST /cases` (`source=telegram:<user>`, `detected_at=now`), so dedup, queueing,
+and the engine run behave identically to an API submission. `/recent` lists the
+10 most recent incidents (protocol name and occurrence time). The bot never uses
+the strict hack-detector `/signals` contract, and submission failures only reply
+to the operator — they never alter case state.
 
 ### Restart recovery
 

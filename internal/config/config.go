@@ -8,54 +8,57 @@ import (
 )
 
 type Config struct {
-	APIToken                string
-	ECWExportToken          string
-	ECWExportMaxBytes       int64
-	DBPath                  string
-	OutputRoot              string
-	ListenAddr              string
-	MaxConcurrent           int
-	LumoskitBin             string
-	WorkerPollMillis        int
-	DownstreamURLs          []string
-	DownstreamBearer        string
-	OperatorWebhook         string
-	TelegramBotToken        string
-	TelegramChatID          string
-	TelegramAPIBase         string
-	GitHubToken             string
-	GitHubOwner             string
-	GitHubRepo              string
-	GitHubBranch            string
-	XPublishEnabled         bool
-	XClientID               string
-	XClientSecret           string
-	XRefreshToken           string
-	XRefreshTokenFile       string
-	XPostTemplatePath       string
-	XAPIBase                string
-	XUsername               string
-	XDryRun                 bool
-	XFeedEnabled            bool
-	XFeedSkillDir           string
-	XFeedIncludeAttackerCA  bool
-	XFeedCardEnabled        bool
-	XFeedCardPythonBin      string
-	XFeedCardTimeoutSeconds int
-	TelegramPublishEnabled  bool
-	PreLumosEnabled         bool
-	PreLumosPythonBin       string
-	PreLumosAgentScript     string
-	PreLumosSkillDir        string
-	PreLumosSeedRoot        string
-	PreLumosYear            string
-	PreLumosModel           string
-	PreLumosOpenAIBaseURL   string
-	PreLumosWebSearch       bool
-	IncidentResolverEnabled bool
-	EtherscanAPIKey         string
-	EtherscanBaseURL        string
-	IncidentRPCURL          string
+	APIToken                          string
+	ECWExportToken                    string
+	ECWExportMaxBytes                 int64
+	DBPath                            string
+	OutputRoot                        string
+	ListenAddr                        string
+	MaxConcurrent                     int
+	LumoskitBin                       string
+	WorkerPollMillis                  int
+	DownstreamURLs                    []string
+	DownstreamBearer                  string
+	OperatorWebhook                   string
+	TelegramBotToken                  string
+	TelegramChatID                    string
+	TelegramAPIBase                   string
+	TelegramCommandEnabled            bool
+	TelegramAllowedChatIDs            []string
+	TelegramCommandPollTimeoutSeconds int
+	GitHubToken                       string
+	GitHubOwner                       string
+	GitHubRepo                        string
+	GitHubBranch                      string
+	XPublishEnabled                   bool
+	XClientID                         string
+	XClientSecret                     string
+	XRefreshToken                     string
+	XRefreshTokenFile                 string
+	XPostTemplatePath                 string
+	XAPIBase                          string
+	XUsername                         string
+	XDryRun                           bool
+	XFeedEnabled                      bool
+	XFeedSkillDir                     string
+	XFeedIncludeAttackerCA            bool
+	XFeedCardEnabled                  bool
+	XFeedCardPythonBin                string
+	XFeedCardTimeoutSeconds           int
+	TelegramPublishEnabled            bool
+	PreLumosEnabled                   bool
+	PreLumosPythonBin                 string
+	PreLumosAgentScript               string
+	PreLumosSkillDir                  string
+	PreLumosSeedRoot                  string
+	PreLumosYear                      string
+	PreLumosModel                     string
+	PreLumosOpenAIBaseURL             string
+	PreLumosWebSearch                 bool
+	IncidentResolverEnabled           bool
+	EtherscanAPIKey                   string
+	EtherscanBaseURL                  string
+	IncidentRPCURL                    string
 
 	PartialAutoRerunMaxAttempts    int
 	HandoffRetryMaxAttempts        int
@@ -70,61 +73,64 @@ func Load() (*Config, error) {
 	loadDotEnvFiles(".env", ".env.local")
 
 	c := &Config{
-		APIToken:                       os.Getenv("HELIOS_API_TOKEN"),
-		ECWExportToken:                 os.Getenv("HELIOS_ECW_EXPORT_TOKEN"),
-		ECWExportMaxBytes:              envInt64("HELIOS_ECW_EXPORT_MAX_BYTES", 0),
-		DBPath:                         os.Getenv("HELIOS_DB_PATH"),
-		OutputRoot:                     os.Getenv("HELIOS_OUTPUT_ROOT"),
-		ListenAddr:                     envDefault("HELIOS_LISTEN_ADDR", ":8080"),
-		MaxConcurrent:                  envInt("HELIOS_MAX_CONCURRENT_LUMOSKIT", 2),
-		LumoskitBin:                    envDefault("HELIOS_LUMOSKIT_BIN", "bin/lumoskit"),
-		WorkerPollMillis:               envInt("HELIOS_WORKER_POLL_MILLIS", 1000),
-		DownstreamURLs:                 splitCSV(os.Getenv("HELIOS_DOWNSTREAM_WEBHOOK_URLS")),
-		DownstreamBearer:               os.Getenv("HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN"),
-		OperatorWebhook:                os.Getenv("OPERATOR_NOTIFY_WEBHOOK_URL"),
-		TelegramBotToken:               os.Getenv("TELEGRAM_BOT_TOKEN"),
-		TelegramChatID:                 os.Getenv("TELEGRAM_CHAT_ID"),
-		TelegramAPIBase:                os.Getenv("HELIOS_TELEGRAM_API_BASE"),
-		GitHubToken:                    firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
-		GitHubOwner:                    envDefault("HELIOS_GITHUB_PUBLISH_OWNER", "BackwardLabs"),
-		GitHubRepo:                     envDefault("HELIOS_GITHUB_PUBLISH_REPO", "Q1-2026"),
-		GitHubBranch:                   envDefault("HELIOS_GITHUB_PUBLISH_BRANCH", "main"),
-		XPublishEnabled:                envBool("X_PUBLISH_ENABLED", false),
-		XClientID:                      os.Getenv("X_CLIENT_ID"),
-		XClientSecret:                  os.Getenv("X_CLIENT_SECRET"),
-		XRefreshToken:                  os.Getenv("X_REFRESH_TOKEN"),
-		XRefreshTokenFile:              os.Getenv("X_REFRESH_TOKEN_FILE"),
-		XPostTemplatePath:              os.Getenv("X_POST_TEMPLATE_PATH"),
-		XAPIBase:                       envDefault("X_API_BASE", "https://api.x.com"),
-		XUsername:                      os.Getenv("X_ACCOUNT_USERNAME"),
-		XDryRun:                        envBool("X_DRY_RUN", true),
-		XFeedEnabled:                   envBool("HELIOS_X_FEED_ENABLED", false),
-		XFeedSkillDir:                  envDefault("HELIOS_X_FEED_SKILL_DIR", "skills/x-feed"),
-		XFeedIncludeAttackerCA:         envBool("HELIOS_X_FEED_INCLUDE_ATTACKER_CA", false),
-		XFeedCardEnabled:               envBool("HELIOS_X_FEED_CARD_ENABLED", true),
-		XFeedCardPythonBin:             envDefault("HELIOS_X_FEED_CARD_PYTHON_BIN", "python3"),
-		XFeedCardTimeoutSeconds:        envInt("HELIOS_X_FEED_CARD_TIMEOUT_SECONDS", 20),
-		TelegramPublishEnabled:         envBool("TELEGRAM_PUBLISH_ENABLED", false),
-		PreLumosEnabled:                envBool("HELIOS_PRE_LUMOS_ENABLED", false),
-		PreLumosPythonBin:              envDefault("HELIOS_PRE_LUMOS_PYTHON_BIN", "python3"),
-		PreLumosAgentScript:            envDefault("HELIOS_PRE_LUMOS_AGENT_SCRIPT", "scripts/pre_lumos_agent.py"),
-		PreLumosSkillDir:               envDefault("HELIOS_PRE_LUMOS_SKILL_DIR", "skills/pre-lumos"),
-		PreLumosSeedRoot:               os.Getenv("HELIOS_PRE_LUMOS_SEED_ROOT"),
-		PreLumosYear:                   os.Getenv("HELIOS_PRE_LUMOS_YEAR"),
-		PreLumosModel:                  firstNonEmpty(os.Getenv("HELIOS_PRE_LUMOS_MODEL"), os.Getenv("OPENAI_MODEL")),
-		PreLumosOpenAIBaseURL:          envDefault("HELIOS_PRE_LUMOS_OPENAI_BASE_URL", "http://127.0.0.1:10631/v1"),
-		PreLumosWebSearch:              envBool("HELIOS_PRE_LUMOS_WEB_SEARCH", false),
-		IncidentResolverEnabled:        envBool("HELIOS_INCIDENT_RESOLVER_ENABLED", true),
-		EtherscanAPIKey:                firstNonEmpty(os.Getenv("HELIOS_ETHERSCAN_API_KEY"), os.Getenv("ETHERSCAN_API_KEY")),
-		EtherscanBaseURL:               envDefault("HELIOS_ETHERSCAN_BASE_URL", "https://api.etherscan.io/v2/api"),
-		IncidentRPCURL:                 firstNonEmpty(os.Getenv("HELIOS_INCIDENT_RPC_URL"), os.Getenv("CEFG_LIVE_RPC_URL"), os.Getenv("RPC_URL"), os.Getenv("ETH_RPC_URL")),
-		PartialAutoRerunMaxAttempts:    envInt("HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS", 3),
-		HandoffRetryMaxAttempts:        envInt("HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS", 5),
-		HandoffRetryBackoffBaseSeconds: envInt("HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS", 2),
-		HandoffRetryBackoffMaxSeconds:  envInt("HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS", 300),
-		NotifyRetryMaxAttempts:         envInt("HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS", 5),
-		NotifyRetryBackoffBaseSeconds:  envInt("HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS", 2),
-		NotifyRetryBackoffMaxSeconds:   envInt("HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS", 300),
+		APIToken:                          os.Getenv("HELIOS_API_TOKEN"),
+		ECWExportToken:                    os.Getenv("HELIOS_ECW_EXPORT_TOKEN"),
+		ECWExportMaxBytes:                 envInt64("HELIOS_ECW_EXPORT_MAX_BYTES", 0),
+		DBPath:                            os.Getenv("HELIOS_DB_PATH"),
+		OutputRoot:                        os.Getenv("HELIOS_OUTPUT_ROOT"),
+		ListenAddr:                        envDefault("HELIOS_LISTEN_ADDR", ":8080"),
+		MaxConcurrent:                     envInt("HELIOS_MAX_CONCURRENT_LUMOSKIT", 2),
+		LumoskitBin:                       envDefault("HELIOS_LUMOSKIT_BIN", "bin/lumoskit"),
+		WorkerPollMillis:                  envInt("HELIOS_WORKER_POLL_MILLIS", 1000),
+		DownstreamURLs:                    splitCSV(os.Getenv("HELIOS_DOWNSTREAM_WEBHOOK_URLS")),
+		DownstreamBearer:                  os.Getenv("HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN"),
+		OperatorWebhook:                   os.Getenv("OPERATOR_NOTIFY_WEBHOOK_URL"),
+		TelegramBotToken:                  os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramChatID:                    os.Getenv("TELEGRAM_CHAT_ID"),
+		TelegramAPIBase:                   os.Getenv("HELIOS_TELEGRAM_API_BASE"),
+		TelegramCommandEnabled:            envBool("TELEGRAM_COMMAND_ENABLED", false),
+		TelegramAllowedChatIDs:            splitCSV(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
+		TelegramCommandPollTimeoutSeconds: envInt("TELEGRAM_COMMAND_POLL_TIMEOUT_SECONDS", 30),
+		GitHubToken:                       firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
+		GitHubOwner:                       envDefault("HELIOS_GITHUB_PUBLISH_OWNER", "BackwardLabs"),
+		GitHubRepo:                        envDefault("HELIOS_GITHUB_PUBLISH_REPO", "Q1-2026"),
+		GitHubBranch:                      envDefault("HELIOS_GITHUB_PUBLISH_BRANCH", "main"),
+		XPublishEnabled:                   envBool("X_PUBLISH_ENABLED", false),
+		XClientID:                         os.Getenv("X_CLIENT_ID"),
+		XClientSecret:                     os.Getenv("X_CLIENT_SECRET"),
+		XRefreshToken:                     os.Getenv("X_REFRESH_TOKEN"),
+		XRefreshTokenFile:                 os.Getenv("X_REFRESH_TOKEN_FILE"),
+		XPostTemplatePath:                 os.Getenv("X_POST_TEMPLATE_PATH"),
+		XAPIBase:                          envDefault("X_API_BASE", "https://api.x.com"),
+		XUsername:                         os.Getenv("X_ACCOUNT_USERNAME"),
+		XDryRun:                           envBool("X_DRY_RUN", true),
+		XFeedEnabled:                      envBool("HELIOS_X_FEED_ENABLED", false),
+		XFeedSkillDir:                     envDefault("HELIOS_X_FEED_SKILL_DIR", "skills/x-feed"),
+		XFeedIncludeAttackerCA:            envBool("HELIOS_X_FEED_INCLUDE_ATTACKER_CA", false),
+		XFeedCardEnabled:                  envBool("HELIOS_X_FEED_CARD_ENABLED", true),
+		XFeedCardPythonBin:                envDefault("HELIOS_X_FEED_CARD_PYTHON_BIN", "python3"),
+		XFeedCardTimeoutSeconds:           envInt("HELIOS_X_FEED_CARD_TIMEOUT_SECONDS", 20),
+		TelegramPublishEnabled:            envBool("TELEGRAM_PUBLISH_ENABLED", false),
+		PreLumosEnabled:                   envBool("HELIOS_PRE_LUMOS_ENABLED", false),
+		PreLumosPythonBin:                 envDefault("HELIOS_PRE_LUMOS_PYTHON_BIN", "python3"),
+		PreLumosAgentScript:               envDefault("HELIOS_PRE_LUMOS_AGENT_SCRIPT", "scripts/pre_lumos_agent.py"),
+		PreLumosSkillDir:                  envDefault("HELIOS_PRE_LUMOS_SKILL_DIR", "skills/pre-lumos"),
+		PreLumosSeedRoot:                  os.Getenv("HELIOS_PRE_LUMOS_SEED_ROOT"),
+		PreLumosYear:                      os.Getenv("HELIOS_PRE_LUMOS_YEAR"),
+		PreLumosModel:                     firstNonEmpty(os.Getenv("HELIOS_PRE_LUMOS_MODEL"), os.Getenv("OPENAI_MODEL")),
+		PreLumosOpenAIBaseURL:             envDefault("HELIOS_PRE_LUMOS_OPENAI_BASE_URL", "http://127.0.0.1:10631/v1"),
+		PreLumosWebSearch:                 envBool("HELIOS_PRE_LUMOS_WEB_SEARCH", false),
+		IncidentResolverEnabled:           envBool("HELIOS_INCIDENT_RESOLVER_ENABLED", true),
+		EtherscanAPIKey:                   firstNonEmpty(os.Getenv("HELIOS_ETHERSCAN_API_KEY"), os.Getenv("ETHERSCAN_API_KEY")),
+		EtherscanBaseURL:                  envDefault("HELIOS_ETHERSCAN_BASE_URL", "https://api.etherscan.io/v2/api"),
+		IncidentRPCURL:                    firstNonEmpty(os.Getenv("HELIOS_INCIDENT_RPC_URL"), os.Getenv("CEFG_LIVE_RPC_URL"), os.Getenv("RPC_URL"), os.Getenv("ETH_RPC_URL")),
+		PartialAutoRerunMaxAttempts:       envInt("HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS", 3),
+		HandoffRetryMaxAttempts:           envInt("HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS", 5),
+		HandoffRetryBackoffBaseSeconds:    envInt("HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS", 2),
+		HandoffRetryBackoffMaxSeconds:     envInt("HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS", 300),
+		NotifyRetryMaxAttempts:            envInt("HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS", 5),
+		NotifyRetryBackoffBaseSeconds:     envInt("HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS", 2),
+		NotifyRetryBackoffMaxSeconds:      envInt("HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS", 300),
 	}
 
 	if c.APIToken == "" {
@@ -152,6 +158,20 @@ func Load() (*Config, error) {
 
 func (c *Config) TelegramEnabled() bool {
 	return c.TelegramBotToken != "" && c.TelegramChatID != ""
+}
+
+// TelegramCommandAllowedChats resolves the chat allowlist for the inbound
+// command bot. An explicit TELEGRAM_ALLOWED_CHAT_IDS wins; otherwise it falls
+// back to the single operator TELEGRAM_CHAT_ID so the command surface defaults
+// to the same chat that already receives outbound alerts.
+func (c *Config) TelegramCommandAllowedChats() []string {
+	if len(c.TelegramAllowedChatIDs) > 0 {
+		return c.TelegramAllowedChatIDs
+	}
+	if c.TelegramChatID != "" {
+		return []string{c.TelegramChatID}
+	}
+	return nil
 }
 
 func (c *Config) OperatorWebhookEnabled() bool {
