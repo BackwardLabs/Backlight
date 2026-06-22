@@ -137,6 +137,10 @@ func (b *Bot) loop(ctx context.Context) {
 	if err := b.client.deleteWebhook(ctx); err != nil && ctx.Err() == nil {
 		b.log.Warn("telegram deleteWebhook failed", "err", err)
 	}
+	// Register the command menu so clients show the list when a user types "/".
+	if err := b.client.setMyCommands(ctx, botCommands()); err != nil && ctx.Err() == nil {
+		b.log.Warn("telegram setMyCommands failed", "err", err)
+	}
 	var offset int64
 	for {
 		if ctx.Err() != nil {

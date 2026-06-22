@@ -59,6 +59,9 @@ func (b *Bot) handleUpdate(ctx context.Context, u Update) {
 		case "recent":
 			b.clearSession(key)
 			b.handleRecent(ctx, chatID)
+		case "status":
+			b.clearSession(key)
+			b.handleStatus(ctx, chatID, commandArg(text))
 		case "cancel":
 			if b.clearSession(key) {
 				b.reply(ctx, chatID, "진행 중인 등록을 취소했습니다.")
@@ -144,9 +147,31 @@ func (b *Bot) handleRecent(ctx context.Context, chatID int64) {
 	fmt.Fprintf(&sb, "최근 인시던트 %d건", len(items))
 	for i := range items {
 		c := &items[i]
-		fmt.Fprintf(&sb, "\n%d. %s — %s", i+1, recentLabel(c), occurredAt(c))
+		fmt.Fprintf(&sb, "\n%d. %s — %s — %s — %s", i+1, recentLabel(c), occurredAt(c), shortStatus(c), c.CaseID)
 	}
 	b.reply(ctx, chatID, sb.String())
+}
+
+// handleStatus reports the lifecycle of a single case so an operator can see
+// whether the engine run is queued, running, or finished (and how it finished)
+// without leaving Telegram.
+func (b *Bot) handleStatus(ctx context.Context, chatID int64, caseID string) {
+	caseID = strings.TrimSpace(caseID)
+	if caseID == "" {
+		b.reply(ctx, chatID, "사용법: /status <case_id>\n(case_id는 등록 응답이나 /recent 끝에 표시됩니다)")
+		return
+	}
+	c, err := b.store.GetCase(ctx, caseID)
+	if err != nil {
+		b.log.Error("telegram /status GetCase failed", "err", err, "case_id", caseID)
+		b.reply(ctx, chatID, "조회 실패: 내부 오류가 발생했습니다.")
+		return
+	}
+	if c == nil {
+		b.reply(ctx, chatID, "케이스를 찾을 수 없습니다: "+caseID)
+		return
+	}
+	b.reply(ctx, chatID, statusDetail(c))
 }
 
 // enrich mirrors api.Server.enrichIncidentMetadata: a best-effort identity
@@ -309,11 +334,72 @@ func formatTimestamp(raw string) string {
 	return raw
 }
 
+// shortStatus is the compact case status for /recent lines: the lifecycle state
+// plus the terminal outcome once one exists (e.g. "queued", "running",
+// "done·verified", "failed·engine_error").
+func shortStatus(c *store.Case) string {
+	if c.Outcome != nil && strings.TrimSpace(*c.Outcome) != "" {
+		return c.State + "·" + strings.TrimSpace(*c.Outcome)
+	}
+	return c.State
+}
+
+func statusDetail(c *store.Case) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "케이스 %s", c.CaseID)
+	if p := protocolDisplay(c.Metadata); p != "" {
+		fmt.Fprintf(&sb, "\n프로토콜: %s", p)
+	}
+	fmt.Fprintf(&sb, "\n체인: %s", c.Chain)
+	fmt.Fprintf(&sb, "\nTx: %s", shortTx(c.TxHash))
+	fmt.Fprintf(&sb, "\n상태: %s", c.State)
+	if c.Outcome != nil && strings.TrimSpace(*c.Outcome) != "" {
+		fmt.Fprintf(&sb, "\n결과: %s", strings.TrimSpace(*c.Outcome))
+	}
+	if c.FailureKind != nil && strings.TrimSpace(*c.FailureKind) != "" {
+		fmt.Fprintf(&sb, "\n실패유형: %s", strings.TrimSpace(*c.FailureKind))
+	}
+	fmt.Fprintf(&sb, "\n시도: %d", c.AttemptNumber)
+	fmt.Fprintf(&sb, "\n갱신: %s", formatTimestamp(c.UpdatedAt))
+	return sb.String()
+}
+
+func shortTx(tx string) string {
+	if len(tx) > 14 {
+		return tx[:10] + "…" + tx[len(tx)-4:]
+	}
+	return tx
+}
+
+// commandArg returns the text after the first whitespace-delimited token, e.g.
+// "/status case_abc" -> "case_abc".
+func commandArg(text string) string {
+	parts := strings.SplitN(strings.TrimSpace(text), " ", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
+}
+
+// botCommands is the menu registered with Telegram via setMyCommands so clients
+// show the command list (and descriptions) when a user types "/". Command names
+// must be lowercase, 1-32 chars, without the leading slash.
+func botCommands() []botCommand {
+	return []botCommand{
+		{Command: "signal", Description: "새 인시던트 등록 (체인 → tx → 프로토콜)"},
+		{Command: "recent", Description: "최근 인시던트 10건 (상태 포함)"},
+		{Command: "status", Description: "케이스 상태 조회: /status <case_id>"},
+		{Command: "cancel", Description: "진행 중인 등록 취소"},
+		{Command: "help", Description: "사용 가능한 명령 도움말"},
+	}
+}
+
 func helpText() string {
 	return strings.Join([]string{
 		"Backlight 명령:",
 		"/signal — 새 인시던트 등록 (체인 → tx 해시 → 프로토콜 순서로 입력)",
-		"/recent — 최근 인시던트 10건 (프로토콜 · 발생일시)",
+		"/recent — 최근 인시던트 10건 (프로토콜 · 발생일시 · 상태 · case_id)",
+		"/status <case_id> — 케이스 상태/결과 조회",
 		"/cancel — 진행 중인 등록 취소",
 		"/help — 도움말",
 	}, "\n")

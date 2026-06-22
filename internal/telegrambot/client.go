@@ -133,6 +133,34 @@ func (c *apiClient) deleteWebhook(ctx context.Context) error {
 	return c.doJSON(reqCtx, "deleteWebhook", []byte(`{}`), nil)
 }
 
+type botCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// setMyCommands registers the bot's command menu so Telegram clients show the
+// list (with descriptions) when a user types "/". Idempotent — it overwrites
+// the previously registered set.
+func (c *apiClient) setMyCommands(ctx context.Context, commands []botCommand) error {
+	body, err := json.Marshal(map[string]any{"commands": commands})
+	if err != nil {
+		return err
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var decoded struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := c.doJSON(reqCtx, "setMyCommands", body, &decoded); err != nil {
+		return err
+	}
+	if !decoded.OK {
+		return fmt.Errorf("telegram setMyCommands not ok: %s", decoded.Description)
+	}
+	return nil
+}
+
 // doJSON performs the request and guarantees the bot token never escapes in a
 // returned error. The token is embedded in every request URL
 // (.../bot<token>/<method>), so Go renders it verbatim inside *url.Error
