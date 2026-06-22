@@ -44,7 +44,8 @@ flowchart LR
 | --- | --- | --- | --- |
 | `success` | `verified` | `no_rerun` | PoC and RCA cleared the verification gate. |
 | `poc_failed` | `unverified` | `manual_review` | PoC failed or was missing, so RCA did not produce a verified result. |
-| `poc_blocked` | `partial` | `auto_rerun` | Copies prior deterministic artifacts, reruns `agent_poc`, then runs `rca`. |
+| `reachable_poc` | `partial` | `guided_repair` | Forge replay passed and RCA can run, but economic proof still needs `agent_poc_repair`. |
+| `poc_blocked` | `partial` | `auto_rerun` | Copies prior deterministic artifacts, reruns `agent_poc`, then runs `rca` if the replay becomes non-failing. |
 | `rca_blocked` | `partial` | `auto_rerun` | Copies prior PoC artifacts and reruns `rca` only. |
 | `engine_error` | `engine_error` | `manual_review` | LumosKit failed, summary output was missing/unreadable, or the summary shape was invalid. |
 

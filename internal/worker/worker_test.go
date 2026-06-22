@@ -891,7 +891,7 @@ while [ "$#" -gt 0 ]; do
 done
 mkdir -p "$out"
 cat > "$out/summary.json" <<'JSON'
-{"status":"partial","poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass","failure_kind":"missing_profit_or_economic_oracle"},"rca":{"status":"blocked","blocker_code":"economic_proof_gap"}}
+{"status":"partial","poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass","failure_kind":"missing_profit_or_economic_oracle"},"rca":{"status":"complete","analysis_status":"complete"}}
 JSON
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {

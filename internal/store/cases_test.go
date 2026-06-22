@@ -234,9 +234,8 @@ func TestMarkDoneWithPayloadPersistsAnalysisDiagnostics(t *testing.T) {
 			"forge_test_status": "pass",
 		},
 		"rca": map[string]string{
-			"status":         "blocked",
-			"blocker_code":   "economic_proof_gap",
-			"blocker_reason": "proof_kind is reachability_only, expected economic_proof",
+			"status":          "complete",
+			"analysis_status": "complete",
 		},
 	}
 	if err := s.MarkDoneWithPayload(ctx, c.CaseID, "partial", false, payload); err != nil {
@@ -267,7 +266,7 @@ func TestMarkDoneWithPayloadPersistsAnalysisDiagnostics(t *testing.T) {
 		t.Fatalf("unexpected poc diagnostics: %#v", poc)
 	}
 	rca := terminalPayload["rca"].(map[string]any)
-	if rca["blocker_code"] != "economic_proof_gap" {
+	if rca["status"] != "complete" || rca["analysis_status"] != "complete" {
 		t.Fatalf("unexpected rca diagnostics: %#v", rca)
 	}
 }

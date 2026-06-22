@@ -15,14 +15,15 @@ fields come from the LumosKit `summary.json` payload copied into the terminal
 | --- | --- | --- | --- | --- |
 | `success` | `summary_status=pass` and `poc.status=verified` | `verified` | `no_rerun` | Nothing. The result is final. |
 | `poc_failed` | `summary_status=fail` with `poc.status=unverified` or `poc.status=missing` | `unverified` | `manual_review` | Nothing automatically. Operators inspect and can submit `force_rerun=true`. |
-| `poc_blocked` | `summary_status=partial` with `poc.status=unverified`, `poc.status=missing`, or `poc.failure_kind` | `partial` | `auto_rerun` | Child attempt copies prior deterministic artifacts, reruns `agent_poc`, then runs `rca`. |
+| `reachable_poc` | `summary_status=partial` with a non-failing Foundry replay (`forge_test_status=pass`) but incomplete economic proof (`execution_state=reachable_poc` or `proof_kind!=economic_proof`) | `partial` | `guided_repair` | Child attempt copies deterministic artifacts and reruns `agent_poc_repair` to strengthen economic proof; RCA may already be complete. |
+| `poc_blocked` | `summary_status=partial` with a blocked/missing PoC artifact or failed replay | `partial` | `auto_rerun` | Child attempt copies prior deterministic artifacts, reruns `agent_poc`, then runs `rca` if the replay becomes non-failing. |
 | `rca_blocked` | `summary_status=partial`, PoC verified, and `rca.status=blocked` or an RCA blocker code/reason exists | `partial` | `auto_rerun` | Child attempt copies prior PoC artifacts and reruns `rca` only. |
 | `partial` | `summary_status=partial` without a more specific PoC/RCA blocker | `partial` | `auto_rerun` | Child attempt reruns the full pipeline. |
 | `engine_error` | nonzero exit, missing/unreadable summary, `failure.kind=engine_error`, or unexpected summary shape | `engine_error` | `manual_review` | Nothing automatically. Operators inspect `failure_kind` and artifacts. |
 
 Backlight records `analysis_stage`, `rerun_decision`, and `rerun_reason` on the
-terminal `state_transition` event. For `rerun_decision=auto_rerun`, it also
-records `auto_rerun_eligible`, `auto_rerun_resume_stage`,
+terminal `state_transition` event. For queued rerun decisions (`auto_rerun` or
+`guided_repair`), it also records `auto_rerun_eligible`, `auto_rerun_resume_stage`,
 `auto_rerun_max_attempts`, and, when blocked by configuration,
 `auto_rerun_blocked_reason`. The queued child stores the same resume intent in
 metadata under `helios_auto_rerun`. When the child runs, terminal payloads include
@@ -44,11 +45,11 @@ Example `GET /cases/{case_id}` event payload for a partial result:
   "outcome": "partial",
   "rule": "O2",
   "summary_status": "partial",
-  "analysis_stage": "poc_blocked",
-  "rerun_decision": "auto_rerun",
+  "analysis_stage": "reachable_poc",
+  "rerun_decision": "guided_repair",
   "rerun_reason": "missing_profit_or_economic_oracle",
   "auto_rerun_eligible": true,
-  "auto_rerun_resume_stage": "agent_poc",
+  "auto_rerun_resume_stage": "agent_poc_repair",
   "auto_rerun_max_attempts": 3,
   "failure": {
     "kind": "missing_profit_or_economic_oracle",
@@ -62,9 +63,8 @@ Example `GET /cases/{case_id}` event payload for a partial result:
     "failure_kind": "missing_profit_or_economic_oracle"
   },
   "rca": {
-    "status": "blocked",
-    "blocker_code": "economic_proof_gap",
-    "blocker_reason": "proof_kind is reachability_only, expected economic_proof"
+    "status": "complete",
+    "analysis_status": "complete"
   }
 }
 ```

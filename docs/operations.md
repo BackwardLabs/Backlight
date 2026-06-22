@@ -132,8 +132,10 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   `analysis_stage`, `rerun_decision`, `rerun_reason`, `auto_rerun_resume_stage`,
   and eligibility fields. Attempts with `rerun_decision=auto_rerun` and
   `auto_rerun_eligible=true` are retried as linked child cases until
-  `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` is reached. `poc_blocked` resumes
-  at `agent_poc` and then runs `rca`; `rca_blocked` resumes at `rca` only;
+  `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` is reached. `reachable_poc` resumes
+  at `agent_poc_repair` to strengthen economic proof while preserving the RCA
+  result; `poc_blocked` resumes at `agent_poc` and then runs `rca` if the
+  replay becomes non-failing; `rca_blocked` resumes at `rca` only;
   generic partial results rerun the full pipeline. Intermediate attempts skip
   downstream handoff and operator notification; the final attempt follows the
   normal terminal flow.

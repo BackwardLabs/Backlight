@@ -46,6 +46,7 @@ func TestUIRoutesArePublic(t *testing.T) {
 			"function diagnosis(c,p)",
 			"Primary diagnosis",
 			"Stored outcome",
+			"Reachable PoC",
 			"RCA blocked",
 			"RCA agent runtime error",
 			"Artifact scheme</b><span>REPORT.md, RCA.md, PoC.t.sol</span>",

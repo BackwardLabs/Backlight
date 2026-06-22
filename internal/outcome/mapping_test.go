@@ -307,12 +307,12 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			wantReason:   "conflicting_evidence",
 		},
 		{
-			name:         "reachable poc queues guided repair but does not publish",
-			summary:      `{"status":"partial","poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass","failure_kind":"missing_profit_or_economic_oracle"},"rca":{"status":"blocked","blocker_code":"economic_proof_gap"}}`,
+			name:         "reachable poc with complete rca queues guided repair but does not publish",
+			summary:      `{"status":"partial","poc":{"status":"unverified","execution_state":"reachable_poc","proof_kind":"reachability_only","forge_build_status":"pass","forge_test_status":"pass","failure_kind":"missing_profit_or_economic_oracle"},"rca":{"status":"complete","analysis_status":"complete"}}`,
 			wantOutcome:  OutcomePartial,
 			wantStage:    AnalysisStageReachablePoC,
 			wantPoC:      PoCStateReachable,
-			wantRCA:      RCAStatePoCDependent,
+			wantRCA:      RCAStateComplete,
 			wantTier:     PublishTierNoPublish,
 			wantDecision: RerunDecisionGuidedRepair,
 			wantReason:   "missing_profit_or_economic_oracle",
@@ -397,9 +397,8 @@ func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 			"failure_kind":"missing_profit_or_economic_oracle"
 		},
 		"rca":{
-			"status":"blocked",
-			"blocker_code":"economic_proof_gap",
-			"blocker_reason":"proof_kind is reachability_only, expected economic_proof"
+			"status":"complete",
+			"analysis_status":"complete"
 		}
 	}`)}
 
@@ -430,8 +429,8 @@ func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 	if got["poc_state"] != PoCStateReachable {
 		t.Fatalf("poc_state = %v, want %s", got["poc_state"], PoCStateReachable)
 	}
-	if got["rca_state"] != RCAStatePoCDependent {
-		t.Fatalf("rca_state = %v, want %s", got["rca_state"], RCAStatePoCDependent)
+	if got["rca_state"] != RCAStateComplete {
+		t.Fatalf("rca_state = %v, want %s", got["rca_state"], RCAStateComplete)
 	}
 	if got["publish_tier"] != PublishTierNoPublish || got["github_publish_eligible"] != false || got["x_publish_eligible"] != false {
 		t.Fatalf("publish payload = tier %v github %v x %v", got["publish_tier"], got["github_publish_eligible"], got["x_publish_eligible"])
@@ -447,7 +446,7 @@ func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 		t.Fatalf("unexpected poc payload: %#v", poc)
 	}
 	rca := got["rca"].(map[string]any)
-	if rca["status"] != "blocked" || rca["blocker_code"] != "economic_proof_gap" {
+	if rca["status"] != "complete" || rca["analysis_status"] != "complete" {
 		t.Fatalf("unexpected rca payload: %#v", rca)
 	}
 	failure := got["failure"].(map[string]any)

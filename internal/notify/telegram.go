@@ -116,6 +116,8 @@ func telegramDiagnosis(p Payload) (key, title, reason string) {
 	switch p.AnalysisStage {
 	case "success":
 		return "success", "Success", firstText(reason, "verified_result")
+	case "reachable_poc":
+		return "reachable_poc", "Reachable PoC", firstText(reason, "economic_proof_incomplete")
 	case "rca_blocked":
 		return "rca_blocked", "RCA blocked", reason
 	case "poc_blocked":
@@ -173,6 +175,8 @@ func resultSummary(p Payload, diagnosis string) string {
 	switch diagnosis {
 	case "success":
 		return joinTelegramParts("verified", decision)
+	case "reachable_poc":
+		return joinTelegramParts("reachable PoC, economic proof incomplete", decision)
 	case "rca_blocked":
 		return joinTelegramParts("RCA blocked", decision)
 	case "poc_blocked":
@@ -198,6 +202,8 @@ func decisionText(decision string) string {
 		return "no rerun"
 	case "auto_rerun":
 		return "auto rerun"
+	case "guided_repair":
+		return "guided repair"
 	case "manual_review":
 		return "manual review"
 	default:

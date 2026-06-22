@@ -189,8 +189,13 @@ func (p *Payload) applyAnalysisPayload(raw json.RawMessage) {
 			if p.RerunReason == "" {
 				p.RerunReason = reason
 			}
-			if p.RerunDecision == "" && (stage == "rca_blocked" || stage == "poc_blocked") {
-				p.RerunDecision = "auto_rerun"
+			if p.RerunDecision == "" {
+				switch stage {
+				case "rca_blocked", "poc_blocked":
+					p.RerunDecision = "auto_rerun"
+				case "reachable_poc":
+					p.RerunDecision = "guided_repair"
+				}
 			}
 		}
 	}
@@ -239,6 +244,9 @@ func inferAnalysisStage(m map[string]any) (string, string) {
 	if stringField(failure, "category") == "engine_error" || failureKind == "engine_error" || failureKind == "rca_agent_runtime_error" || failureKind == "agent_poc_agent_runtime_error" {
 		return "engine_error", firstString(stringField(failure, "detail_kind"), stringField(failure, "message"), failureKind)
 	}
+	if isReachablePoCPayload(poc) && rcaAllowsReachablePoCInference(rca) {
+		return "reachable_poc", firstString(stringField(poc, "failure_kind"), failureKind, stringField(poc, "proof_kind"), "economic_proof_missing")
+	}
 	if stringField(rca, "status") == "blocked" || stringField(rca, "blocker_code") != "" || stringField(rca, "blocker_reason") != "" || failureKind == "rca_blocked" {
 		return "rca_blocked", firstString(stringField(rca, "blocker_code"), stringField(rca, "blocker_reason"), failureKind)
 	}
@@ -246,6 +254,36 @@ func inferAnalysisStage(m map[string]any) (string, string) {
 		return "poc_blocked", firstString(stringField(poc, "failure_kind"), failureKind, stringField(poc, "status"))
 	}
 	return "", ""
+}
+
+func isReachablePoCPayload(poc map[string]any) bool {
+	if stringField(poc, "execution_state") == "reachable_poc" {
+		return true
+	}
+	proofKind := stringField(poc, "proof_kind")
+	return stringField(poc, "status") == "unverified" &&
+		stringField(poc, "forge_test_status") == "pass" &&
+		proofKind != "" &&
+		proofKind != "economic_proof"
+}
+
+func rcaAllowsReachablePoCInference(rca map[string]any) bool {
+	status := stringField(rca, "status")
+	analysisStatus := stringField(rca, "analysis_status")
+	if status == "" && analysisStatus == "" && stringField(rca, "blocker_code") == "" && stringField(rca, "blocker_reason") == "" {
+		return true
+	}
+	if status == "complete" || status == "verified" || analysisStatus == "complete" {
+		return true
+	}
+	blockerText := strings.ToLower(strings.Join([]string{
+		stringField(rca, "blocker_code"),
+		stringField(rca, "blocker_reason"),
+	}, " "))
+	return strings.Contains(blockerText, "economic_proof") ||
+		strings.Contains(blockerText, "economic proof") ||
+		strings.Contains(blockerText, "proof_kind") ||
+		strings.Contains(blockerText, "reachability_only")
 }
 
 func objectField(m map[string]any, key string) map[string]any {

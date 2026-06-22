@@ -242,6 +242,53 @@ func TestPayloadAnalysisEnrichmentInfersRCABlockedFromLegacyPayload(t *testing.T
 	}
 }
 
+func TestPayloadAnalysisEnrichmentInfersReachablePoCOverEconomicProofGap(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c, _, err := st.SubmitCase(ctx, "bsc", "0x"+strings.Repeat("e", 64), nil, nil, json.RawMessage(`{"protocol":"test"}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendCaseEvent(ctx, c.CaseID, "state_transition", map[string]any{
+		"outcome":        "partial",
+		"summary_status": "partial",
+		"poc": map[string]any{
+			"status":            "unverified",
+			"execution_state":   "reachable_poc",
+			"proof_kind":        "reachability_only",
+			"forge_test_status": "pass",
+			"failure_kind":      "missing_profit_or_economic_oracle",
+		},
+		"rca": map[string]any{
+			"status":         "blocked",
+			"blocker_code":   "economic_proof_gap",
+			"blocker_reason": "proof_kind is reachability_only, expected economic_proof",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := PayloadFromCase(c, EventPartial)
+	n := &Notifier{Store: st}
+	if err := n.enrichWithAnalysisPayload(ctx, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.AnalysisStage != "reachable_poc" || payload.RerunDecision != "guided_repair" || payload.RerunReason != "missing_profit_or_economic_oracle" {
+		t.Fatalf("legacy economic proof gap not inferred as reachable_poc: %+v", payload)
+	}
+	text := renderTelegramText(payload)
+	for _, marker := range []string{"[Backlight] Reachable PoC", "Result: reachable PoC, economic proof incomplete · guided repair", "Reason: missing_profit_or_economic_oracle"} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("telegram text missing %q:\n%s", marker, text)
+		}
+	}
+}
+
 func TestPayloadAnalysisEnrichmentShowsRCAAgentRuntimeError(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
@@ -315,11 +362,11 @@ func TestPayloadAnalysisEnrichmentFromCaseEvents(t *testing.T) {
 	}
 	if err := st.AppendCaseEvent(ctx, c.CaseID, "state_transition", map[string]any{
 		"summary_status":          "partial",
-		"analysis_stage":          "poc_blocked",
-		"rerun_decision":          "auto_rerun",
+		"analysis_stage":          "reachable_poc",
+		"rerun_decision":          "guided_repair",
 		"rerun_reason":            "missing_profit_or_economic_oracle",
 		"auto_rerun_eligible":     true,
-		"auto_rerun_resume_stage": "agent_poc",
+		"auto_rerun_resume_stage": "agent_poc_repair",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +389,7 @@ func TestPayloadAnalysisEnrichmentFromCaseEvents(t *testing.T) {
 	if err := n.enrichWithAnalysisPayload(ctx, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.AnalysisStage != "poc_blocked" || payload.RerunDecision != "auto_rerun" || payload.AutoRerunResumeStage != "agent_poc" {
+	if payload.AnalysisStage != "reachable_poc" || payload.RerunDecision != "guided_repair" || payload.AutoRerunResumeStage != "agent_poc_repair" {
 		t.Fatalf("analysis payload not enriched: %+v", payload)
 	}
 	if payload.ReportURL == "" || payload.PoCURL == "" || payload.CommitURL == "" {
