@@ -57,6 +57,7 @@ type Bot struct {
 
 	mu       sync.Mutex
 	sessions map[string]*session
+	recent   map[int64][]string // chat_id -> last /recent case_ids, for detail buttons
 	wg       sync.WaitGroup
 }
 
@@ -107,6 +108,7 @@ func New(cfg Config) *Bot {
 		now:          now,
 		log:          logger,
 		sessions:     map[string]*session{},
+		recent:       map[int64][]string{},
 	}
 }
 
@@ -171,6 +173,12 @@ func (b *Bot) loop(ctx context.Context) {
 
 func (b *Bot) reply(ctx context.Context, chatID int64, text string) {
 	if err := b.client.sendMessage(ctx, chatID, text); err != nil {
+		b.log.Warn("telegram sendMessage failed", "err", err, "chat_id", chatID)
+	}
+}
+
+func (b *Bot) replyMarkup(ctx context.Context, chatID int64, text string, markup *inlineKeyboardMarkup) {
+	if err := b.client.sendMessageMarkup(ctx, chatID, text, markup); err != nil {
 		b.log.Warn("telegram sendMessage failed", "err", err, "chat_id", chatID)
 	}
 }

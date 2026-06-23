@@ -3,6 +3,7 @@ package telegrambot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,13 +17,15 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 )
 
-// fakeTelegram is an httptest stand-in for api.telegram.org. It records every
-// sendMessage and serves queued getUpdates batches (then empties).
+// fakeTelegram is an httptest stand-in for api.telegram.org. It records
+// sendMessage / editMessageText calls, serves queued getUpdates batches, and
+// acks callbacks.
 type fakeTelegram struct {
 	server *httptest.Server
 
 	mu       sync.Mutex
 	sent     []sendMessageRequest
+	edits    []editMessageTextRequest
 	updates  [][]Update
 	commands []botCommand
 }
@@ -38,6 +41,15 @@ func newFakeTelegram(t *testing.T) *fakeTelegram {
 			f.mu.Lock()
 			f.sent = append(f.sent, req)
 			f.mu.Unlock()
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
+			var req editMessageTextRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.mu.Lock()
+			f.edits = append(f.edits, req)
+			f.mu.Unlock()
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case strings.HasSuffix(r.URL.Path, "/answerCallbackQuery"):
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		case strings.HasSuffix(r.URL.Path, "/getUpdates"):
 			batch := f.nextBatch()
@@ -89,6 +101,12 @@ func (f *fakeTelegram) count() int {
 	return len(f.sent)
 }
 
+func (f *fakeTelegram) editCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.edits)
+}
+
 func (f *fakeTelegram) lastSent(t *testing.T) sendMessageRequest {
 	t.Helper()
 	f.mu.Lock()
@@ -99,6 +117,16 @@ func (f *fakeTelegram) lastSent(t *testing.T) sendMessageRequest {
 	return f.sent[len(f.sent)-1]
 }
 
+func (f *fakeTelegram) lastEdit(t *testing.T) editMessageTextRequest {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.edits) == 0 {
+		t.Fatal("no messages edited")
+	}
+	return f.edits[len(f.edits)-1]
+}
+
 func (f *fakeTelegram) registeredCommandNames() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -107,6 +135,34 @@ func (f *fakeTelegram) registeredCommandNames() []string {
 		names = append(names, c.Command)
 	}
 	return names
+}
+
+func markupHasData(m *inlineKeyboardMarkup, data string) bool {
+	if m == nil {
+		return false
+	}
+	for _, row := range m.InlineKeyboard {
+		for _, b := range row {
+			if b.CallbackData == data {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func markupHasURL(m *inlineKeyboardMarkup) bool {
+	if m == nil {
+		return false
+	}
+	for _, row := range m.InlineKeyboard {
+		for _, b := range row {
+			if b.URL != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func testLogger() *slog.Logger {
@@ -148,24 +204,46 @@ func msgUpdate(updateID, chatID, userID int64, username, text string) Update {
 	}
 }
 
-func TestGuidedSignalFlowCreatesCase(t *testing.T) {
+func callbackUpdate(updateID, chatID, userID, messageID int64, username, data string) Update {
+	return Update{
+		UpdateID: updateID,
+		CallbackQuery: &CallbackQuery{
+			ID:      fmt.Sprintf("cb%d", updateID),
+			From:    &User{ID: userID, Username: username},
+			Message: &Message{MessageID: messageID, Chat: Chat{ID: chatID, Type: "group"}},
+			Data:    data,
+		},
+	}
+}
+
+// TestButtonSignalFlowCreatesCase: /signal <tx> -> chain button -> confirm
+// button -> submit, all via the inline-button path (no plain-text follow-up).
+func TestButtonSignalFlowCreatesCase(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)
 	fake := newFakeTelegram(t)
 	bot := newTestBot(t, st, fake)
 
 	tx := "0x" + strings.Repeat("a", 64)
-	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/signal"))
-	bot.handleUpdate(ctx, msgUpdate(2, 100, 7, "alice", "eth"))
-	bot.handleUpdate(ctx, msgUpdate(3, 100, 7, "alice", tx))
-	bot.handleUpdate(ctx, msgUpdate(4, 100, 7, "alice", "Curve"))
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/signal "+tx))
+	if ks := fake.lastSent(t); !markupHasData(ks.ReplyMarkup, "c:eth") {
+		t.Fatalf("expected chain keyboard, got %+v", ks.ReplyMarkup)
+	}
+	bot.handleUpdate(ctx, callbackUpdate(2, 100, 7, 500, "alice", "c:eth"))
+	if ce := fake.lastEdit(t); !strings.Contains(ce.Text, "등록 확인") || !markupHasData(ce.ReplyMarkup, "ok") {
+		t.Fatalf("expected confirm card, got %q markup=%+v", ce.Text, ce.ReplyMarkup)
+	}
+	bot.handleUpdate(ctx, callbackUpdate(3, 100, 7, 500, "alice", "ok"))
+	if re := fake.lastEdit(t); !strings.Contains(re.Text, "등록됨") {
+		t.Fatalf("expected success result, got %q", re.Text)
+	}
 
 	items, total, err := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if total != 1 || len(items) != 1 {
-		t.Fatalf("want exactly 1 case, got total=%d items=%d", total, len(items))
+		t.Fatalf("want exactly 1 case, got total=%d", total)
 	}
 	c := items[0]
 	if c.Chain != "eth" || c.TxHash != tx {
@@ -174,65 +252,46 @@ func TestGuidedSignalFlowCreatesCase(t *testing.T) {
 	if c.Source == nil || !strings.Contains(*c.Source, "alice") {
 		t.Fatalf("source not wired from telegram user: %v", c.Source)
 	}
-	if got := protocolDisplay(c.Metadata); got != "Curve" {
-		t.Fatalf("protocol metadata = %q, want Curve", got)
-	}
-	last := fake.lastSent(t)
-	if !strings.Contains(last.Text, c.CaseID) || !strings.Contains(last.Text, "등록됨") {
-		t.Fatalf("confirmation missing case id / success: %q", last.Text)
-	}
 }
 
-func TestUnauthorizedChatIgnored(t *testing.T) {
+// TestOneShotSignalWithProtocol: /signal <chain> <tx> <protocol> -> confirm
+// card directly -> submit, carrying the protocol.
+func TestOneShotSignalWithProtocol(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)
 	fake := newFakeTelegram(t)
 	bot := newTestBot(t, st, fake)
 
-	bot.handleUpdate(ctx, msgUpdate(1, 999, 7, "mallory", "/signal"))
-	bot.handleUpdate(ctx, msgUpdate(2, 999, 7, "mallory", "eth"))
+	tx := "0x" + strings.Repeat("b", 64)
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/signal eth "+tx+" Curve"))
+	cs := fake.lastSent(t)
+	if !strings.Contains(cs.Text, "등록 확인") || !strings.Contains(cs.Text, "Curve") || !markupHasData(cs.ReplyMarkup, "ok") {
+		t.Fatalf("expected confirm card with protocol, got %q markup=%+v", cs.Text, cs.ReplyMarkup)
+	}
+	bot.handleUpdate(ctx, callbackUpdate(2, 100, 7, 500, "alice", "ok"))
 
-	if n := fake.count(); n != 0 {
-		t.Fatalf("expected no replies to unauthorized chat, got %d", n)
+	items, _, _ := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
+	if len(items) != 1 {
+		t.Fatalf("want 1 case, got %d", len(items))
 	}
-	items, _, err := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 0 {
-		t.Fatalf("expected no cases from unauthorized chat, got %d", len(items))
+	if got := protocolDisplay(items[0].Metadata); got != "Curve" {
+		t.Fatalf("protocol = %q, want Curve", got)
 	}
 }
 
-func TestInvalidTxRePromptsThenSucceeds(t *testing.T) {
+func TestInvalidTxInCommand(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)
 	fake := newFakeTelegram(t)
 	bot := newTestBot(t, st, fake)
 
-	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/signal"))
-	bot.handleUpdate(ctx, msgUpdate(2, 100, 7, "alice", "eth"))
-	bot.handleUpdate(ctx, msgUpdate(3, 100, 7, "alice", "not-a-hash"))
-
-	last := fake.lastSent(t)
-	if !strings.Contains(last.Text, "형식") {
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/signal not-a-hash"))
+	if last := fake.lastSent(t); !strings.Contains(last.Text, "형식") {
 		t.Fatalf("expected tx format error, got %q", last.Text)
 	}
 	items, _, _ := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
 	if len(items) != 0 {
 		t.Fatalf("invalid tx should not create a case, got %d", len(items))
-	}
-
-	tx := "0x" + strings.Repeat("b", 64)
-	bot.handleUpdate(ctx, msgUpdate(4, 100, 7, "alice", tx))
-	bot.handleUpdate(ctx, msgUpdate(5, 100, 7, "alice", "-"))
-
-	items, _, _ = st.ListCases(ctx, store.CaseListFilter{Limit: 10})
-	if len(items) != 1 {
-		t.Fatalf("want 1 case after recovery, got %d", len(items))
-	}
-	if got := protocolDisplay(items[0].Metadata); got != "" {
-		t.Fatalf("skip-protocol should leave no protocol, got %q", got)
 	}
 }
 
@@ -244,22 +303,115 @@ func TestRepeatTxReportsExisting(t *testing.T) {
 
 	tx := "0x" + strings.Repeat("d", 64)
 	run := func(startID int64) {
-		bot.handleUpdate(ctx, msgUpdate(startID, 100, 7, "alice", "/signal"))
-		bot.handleUpdate(ctx, msgUpdate(startID+1, 100, 7, "alice", "eth"))
-		bot.handleUpdate(ctx, msgUpdate(startID+2, 100, 7, "alice", tx))
-		bot.handleUpdate(ctx, msgUpdate(startID+3, 100, 7, "alice", "-"))
+		bot.handleUpdate(ctx, msgUpdate(startID, 100, 7, "alice", "/signal eth "+tx))
+		bot.handleUpdate(ctx, callbackUpdate(startID+1, 100, 7, 500, "alice", "ok"))
 	}
 	run(1)
-	if last := fake.lastSent(t); !strings.Contains(last.Text, "등록됨") {
-		t.Fatalf("first submit should be new: %q", last.Text)
+	if le := fake.lastEdit(t); !strings.Contains(le.Text, "등록됨") {
+		t.Fatalf("first submit should be new: %q", le.Text)
 	}
 	run(10)
-	if last := fake.lastSent(t); !strings.Contains(last.Text, "이미 등록") {
-		t.Fatalf("second submit should be existing: %q", last.Text)
+	if le := fake.lastEdit(t); !strings.Contains(le.Text, "이미 등록") {
+		t.Fatalf("second submit should be existing: %q", le.Text)
 	}
 	items, total, _ := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
 	if total != 1 || len(items) != 1 {
 		t.Fatalf("dedup should keep a single case, got total=%d", total)
+	}
+}
+
+func TestCancelButtonAbortsFlow(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	fake := newFakeTelegram(t)
+	bot := newTestBot(t, st, fake)
+
+	tx := "0x" + strings.Repeat("c", 64)
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/signal "+tx))
+	bot.handleUpdate(ctx, callbackUpdate(2, 100, 7, 500, "alice", "no"))
+	if le := fake.lastEdit(t); !strings.Contains(le.Text, "취소") {
+		t.Fatalf("expected cancel edit, got %q", le.Text)
+	}
+	items, _, _ := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
+	if len(items) != 0 {
+		t.Fatalf("cancelled flow should not create a case, got %d", len(items))
+	}
+}
+
+func TestCancelCommandThenConfirmExpired(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	fake := newFakeTelegram(t)
+	bot := newTestBot(t, st, fake)
+
+	tx := "0x" + strings.Repeat("c", 64)
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/signal "+tx))
+	bot.handleUpdate(ctx, msgUpdate(2, 100, 7, "alice", "/cancel"))
+	if last := fake.lastSent(t); !strings.Contains(last.Text, "취소") {
+		t.Fatalf("expected cancel confirmation, got %q", last.Text)
+	}
+	// A confirm tap after cancel finds no session -> expired, no case.
+	bot.handleUpdate(ctx, callbackUpdate(3, 100, 7, 500, "alice", "ok"))
+	if le := fake.lastEdit(t); !strings.Contains(le.Text, "만료") {
+		t.Fatalf("expected session-expired edit, got %q", le.Text)
+	}
+	items, _, _ := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
+	if len(items) != 0 {
+		t.Fatalf("cancelled flow should not create a case, got %d", len(items))
+	}
+}
+
+func TestUnauthorizedChatIgnored(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	fake := newFakeTelegram(t)
+	bot := newTestBot(t, st, fake)
+
+	tx := "0x" + strings.Repeat("a", 64)
+	bot.handleUpdate(ctx, msgUpdate(1, 999, 7, "mallory", "/signal "+tx))
+	bot.handleUpdate(ctx, callbackUpdate(2, 999, 7, 500, "mallory", "ok"))
+
+	if n := fake.count(); n != 0 {
+		t.Fatalf("expected no messages to unauthorized chat, got %d", n)
+	}
+	if n := fake.editCount(); n != 0 {
+		t.Fatalf("expected no edits for unauthorized chat, got %d", n)
+	}
+	items, _, err := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no cases from unauthorized chat, got %d", len(items))
+	}
+}
+
+func TestRecentShowsStatusAndDetailButton(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	fake := newFakeTelegram(t)
+	bot := newTestBot(t, st, fake)
+
+	src := "telegram:@wi11y"
+	if _, _, err := st.SubmitCase(ctx, "eth", "0x"+strings.Repeat("f", 64), &src, nil, json.RawMessage(`{"protocol_name":"Curve"}`), false); err != nil {
+		t.Fatal(err)
+	}
+
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/recent"))
+	last := fake.lastSent(t)
+	for _, want := range []string{"Curve", "queued"} {
+		if !strings.Contains(last.Text, want) {
+			t.Fatalf("recent reply missing %q:\n%s", want, last.Text)
+		}
+	}
+	if !markupHasData(last.ReplyMarkup, "st:0") {
+		t.Fatalf("recent missing detail button: %+v", last.ReplyMarkup)
+	}
+
+	// Tapping the detail button sends the status card.
+	bot.handleUpdate(ctx, callbackUpdate(2, 100, 7, 600, "alice", "st:0"))
+	if le := fake.lastSent(t); !strings.Contains(le.Text, "케이스 ") || !strings.Contains(le.Text, "상태:") {
+		t.Fatalf("detail button did not produce a status card: %q", le.Text)
 	}
 }
 
@@ -276,7 +428,6 @@ func TestRecentListsProtocolAndDate(t *testing.T) {
 	}
 
 	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/recent"))
-
 	last := fake.lastSent(t)
 	for _, want := range []string{"최근 인시던트", "Curve", "2026-06-20 05:14 UTC"} {
 		if !strings.Contains(last.Text, want) {
@@ -297,22 +448,76 @@ func TestRecentEmpty(t *testing.T) {
 	}
 }
 
-func TestCancelClearsSession(t *testing.T) {
+func TestStatusCommandReportsLifecycle(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)
 	fake := newFakeTelegram(t)
 	bot := newTestBot(t, st, fake)
 
-	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/signal"))
-	bot.handleUpdate(ctx, msgUpdate(2, 100, 7, "alice", "/cancel"))
-	if last := fake.lastSent(t); !strings.Contains(last.Text, "취소") {
-		t.Fatalf("expected cancel confirmation, got %q", last.Text)
+	tx := "0x" + strings.Repeat("e", 64)
+	src := "telegram:@wi11y"
+	c, _, err := st.SubmitCase(ctx, "eth", tx, &src, nil, json.RawMessage(`{"protocol_name":"Curve"}`), false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// A bare answer after cancel must not resume the flow.
-	bot.handleUpdate(ctx, msgUpdate(3, 100, 7, "alice", "eth"))
-	items, _, _ := st.ListCases(ctx, store.CaseListFilter{Limit: 10})
-	if len(items) != 0 {
-		t.Fatalf("cancelled flow should not create a case, got %d", len(items))
+
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/status "+c.CaseID))
+	last := fake.lastSent(t)
+	for _, want := range []string{c.CaseID, "체인: eth", "상태: queued", "Curve"} {
+		if !strings.Contains(last.Text, want) {
+			t.Fatalf("status(queued) missing %q:\n%s", want, last.Text)
+		}
+	}
+
+	claimed, err := st.ClaimNextQueued(ctx, t.TempDir())
+	if err != nil || claimed == nil {
+		t.Fatalf("claim queued case: case=%v err=%v", claimed, err)
+	}
+	if err := st.MarkDone(ctx, claimed.CaseID, "verified", false); err != nil {
+		t.Fatal(err)
+	}
+	bot.handleUpdate(ctx, msgUpdate(2, 100, 7, "alice", "/status "+c.CaseID))
+	if last := fake.lastSent(t); !strings.Contains(last.Text, "결과: verified") {
+		t.Fatalf("status(finished) missing outcome verified:\n%s", last.Text)
+	}
+}
+
+func TestStatusReportButton(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	fake := newFakeTelegram(t)
+	bot := newTestBot(t, st, fake)
+
+	src := "telegram:@wi11y"
+	c, _, err := st.SubmitCase(ctx, "eth", "0x"+strings.Repeat("a", 64), &src, nil, json.RawMessage(`{"protocol_name":"Curve"}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendCaseEvent(ctx, c.CaseID, "github_publish", map[string]any{
+		"report_url": "https://github.com/BackwardLabs/Q1-2026/blob/main/x/README.md",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/status "+c.CaseID))
+	if last := fake.lastSent(t); !markupHasURL(last.ReplyMarkup) {
+		t.Fatalf("expected a report URL button, got markup=%+v", last.ReplyMarkup)
+	}
+}
+
+func TestStatusMissingArgAndUnknownCase(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	fake := newFakeTelegram(t)
+	bot := newTestBot(t, st, fake)
+
+	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/status"))
+	if last := fake.lastSent(t); !strings.Contains(last.Text, "사용법") {
+		t.Fatalf("expected usage hint for bare /status, got %q", last.Text)
+	}
+	bot.handleUpdate(ctx, msgUpdate(2, 100, 7, "alice", "/status case_does_not_exist"))
+	if last := fake.lastSent(t); !strings.Contains(last.Text, "찾을 수 없") {
+		t.Fatalf("expected not-found for unknown case, got %q", last.Text)
 	}
 }
 
@@ -326,8 +531,6 @@ func TestCommandAtBotnameSuffixParsed(t *testing.T) {
 }
 
 func TestClientRedactsBotTokenFromTransportErrors(t *testing.T) {
-	// A closed server address forces a connection-refused transport error,
-	// whose *url.Error renders the request URL — which embeds the bot token.
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	base := srv.URL
 	srv.Close()
@@ -370,96 +573,6 @@ func TestLoopProcessesUpdatesFromGetUpdates(t *testing.T) {
 	}
 }
 
-// TestEndToEndConversationThroughLoop drives a full operator conversation
-// through the REAL long-poll loop (getUpdates) and a REAL SQLite store — the
-// same code path the deployed binary runs — and prints the transcript so the
-// behavior is observable, not just asserted.
-func TestEndToEndConversationThroughLoop(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	st := openStore(t)
-	fake := newFakeTelegram(t)
-	bot := newTestBot(t, st, fake)
-
-	tx := "0x" + strings.Repeat("a", 64)
-	script := []struct {
-		id   int64
-		text string
-	}{
-		{1, "/signal"}, // start guided flow
-		{2, "eth"},     // chain
-		{3, tx},        // tx hash
-		{4, "Curve"},   // protocol -> submit (new)
-		{5, "/recent"}, // list
-		{6, "/signal"}, // start again
-		{7, "eth"},     //
-		{8, tx},        // same tx
-		{9, "Curve"},   // submit -> dedup existing
-	}
-	for _, s := range script {
-		fake.enqueue([]Update{msgUpdate(s.id, 100, 7, "wi11y", s.text)})
-	}
-
-	bot.Start(ctx)
-	deadline := time.Now().Add(8 * time.Second)
-	for fake.count() < len(script) && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	cancel()
-	bot.Wait()
-
-	fake.mu.Lock()
-	sent := append([]sendMessageRequest(nil), fake.sent...)
-	fake.mu.Unlock()
-
-	t.Log("=== live conversation transcript (real getUpdates loop + real SQLite) ===")
-	for i, s := range script {
-		t.Logf("  USER ▶ %s", s.text)
-		if i < len(sent) {
-			t.Logf("  BOT  ◀ %s", strings.ReplaceAll(sent[i].Text, "\n", " / "))
-		} else {
-			t.Logf("  BOT  ◀ (no reply)")
-		}
-	}
-
-	if len(sent) < len(script) {
-		t.Fatalf("expected %d replies, got %d", len(script), len(sent))
-	}
-	expect := []string{"체인", "tx", "프로토콜", "등록됨", "최근 인시던트", "체인", "tx", "프로토콜", "이미 등록"}
-	for i, want := range expect {
-		if !strings.Contains(sent[i].Text, want) {
-			t.Errorf("step %d reply missing %q: %q", i+1, want, sent[i].Text)
-		}
-	}
-
-	// The conversation ctx was cancelled above to stop the loop; read back with
-	// a fresh context.
-	items, total, err := st.ListCases(context.Background(), store.CaseListFilter{Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 1 || len(items) != 1 {
-		t.Fatalf("expected exactly 1 case after dedup, got total=%d items=%d", total, len(items))
-	}
-	c := items[0]
-	if c.Chain != "eth" || c.TxHash != tx {
-		t.Fatalf("case fields wrong: chain=%q tx=%q", c.Chain, c.TxHash)
-	}
-	if got := protocolDisplay(c.Metadata); got != "Curve" {
-		t.Fatalf("protocol = %q, want Curve", got)
-	}
-	if c.Source == nil || !strings.Contains(*c.Source, "wi11y") {
-		t.Fatalf("source not wired from telegram user: %v", c.Source)
-	}
-	detectedAt := ""
-	if c.DetectedAt != nil {
-		detectedAt = *c.DetectedAt
-	}
-	t.Logf("=== store result: 1 case created via the loop ===")
-	t.Logf("  case_id=%s state=%s chain=%s protocol=%s source=%s detected_at=%s",
-		c.CaseID, c.State, c.Chain, protocolDisplay(c.Metadata), *c.Source, detectedAt)
-}
-
 func TestSetMyCommandsRegisteredAtStartup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -490,75 +603,61 @@ func TestSetMyCommandsRegisteredAtStartup(t *testing.T) {
 	}
 }
 
-func TestRecentShowsStatusAndCaseID(t *testing.T) {
-	ctx := context.Background()
+// TestEndToEndButtonFlowThroughLoop drives the button registration flow through
+// the REAL long-poll loop (getUpdates) and a REAL SQLite store — the same code
+// path the deployed binary runs — and prints the transcript.
+func TestEndToEndButtonFlowThroughLoop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	st := openStore(t)
 	fake := newFakeTelegram(t)
 	bot := newTestBot(t, st, fake)
 
-	src := "telegram:@wi11y"
-	c, _, err := st.SubmitCase(ctx, "eth", "0x"+strings.Repeat("f", 64), &src, nil, json.RawMessage(`{"protocol_name":"Curve"}`), false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tx := "0x" + strings.Repeat("a", 64)
+	fake.enqueue([]Update{msgUpdate(1, 100, 7, "wi11y", "/signal "+tx)})
+	fake.enqueue([]Update{callbackUpdate(2, 100, 7, 500, "wi11y", "c:eth")})
+	fake.enqueue([]Update{callbackUpdate(3, 100, 7, 500, "wi11y", "ok")})
+	fake.enqueue([]Update{msgUpdate(4, 100, 7, "wi11y", "/recent")})
 
-	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/recent"))
-	last := fake.lastSent(t)
-	for _, want := range []string{"Curve", "queued", c.CaseID} {
-		if !strings.Contains(last.Text, want) {
-			t.Fatalf("recent reply missing %q:\n%s", want, last.Text)
+	bot.Start(ctx)
+	deadline := time.Now().Add(8 * time.Second)
+	created := false
+	for time.Now().Before(deadline) {
+		items, _, _ := st.ListCases(context.Background(), store.CaseListFilter{Limit: 10})
+		if len(items) == 1 && fake.editCount() >= 2 && fake.count() >= 2 {
+			created = true
+			break
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
-}
+	cancel()
+	bot.Wait()
 
-func TestStatusCommandReportsLifecycle(t *testing.T) {
-	ctx := context.Background()
-	st := openStore(t)
-	fake := newFakeTelegram(t)
-	bot := newTestBot(t, st, fake)
+	fake.mu.Lock()
+	sent := append([]sendMessageRequest(nil), fake.sent...)
+	edits := append([]editMessageTextRequest(nil), fake.edits...)
+	fake.mu.Unlock()
 
-	tx := "0x" + strings.Repeat("e", 64)
-	src := "telegram:@wi11y"
-	c, _, err := st.SubmitCase(ctx, "eth", tx, &src, nil, json.RawMessage(`{"protocol_name":"Curve"}`), false)
-	if err != nil {
-		t.Fatal(err)
+	t.Log("=== live button-flow transcript (real getUpdates loop + real SQLite) ===")
+	t.Log("USER ▶ /signal <tx>")
+	for _, s := range sent {
+		t.Logf("  BOT send ◀ %s", strings.ReplaceAll(s.Text, "\n", " / "))
 	}
-
-	// Freshly submitted -> queued.
-	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/status "+c.CaseID))
-	last := fake.lastSent(t)
-	for _, want := range []string{c.CaseID, "체인: eth", "상태: queued", "Curve"} {
-		if !strings.Contains(last.Text, want) {
-			t.Fatalf("status(queued) missing %q:\n%s", want, last.Text)
-		}
+	t.Log("USER ▶ [tap ETH] [tap 등록]")
+	for _, e := range edits {
+		t.Logf("  BOT edit ◀ %s", strings.ReplaceAll(e.Text, "\n", " / "))
 	}
 
-	// Drive it to a finished outcome and re-check.
-	claimed, err := st.ClaimNextQueued(ctx, t.TempDir())
-	if err != nil || claimed == nil {
-		t.Fatalf("claim queued case: case=%v err=%v", claimed, err)
+	if !created {
+		t.Fatalf("button flow did not complete: sent=%d edits=%d", len(sent), len(edits))
 	}
-	if err := st.MarkDone(ctx, claimed.CaseID, "verified", false); err != nil {
-		t.Fatal(err)
+	if le := edits[len(edits)-1]; !strings.Contains(le.Text, "등록됨") {
+		t.Fatalf("final edit not a success result: %q", le.Text)
 	}
-	bot.handleUpdate(ctx, msgUpdate(2, 100, 7, "alice", "/status "+c.CaseID))
-	if last := fake.lastSent(t); !strings.Contains(last.Text, "결과: verified") {
-		t.Fatalf("status(finished) missing outcome verified:\n%s", last.Text)
+	items, _, _ := st.ListCases(context.Background(), store.CaseListFilter{Limit: 10})
+	c := items[0]
+	if c.Chain != "eth" || c.TxHash != tx {
+		t.Fatalf("case fields wrong: chain=%q tx=%q", c.Chain, c.TxHash)
 	}
-}
-
-func TestStatusMissingArgAndUnknownCase(t *testing.T) {
-	ctx := context.Background()
-	st := openStore(t)
-	fake := newFakeTelegram(t)
-	bot := newTestBot(t, st, fake)
-
-	bot.handleUpdate(ctx, msgUpdate(1, 100, 7, "alice", "/status"))
-	if last := fake.lastSent(t); !strings.Contains(last.Text, "사용법") {
-		t.Fatalf("expected usage hint for bare /status, got %q", last.Text)
-	}
-	bot.handleUpdate(ctx, msgUpdate(2, 100, 7, "alice", "/status case_does_not_exist"))
-	if last := fake.lastSent(t); !strings.Contains(last.Text, "찾을 수 없") {
-		t.Fatalf("expected not-found for unknown case, got %q", last.Text)
-	}
+	t.Logf("=== store result: case_id=%s state=%s chain=%s source=%s ===", c.CaseID, c.State, c.Chain, *c.Source)
 }

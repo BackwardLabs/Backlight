@@ -12,11 +12,12 @@ import (
 	"time"
 )
 
-// Update is a single Telegram update. The command bot only requests message
-// updates, so non-message update kinds arrive with a nil Message.
+// Update is a single Telegram update. The bot requests message and
+// callback_query updates, so exactly one of Message / CallbackQuery is set.
 type Update struct {
-	UpdateID int64    `json:"update_id"`
-	Message  *Message `json:"message"`
+	UpdateID      int64          `json:"update_id"`
+	Message       *Message       `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
 // Message is the subset of a Telegram message the command bot reads.
@@ -25,6 +26,17 @@ type Message struct {
 	From      *User  `json:"from"`
 	Chat      Chat   `json:"chat"`
 	Text      string `json:"text"`
+}
+
+// CallbackQuery is an inline-button tap. Its Message is the message the button
+// is attached to (carrying the chat + message_id to edit). Button taps are
+// delivered regardless of group privacy mode, which is why the bot leans on
+// them for everything except the unavoidable free-text tx hash.
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    *User    `json:"from"`
+	Message *Message `json:"message"`
+	Data    string   `json:"data"`
 }
 
 type User struct {
@@ -36,6 +48,19 @@ type User struct {
 type Chat struct {
 	ID   int64  `json:"id"`
 	Type string `json:"type"`
+}
+
+// inlineKeyboardMarkup / inlineKeyboardButton model Telegram inline keyboards.
+// A button with CallbackData posts a callback_query when tapped; a button with
+// URL opens a link.
+type inlineKeyboardMarkup struct {
+	InlineKeyboard [][]inlineKeyboardButton `json:"inline_keyboard"`
+}
+
+type inlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data,omitempty"`
+	URL          string `json:"url,omitempty"`
 }
 
 // apiClient is a thin Telegram Bot API client covering only the methods the
@@ -82,7 +107,7 @@ func (c *apiClient) getUpdates(ctx context.Context, offset int64, pollTimeout ti
 	body, err := json.Marshal(getUpdatesRequest{
 		Offset:         offset,
 		Timeout:        timeoutSec,
-		AllowedUpdates: []string{"message"},
+		AllowedUpdates: []string{"message", "callback_query"},
 	})
 	if err != nil {
 		return nil, err
@@ -100,12 +125,17 @@ func (c *apiClient) getUpdates(ctx context.Context, offset int64, pollTimeout ti
 }
 
 type sendMessageRequest struct {
-	ChatID int64  `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID      int64                 `json:"chat_id"`
+	Text        string                `json:"text"`
+	ReplyMarkup *inlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
 func (c *apiClient) sendMessage(ctx context.Context, chatID int64, text string) error {
-	body, err := json.Marshal(sendMessageRequest{ChatID: chatID, Text: text})
+	return c.sendMessageMarkup(ctx, chatID, text, nil)
+}
+
+func (c *apiClient) sendMessageMarkup(ctx context.Context, chatID int64, text string, markup *inlineKeyboardMarkup) error {
+	body, err := json.Marshal(sendMessageRequest{ChatID: chatID, Text: text, ReplyMarkup: markup})
 	if err != nil {
 		return err
 	}
@@ -122,6 +152,52 @@ func (c *apiClient) sendMessage(ctx context.Context, chatID int64, text string) 
 		return fmt.Errorf("telegram sendMessage not ok: %s", decoded.Description)
 	}
 	return nil
+}
+
+type editMessageTextRequest struct {
+	ChatID      int64                 `json:"chat_id"`
+	MessageID   int64                 `json:"message_id"`
+	Text        string                `json:"text"`
+	ReplyMarkup *inlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+// editMessageText rewrites an existing message in place (used to advance the
+// inline-button flow on the same message the operator tapped).
+func (c *apiClient) editMessageText(ctx context.Context, chatID, messageID int64, text string, markup *inlineKeyboardMarkup) error {
+	body, err := json.Marshal(editMessageTextRequest{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: markup})
+	if err != nil {
+		return err
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var decoded struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := c.doJSON(reqCtx, "editMessageText", body, &decoded); err != nil {
+		return err
+	}
+	if !decoded.OK {
+		return fmt.Errorf("telegram editMessageText not ok: %s", decoded.Description)
+	}
+	return nil
+}
+
+// answerCallbackQuery acknowledges a button tap so the client stops showing the
+// loading spinner. Best-effort; the operator-visible result is the edited
+// message, not this ack.
+func (c *apiClient) answerCallbackQuery(ctx context.Context, callbackID, text string) error {
+	payload := map[string]any{"callback_query_id": callbackID}
+	if text != "" {
+		payload["text"] = text
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return c.doJSON(reqCtx, "answerCallbackQuery", body, nil)
 }
 
 // deleteWebhook is best-effort: long-poll getUpdates and a registered webhook

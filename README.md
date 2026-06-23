@@ -100,13 +100,13 @@ export TELEGRAM_COMMAND_POLL_TIMEOUT_SECONDS=30
 
 Commands:
 
-- `/signal` — register an incident through a guided prompt flow (chain → tx hash → protocol). Submitted with manual-operator (`POST /cases`) semantics — `source=telegram:<user>`, `detected_at=now` — not the strict hack-detector `/signals` contract. Repeated tx hashes dedup like any other submission.
-- `/recent` — list the 10 most recent incidents (protocol name · occurrence time · lifecycle status · case_id).
-- `/status <case_id>` — show one case's chain/tx/state/outcome/failure so you can see whether the engine run is queued, running, or finished (and how).
+- `/signal <tx_hash>` — register an incident. The tx hash rides in the command (so it works in a group without admin/reply); the chain is then picked from inline buttons and the operator confirms with a button. `/signal <chain> <tx> [protocol]` is a one-shot shortcut that jumps straight to the confirm card. Submitted with manual-operator (`POST /cases`) semantics — `source=telegram:<user>`, `detected_at=now` — not the strict hack-detector `/signals` contract. Repeated tx hashes dedup like any other submission.
+- `/recent` — list the 10 most recent incidents (protocol · occurrence time · lifecycle status); each row gets a numbered button to open its status.
+- `/status <case_id>` — show one case's chain/tx/state/outcome/failure (with a 📄 report button when published) so you can see whether the engine run is queued, running, or finished (and how).
 - `/cancel` — abort an in-progress `/signal` flow.
 - `/help` — usage.
 
-The bot registers these with Telegram (`setMyCommands`) at startup, so they appear in the client's `/` command menu. Final analysis results still arrive via the normal notification channel when the worker finishes; `/recent` and `/status` are for on-demand progress checks.
+The flow leans on inline buttons because button taps are delivered to the bot regardless of group privacy mode — only the tx hash must be typed, and it rides in the command. The bot registers the commands with Telegram (`setMyCommands`) at startup, so they appear in the client's `/` command menu. Final analysis results still arrive via the normal notification channel when the worker finishes; `/recent` and `/status` are for on-demand progress checks.
 
 Only one process may long-poll a given bot token at a time, and the bot clears
 any stale webhook at startup so polling does not conflict.
