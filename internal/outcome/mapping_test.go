@@ -97,6 +97,13 @@ func TestMap_PrecedenceTable(t *testing.T) {
 			wantState:   StateDone,
 			wantOutcome: OutcomeUnverified,
 		},
+		{
+			name:        "O3 blocked no-working-poc with failed forge test",
+			in:          Input{ExitCode: 0, SummaryBytes: []byte(`{"status":"blocked","poc":{"status":"unverified","execution_state":"no_working_poc","forge_build_status":"pass","forge_test_status":"fail","failure_kind":"test_failed"},"rca":{"status":"blocked","analysis_status":"blocked","blocker_reason":"PoC execution did not pass"},"failure":{"kind":"test_failed"}}`)},
+			wantRule:    "O3",
+			wantState:   StateDone,
+			wantOutcome: OutcomeUnverified,
+		},
 		// O1 — verified
 		{
 			name:        "O1 verified",
@@ -344,7 +351,7 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 		{
 			name:         "poc failed is manual review and no publish",
 			summary:      `{"status":"partial","poc":{"status":"unverified","execution_state":"no_working_poc","failure_kind":"forge_test_failed"},"rca":{"status":"not_run"}}`,
-			wantOutcome:  OutcomePartial,
+			wantOutcome:  OutcomeUnverified,
 			wantStage:    AnalysisStagePoCFailed,
 			wantPoC:      PoCStateFailed,
 			wantRCA:      RCAStateNotRun,

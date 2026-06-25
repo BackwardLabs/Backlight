@@ -131,8 +131,8 @@ type Input struct {
 //	O4: summary parseable + failure.kind == "engine_error"
 //	                                                    → failed/engine_error/lumoskit_reported_engine_error
 //	O1: status=pass + poc=verified                      → done/verified
-//	O2: status=partial OR blocked analysis              → done/partial
-//	O3: status=fail + poc∈{unverified,missing}          → done/unverified
+//	O2: status=partial OR RCA-blocked analysis          → done/partial
+//	O3: terminal summary + failed/missing PoC           → done/unverified
 //	O8: catch-all (parseable summary, none of above)    → failed/engine_error/lumoskit_unexpected_summary_shape
 //
 // NOTE on the divergence from seeds/v1.yaml: the seed assumed `failure` would
@@ -179,6 +179,8 @@ func Map(in Input) Result {
 	switch {
 	case s.Status == "pass" && s.PoC.Status == "verified":
 		return withRerunDecision(Result{State: StateDone, Outcome: OutcomeVerified, Rule: "O1"}, s)
+	case isTerminalUnverifiedPoC(s):
+		return withRerunDecision(Result{State: StateDone, Outcome: OutcomeUnverified, Rule: "O3"}, s)
 	case s.Status == "partial" || isBlockedAnalysis(s):
 		return withRerunDecision(Result{State: StateDone, Outcome: OutcomePartial, Rule: "O2"}, s)
 	case s.Status == "fail" && (s.PoC.Status == "unverified" || s.PoC.Status == "missing"):
@@ -415,7 +417,28 @@ func isRCABlocked(r SummaryRCA) bool {
 }
 
 func isBlockedAnalysis(s Summary) bool {
-	return s.Status == "blocked" && (isPoCBlocked(s.PoC) || isRCAIncompleteState(classifyRCAState(s)))
+	pocState := classifyPoCState(s.PoC)
+	return s.Status == "blocked" &&
+		pocState != PoCStateMissing &&
+		pocState != PoCStateFailed &&
+		isRCAIncompleteState(classifyRCAState(s))
+}
+
+func isTerminalUnverifiedPoC(s Summary) bool {
+	switch strings.TrimSpace(strings.ToLower(s.Status)) {
+	case "fail", "failed":
+		return s.PoC.Status == "unverified" || s.PoC.Status == "missing" || classifyPoCState(s.PoC) == PoCStateFailed
+	case "blocked":
+		pocState := classifyPoCState(s.PoC)
+		return pocState == PoCStateMissing || pocState == PoCStateFailed
+	case "partial":
+		return s.PoC.ExecutionState == "no_working_poc" ||
+			s.PoC.Status == "missing" ||
+			strings.TrimSpace(strings.ToLower(s.PoC.ForgeTestStatus)) == "fail" ||
+			strings.TrimSpace(strings.ToLower(s.PoC.ForgeTestStatus)) == "failed"
+	default:
+		return false
+	}
 }
 
 func firstNonEmpty(values ...string) string {
