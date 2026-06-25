@@ -98,6 +98,33 @@ func TestSelectDrainTxKeepsPrimaryWhenNoMovement(t *testing.T) {
 	}
 }
 
+func TestSelectDrainTxThreeCandidatesParallelDeterministic(t *testing.T) {
+	a := "0x" + strings.Repeat("a", 64)
+	drain := "0x" + strings.Repeat("b", 64)
+	c3 := "0x" + strings.Repeat("c", 64)
+	bin := writeSelectorLumoskit(t, t.TempDir(), drain)
+
+	w := &Worker{Runner: &lumoskit.Runner{Binary: bin}}
+	root := t.TempDir()
+	c := &store.Case{CaseID: "c1", Chain: "base", TxHash: a, OutputRoot: &root}
+
+	// Candidates fan out concurrently; ranking must still come back in candidate
+	// order and the winner must be the drain regardless of completion order.
+	sel := w.selectDrainTx(context.Background(), c, []string{a, drain, c3})
+
+	if sel.WinnerTxHash != drain {
+		t.Fatalf("expected winner %s, got %s", drain, sel.WinnerTxHash)
+	}
+	if len(sel.Ranking) != 3 {
+		t.Fatalf("expected 3 ranking entries, got %d", len(sel.Ranking))
+	}
+	for i, want := range []string{a, drain, c3} {
+		if sel.Ranking[i].TxHash != want {
+			t.Fatalf("ranking[%d]=%s want %s (order not preserved)", i, sel.Ranking[i].TxHash, want)
+		}
+	}
+}
+
 // writeSelectorLumoskit emits a fake lumoskit that writes a large net_flows
 // fund_flows.json only for drainTx, and an empty one for every other tx.
 func writeSelectorLumoskit(t *testing.T, dir, drainTx string) string {

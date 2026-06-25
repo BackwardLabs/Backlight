@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
 	"github.com/UPside-Lumos-V2/helios/internal/store"
@@ -97,24 +98,52 @@ func (w *Worker) selectDrainTxIfNeeded(ctx context.Context, c *store.Case, runOp
 // movement-free selection never makes things worse than today's behaviour.
 func (w *Worker) selectDrainTx(ctx context.Context, c *store.Case, candidates []string) drainSelection {
 	sel := drainSelection{PrimaryTxHash: c.TxHash, WinnerTxHash: c.TxHash}
+
+	type candResult struct {
+		score  candidateScore
+		maxAbs *big.Float
+		ok     bool // prefix exited cleanly (ExitCode == 0)
+	}
+	results := make([]candResult, len(candidates))
+
+	// Fan out the per-candidate cheap prefix concurrently. Each candidate writes
+	// to an isolated output subdir (drainSelectSubdir/<tx>), so there is no
+	// contention, and Runner holds no per-call state. Candidate count is capped
+	// at maxCandidateTxHashes (3), so unbounded fan-out is bounded in practice.
+	// Wall-clock drops from N×prefix to ~1×prefix.
+	var wg sync.WaitGroup
+	for i, tx := range candidates {
+		wg.Add(1)
+		go func(i int, tx string) {
+			defer wg.Done()
+			score := candidateScore{TxHash: tx, MaxAbsDelta: "0"}
+			root := filepath.Join(*c.OutputRoot, drainSelectSubdir, txDirToken(tx))
+			res := w.Runner.RunWithOptions(ctx, c.Chain, tx, root, lumoskit.RunOptions{Stage: "flow_context_select"})
+			score.ExitCode = res.ExitCode
+			maxAbs := new(big.Float)
+			if res.ExitCode == 0 {
+				count, m := readNetFlowMagnitude(root)
+				score.NetFlowCount = count
+				score.MaxAbsDelta = m.Text('f', 0)
+				maxAbs = m
+			}
+			results[i] = candResult{score: score, maxAbs: maxAbs, ok: res.ExitCode == 0}
+		}(i, tx)
+	}
+	wg.Wait()
+
+	// Deterministic selection in candidate order (independent of completion
+	// order): largest net movement wins, ties keep the earlier candidate.
 	bestDelta := new(big.Float)
 	bestFound := false
-	for _, tx := range candidates {
-		score := candidateScore{TxHash: tx, MaxAbsDelta: "0"}
-		root := filepath.Join(*c.OutputRoot, drainSelectSubdir, txDirToken(tx))
-		res := w.Runner.RunWithOptions(ctx, c.Chain, tx, root, lumoskit.RunOptions{Stage: "flow_context_select"})
-		score.ExitCode = res.ExitCode
-		if res.ExitCode == 0 {
-			count, maxAbs := readNetFlowMagnitude(root)
-			score.NetFlowCount = count
-			score.MaxAbsDelta = maxAbs.Text('f', 0)
-			if !bestFound || maxAbs.Cmp(bestDelta) > 0 {
-				bestFound = true
-				bestDelta = maxAbs
-				sel.WinnerTxHash = tx
-			}
+	for i := range candidates {
+		r := results[i]
+		sel.Ranking = append(sel.Ranking, r.score)
+		if r.ok && (!bestFound || r.maxAbs.Cmp(bestDelta) > 0) {
+			bestFound = true
+			bestDelta = r.maxAbs
+			sel.WinnerTxHash = candidates[i]
 		}
-		sel.Ranking = append(sel.Ranking, score)
 	}
 	return sel
 }
