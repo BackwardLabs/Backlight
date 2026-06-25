@@ -98,6 +98,23 @@ func TestSelectDrainTxKeepsPrimaryWhenNoMovement(t *testing.T) {
 	}
 }
 
+func TestSelectDrainTxKeepsPrimaryWhenNoMovementAndPrimaryIsNotFirstCandidate(t *testing.T) {
+	setup := "0x" + strings.Repeat("a", 64)
+	other := "0x" + strings.Repeat("c", 64)
+	// No tx matches the drain marker → both produce empty net_flows.
+	bin := writeSelectorLumoskit(t, t.TempDir(), "0x"+strings.Repeat("f", 64))
+
+	w := &Worker{Runner: &lumoskit.Runner{Binary: bin}}
+	root := t.TempDir()
+	c := &store.Case{CaseID: "c1", Chain: "base", TxHash: setup, OutputRoot: &root}
+
+	sel := w.selectDrainTx(context.Background(), c, []string{other, setup})
+
+	if sel.WinnerTxHash != setup {
+		t.Fatalf("expected winner to stay primary %s, got %s", setup, sel.WinnerTxHash)
+	}
+}
+
 func TestSelectDrainTxThreeCandidatesParallelDeterministic(t *testing.T) {
 	a := "0x" + strings.Repeat("a", 64)
 	drain := "0x" + strings.Repeat("b", 64)

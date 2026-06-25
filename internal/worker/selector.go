@@ -139,7 +139,7 @@ func (w *Worker) selectDrainTx(ctx context.Context, c *store.Case, candidates []
 	for i := range candidates {
 		r := results[i]
 		sel.Ranking = append(sel.Ranking, r.score)
-		if r.ok && (!bestFound || r.maxAbs.Cmp(bestDelta) > 0) {
+		if r.ok && r.maxAbs.Sign() > 0 && (!bestFound || r.maxAbs.Cmp(bestDelta) > 0) {
 			bestFound = true
 			bestDelta = r.maxAbs
 			sel.WinnerTxHash = candidates[i]
