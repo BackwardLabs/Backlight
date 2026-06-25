@@ -159,6 +159,11 @@ func (w *Worker) process(ctx context.Context, c *store.Case) {
 		log.Info("stage resume prepared", "stage", runOptions.Stage, "source_case_id", resumePayload["resume_source_case_id"])
 	}
 
+	// Multi-tx incident: if the alert carried several candidate txs, pick the
+	// real asset-drain (cheap, deterministic, no LLM) before the expensive RCA.
+	// This may re-point c.TxHash, so it runs before signal-context is written.
+	w.selectDrainTxIfNeeded(ctx, c, runOptions, log)
+
 	if err := writeSignalContext(c); err != nil {
 		log.Warn("write signal context failed", "err", err)
 	}

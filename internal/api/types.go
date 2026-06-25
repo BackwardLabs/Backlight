@@ -15,6 +15,10 @@ type SubmissionRequest struct {
 	DetectedAt *string         `json:"detected_at,omitempty"`
 	ForceRerun *bool           `json:"force_rerun,omitempty"`
 	Metadata   json.RawMessage `json:"metadata,omitempty"`
+	// CandidateTxHashes carries up to 3 exploit tx candidates when a single
+	// alert names more than one tx (e.g. authority-setup + asset-drain). The
+	// worker runs cheap economic selection to pick the real drain before RCA.
+	CandidateTxHashes []string `json:"candidate_tx_hashes,omitempty"`
 }
 
 // SubmissionResponse is the 202 body for POST /signals and POST /cases.

@@ -43,6 +43,10 @@ func (o RunOptions) stages() []string {
 		return []string{"agent_poc", "rca"}
 	case "agent_poc_repair", "poc_repair", "economic_proof_repair":
 		return []string{"agent_poc_repair", "rca"}
+	case "flow_context_select":
+		// Cheap deterministic prefix (no agent/LLM) used by the multi-tx drain
+		// selector: cefg→localize→lift→flow_context produces fund_flows.json.
+		return []string{"cefg", "localize", "lift", "flow_context"}
 	default:
 		return []string{o.Stage}
 	}
