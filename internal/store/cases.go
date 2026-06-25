@@ -311,6 +311,17 @@ func (s *Store) AppendCaseEvent(ctx context.Context, caseID, eventType string, e
 	})
 }
 
+// UpdateCaseTxHash re-points a case at a different tx hash. The multi-tx drain
+// selector uses this when the real asset-drain tx differs from the primary tx
+// the case was created with. The (chain, tx_hash) index is non-unique and dedup
+// already ran at submission time, so re-pointing is safe.
+func (s *Store) UpdateCaseTxHash(ctx context.Context, caseID, txHash string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE cases SET tx_hash = ?, updated_at = ? WHERE case_id = ?`,
+		txHash, nowUTC(), caseID)
+	return err
+}
+
 func (s *Store) GetCase(ctx context.Context, caseID string) (*Case, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT case_id, chain, tx_hash, source, detected_at, metadata,

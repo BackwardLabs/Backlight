@@ -40,6 +40,7 @@ func (s *Server) handleSignal(w http.ResponseWriter, r *http.Request) {
 	ctx := ctxOrBackground(r)
 	metadata := normalizeSignalMetadata(req.Metadata)
 	metadata = s.enrichIncidentMetadata(ctx, req.Chain, req.TxHash, metadata)
+	metadata = withCandidateTxHashes(metadata, req.CandidateTxHashes)
 	// /signals does not honour force_rerun (hack-detector cannot opt into reruns).
 	c, dedup, err := s.Store.SubmitCase(ctx, req.Chain, req.TxHash, req.Source, req.DetectedAt, metadata, false)
 	if err != nil {
@@ -141,6 +142,25 @@ func normalizeSignalMetadata(raw json.RawMessage) json.RawMessage {
 		}
 	}
 	data, err := json.Marshal(normalized)
+	if err != nil {
+		return raw
+	}
+	return data
+}
+
+// withCandidateTxHashes persists hack-detector's multi-tx candidate list inside
+// the case metadata blob (no schema change) so the worker can run drain
+// selection later. Single-tx submissions (<2 candidates) are left untouched.
+func withCandidateTxHashes(raw json.RawMessage, candidates []string) json.RawMessage {
+	if len(candidates) < 2 {
+		return raw
+	}
+	m := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &m)
+	}
+	m["candidate_tx_hashes"] = candidates
+	data, err := json.Marshal(m)
 	if err != nil {
 		return raw
 	}

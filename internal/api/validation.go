@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"time"
@@ -12,6 +13,10 @@ var (
 	// with longer hashes will need this loosened in a future revision.
 	txHashRegex = regexp.MustCompile(`^(0x)?[0-9a-fA-F]{64}$`)
 )
+
+// maxCandidateTxHashes bounds how many multi-tx exploit candidates a single
+// submission may carry (mirrors hack-detector's extractor cap).
+const maxCandidateTxHashes = 3
 
 type validationError struct {
 	Field   string `json:"field"`
@@ -27,6 +32,14 @@ func validateSubmission(req *SubmissionRequest) []validationError {
 		errs = append(errs, validationError{Field: "tx_hash", Message: "tx_hash is required"})
 	} else if !txHashRegex.MatchString(req.TxHash) {
 		errs = append(errs, validationError{Field: "tx_hash", Message: "tx_hash must be a 64-character hex string with optional 0x prefix"})
+	}
+	if len(req.CandidateTxHashes) > maxCandidateTxHashes {
+		errs = append(errs, validationError{Field: "candidate_tx_hashes", Message: fmt.Sprintf("at most %d candidate_tx_hashes are allowed", maxCandidateTxHashes)})
+	}
+	for i, h := range req.CandidateTxHashes {
+		if !txHashRegex.MatchString(h) {
+			errs = append(errs, validationError{Field: fmt.Sprintf("candidate_tx_hashes[%d]", i), Message: "candidate_tx_hashes must be a 64-character hex string with optional 0x prefix"})
+		}
 	}
 	if req.DetectedAt != nil && *req.DetectedAt != "" {
 		if _, err := time.Parse(time.RFC3339Nano, *req.DetectedAt); err != nil {
