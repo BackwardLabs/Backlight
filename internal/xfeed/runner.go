@@ -677,7 +677,7 @@ func exploitResultText(path, rootCause, attackerGain string) string {
 	case strings.Contains(hay, "withdraw"):
 		return "withdrawal moves victim assets out"
 	case strings.Contains(hay, "buytru") && strings.Contains(hay, "selltru"):
-		return "sell path returns excessive ETH"
+		return "sell path returns excessive value"
 	case attackerGain != "":
 		return "attacker realizes " + attackerGain
 	default:
@@ -700,7 +700,7 @@ func cardFlowSteps(path, rootCause, attackerGain string) []string {
 			"1. buyTRU",
 			"2. hold / approve TRU",
 			"3. sellTRU",
-			"4. excessive ETH payout",
+			"4. excessive value payout",
 		}
 	case strings.Contains(hay, "withdraw"):
 		return []string{
@@ -1334,13 +1334,18 @@ func publicWhatHappened(protocol string, reportJSON, summary []byte) []string {
 	proofVerified := strings.EqualFold(jsonPathString(summary, "poc", "status"), "verified") ||
 		strings.EqualFold(jsonPathString(summary, "economic_reproduction", "status"), "pass")
 	if strings.Contains(category, "pricing") || strings.Contains(category, "accounting") || strings.Contains(category, "settlement") {
-		line3 := "That mismatch let value leave the affected reserve."
+		asset := settlementAssetLabel(reportJSON, summary)
+		payouts := "payouts"
+		if asset != "value" {
+			payouts = asset + " payouts"
+		}
+		line3 := fmt.Sprintf("That mismatch let %s leave the affected reserve.", asset)
 		if proofVerified {
-			line3 = "That mismatch let ETH leave the market reserve, and the economic PoC reproduced the observed loss scale."
+			line3 = fmt.Sprintf("That mismatch let %s leave the market reserve, and the economic PoC reproduced the observed loss scale.", asset)
 		}
 		return []string{
 			fmt.Sprintf("An attacker-controlled setup repeatedly interacted with a %s market path.", protocol),
-			"The protocol assumption under review is that settlement accounting would keep ETH payouts bounded by market reserves.",
+			fmt.Sprintf("The protocol assumption under review is that settlement accounting would keep %s bounded by market reserves.", payouts),
 			line3,
 		}
 	}
@@ -1358,12 +1363,53 @@ func publicWhatHappened(protocol string, reportJSON, summary []byte) []string {
 func publicAnalysis(reportJSON, summary []byte) string {
 	category := strings.ToLower(attackType(reportJSON))
 	if strings.Contains(category, "pricing") || strings.Contains(category, "accounting") || strings.Contains(category, "settlement") {
-		return "At a high level, this is a market interaction and settlement-accounting issue. ETH moved out of the market reserve while the reproduced PoC matched the observed loss scale. The exact pricing formula or missing guard remains under review."
+		asset := settlementAssetLabel(reportJSON, summary)
+		return fmt.Sprintf("At a high level, this is a market interaction and settlement-accounting issue. %s moved out of the market reserve while the reproduced PoC matched the observed loss scale. The exact pricing formula or missing guard remains under review.", sentenceStart(asset))
 	}
 	if strings.EqualFold(jsonPathString(summary, "poc", "status"), "verified") {
 		return "At a high level, this is a protocol-state assumption issue. The reproduced PoC matched the observed economic effect, while lower-level implementation details remain under review."
 	}
 	return "At a high level, this is an incident under review. The public thread keeps to observed behavior and avoids reproduction details."
+}
+
+func settlementAssetLabel(reportJSON, summary []byte) string {
+	for _, value := range []string{
+		jsonPathString(reportJSON, "impact", "attacker_profit_symbol"),
+		jsonPathString(reportJSON, "poc_status", "profit_symbol"),
+		firstGainSymbol(summary),
+		impactDeltaSymbol(reportJSON),
+	} {
+		value = cleanCardText(value)
+		if value != "" && !strings.EqualFold(value, "unknown") {
+			return strings.ToUpper(value)
+		}
+	}
+	return "value"
+}
+
+func impactDeltaSymbol(reportJSON []byte) string {
+	impact, ok := jsonValue(reportJSON, "impact").(map[string]any)
+	if !ok {
+		return ""
+	}
+	re := regexp.MustCompile(`^(?:victim|attacker)_([a-zA-Z0-9]+)_delta_(?:raw|formatted)$`)
+	for key := range impact {
+		if match := re.FindStringSubmatch(key); len(match) == 2 {
+			return match[1]
+		}
+	}
+	return ""
+}
+
+func sentenceStart(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "Value"
+	}
+	if value == strings.ToUpper(value) {
+		return value
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
 }
 
 func sanitizeSentence(text string) string {

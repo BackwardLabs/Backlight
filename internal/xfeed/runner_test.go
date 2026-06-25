@@ -62,6 +62,9 @@ func TestRunnerDraftsBacklightIncidentThread(t *testing.T) {
 	if strings.Contains(res.ReplyPost, "Attacker CA") {
 		t.Fatalf("reply should omit attacker CA by default:\n%s", res.ReplyPost)
 	}
+	if strings.Contains(res.MainPost, "ETH payouts") || strings.Contains(res.ReplyPost, "ETH moved") {
+		t.Fatalf("pricing fallback should not hard-code ETH when no asset symbol is known:\nmain:\n%s\nreply:\n%s", res.MainPost, res.ReplyPost)
+	}
 	if !strings.Contains(res.TelegramPost, res.MainPost+"\n\nGitHub:\nhttps://github.com/BackwardLabs/Q1-2026/tree/main/test/2026-01/truebit") {
 		t.Fatalf("telegram post did not append GitHub URL:\n%s", res.TelegramPost)
 	}
@@ -69,6 +72,38 @@ func TestRunnerDraftsBacklightIncidentThread(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("draft artifact not written %s: %v", path, err)
 		}
+	}
+}
+
+func TestRunnerUsesAssetSymbolForSettlementNarrative(t *testing.T) {
+	root := writeDLMCArtifacts(t)
+	r := &Runner{Enabled: true, SkillDir: writeSkillDir(t)}
+	res, err := r.Run(context.Background(), Case{
+		CaseID:       "dlmc",
+		Chain:        "bsc",
+		TxHash:       "0x151025d3f0a782340a74d30ef33a5fad044b838e74437a803f0652e70c231306",
+		OutputRoot:   root,
+		IncidentSlug: "dlmc",
+		Outcome:      outcome.OutcomeVerified,
+		PublishTier:  outcome.PublishTierPublicVerified,
+		PoCState:     outcome.PoCStateEconomic,
+		RCAState:     outcome.RCAStateComplete,
+		ReportURL:    "https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-06/dlmc/README.md",
+		GitHubURL:    "https://github.com/BackwardLabs/Q1-2026/tree/main/test/2026-06/dlmc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"USDT payouts bounded by market reserves",
+		"USDT leave the market reserve",
+	} {
+		if !strings.Contains(res.MainPost, want) {
+			t.Fatalf("main post missing %q:\n%s", want, res.MainPost)
+		}
+	}
+	if strings.Contains(res.MainPost, "ETH payouts") || strings.Contains(res.MainPost, "ETH leave") || strings.Contains(res.ReplyPost, "ETH moved") {
+		t.Fatalf("settlement narrative should use USDT, not ETH:\nmain:\n%s\nreply:\n%s", res.MainPost, res.ReplyPost)
 	}
 }
 
@@ -201,6 +236,9 @@ func TestRunnerCardBriefUsesRCAFlowAndImpact(t *testing.T) {
 		"accounting or pricing mismatch",
 		"payout > checked value",
 		"enter vulnerable path",
+		"- **Violated invariant**:",
+		"- **Severity**:",
+		"- **Confidence**:",
 	} {
 		if strings.Contains(brief, bad) {
 			t.Fatalf("card brief contains generic fallback %q:\n%s", bad, brief)
@@ -303,6 +341,9 @@ func writePancakeArtifacts(t *testing.T) string {
   "vulnerability": {
     "title": "OLPC pair-out transfer branch lets skim trigger amplified pair-balance burns",
     "root_cause": "OLPCToken._update treats any transfer from its Pancake swap pair to a non-exempt address as a buy and debits value * decimalsValue from the pair to 0xdead, then sets the actual transfer value to zero. Repeated skim/sync cycles reduce the pair's OLPC balance and enable downstream conversion into USDT profit.",
+    "violated_invariant": "Pair-out transfer hooks must not burn more pair balance than the skim transfer requested.",
+    "severity": "high",
+    "confidence": "high",
     "affected_contracts": [
       {
         "address": "0x58815cdf9955121a6274680ab396a36fc9e00000",
@@ -338,6 +379,71 @@ Key evidence:
 - PoC execution, economic proof, forge build, and forge test all passed.
 - The OLPC/LABUBU pair lost OLPC and LABUBU while the attacker gained USDT.
 - The PoC primes the OLPC pair, repeatedly transfers small OLPC amounts, calls skim and sync, then swaps OLPC for USDT.
+`
+	if err := os.WriteFile(filepath.Join(reportDir, "REPORT.md"), []byte(report), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func writeDLMCArtifacts(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "report_bundle", "report")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	summary := `{
+  "chain": "bsc",
+  "status": "pass",
+  "tx_hash": "0x151025d3f0a782340a74d30ef33a5fad044b838e74437a803f0652e70c231306",
+  "economic_reproduction": {
+    "status": "pass",
+    "poc": {
+      "expected_reproduced_usd": 221878.74610017723,
+      "gain_family_selection": {
+        "included_legs": [
+          {"symbol":"USDT"}
+        ]
+      }
+    },
+    "pricing": {"tx_timestamp": 1782299710}
+  },
+  "poc": {"status":"verified","execution_state":"economic_poc"},
+  "rca": {"status":"complete","analysis_status":"complete"}
+}`
+	if err := os.WriteFile(filepath.Join(reportDir, "run_summary.json"), []byte(summary), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := `{
+  "analysis_status": "complete",
+  "chain": "bsc",
+  "vulnerability": {
+    "category": "business_logic_flaw",
+    "subtype": "redeemable_supply_price_accounting",
+    "title": "DLMC buy/referral accounting inflated livePrice and allowed same-transaction redemption of referral DLMC for USDT",
+    "root_cause": "DLMCToken buy(uint256) mints DLMC to address(this), records the buyer's same-transaction investment, and grants referrer sellable DLMC before sell(uint256) redeems at inflated livePrice.",
+    "violated_invariant": "A DLMC balance redeemable through sell() must not be priced using temporary buy liquidity while excluding newly minted redeemable supply.",
+    "severity": "high",
+    "confidence": "high"
+  },
+  "impact": {
+    "attacker_profit_symbol": "USDT",
+    "attacker_profit_formatted": "222560.221693222099016479",
+    "victim_usdt_delta_formatted": "-226119.118936329868440038"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(reportDir, "report.json"), []byte(reportJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := `# dlmc Incident Report
+
+## Root Cause
+
+- **Finding**: DLMC buy/referral accounting inflated livePrice and allowed same-transaction redemption of referral DLMC for USDT
+- **Violated invariant**: A DLMC balance redeemable through sell() must not be priced using temporary buy liquidity while excluding newly minted redeemable supply.
+- **Severity**: high
+- **Confidence**: high
 `
 	if err := os.WriteFile(filepath.Join(reportDir, "REPORT.md"), []byte(report), 0o644); err != nil {
 		t.Fatal(err)
