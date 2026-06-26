@@ -183,7 +183,7 @@ func buildFacts(c Case) incidentFacts {
 	impact := impactText(summary, reportJSON)
 	impactUSD := impactUSDValue(summary)
 	reproducedUSD := reproducedUSDValue(summary)
-	occurred := occurredText(summary, reportJSON, poc)
+	occurred := occurredText(summary, reportJSON, report, poc)
 	rootCause := publicRootCause(protocol, reportJSON, c)
 	whatHappened := publicWhatHappened(protocol, reportJSON, summary)
 	analysis := publicAnalysis(reportJSON, summary)
@@ -567,19 +567,56 @@ func contractLabel(m map[string]any) string {
 	name := cleanCardText(fmt.Sprint(m["name"]))
 	address := strings.TrimSpace(fmt.Sprint(m["address"]))
 	role := cleanCardText(fmt.Sprint(m["role"]))
-	if name == "" || strings.EqualFold(name, "<nil>") || strings.EqualFold(name, "unknown") {
-		name = shortAddress(address)
+	short := shortAddress(address)
+	nameKnown := name != "" && !strings.EqualFold(name, "<nil>") && !strings.EqualFold(name, "unknown")
+	if !nameKnown {
+		if roleLabel := contractRoleLabel(role); roleLabel != "" && short != "" {
+			return roleLabel + " " + short
+		}
+		return short
 	}
 	switch {
 	case name != "" && role != "" && !strings.Contains(strings.ToLower(role), "primary vulnerable"):
 		return fmt.Sprintf("%s (%s)", name, role)
-	case name != "" && address != "":
-		return fmt.Sprintf("%s (%s)", name, shortAddress(address))
+	case name != "" && short != "":
+		return fmt.Sprintf("%s (%s)", name, short)
 	case name != "":
 		return name
 	default:
-		return shortAddress(address)
+		return short
 	}
+}
+
+func contractRoleLabel(role string) string {
+	lower := strings.ToLower(cleanCardText(role))
+	switch {
+	case lower == "":
+		return ""
+	case strings.Contains(lower, "proxy"):
+		return "vulnerable proxy"
+	case strings.Contains(lower, "implementation"):
+		return "vulnerable implementation"
+	case strings.Contains(lower, "primary vulnerable"):
+		return "vulnerable contract"
+	case strings.Contains(lower, "victim"):
+		return "victim contract"
+	case strings.Contains(lower, "pool") || strings.Contains(lower, "pair") || strings.Contains(lower, "market"):
+		return "affected " + firstRoleWord(lower)
+	default:
+		return firstRoleWord(lower)
+	}
+}
+
+func firstRoleWord(role string) string {
+	for _, part := range strings.FieldsFunc(role, func(r rune) bool {
+		return r == '/' || r == ',' || r == ';'
+	}) {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			return part
+		}
+	}
+	return role
 }
 
 func victimFromImpact(summary []byte) string {
@@ -1291,14 +1328,47 @@ func truncateText(value string, max int) string {
 	return strings.TrimSpace(value[:max-3]) + "..."
 }
 
-func occurredText(summary, reportJSON []byte, poc string) string {
+func occurredText(summary, reportJSON []byte, report, poc string) string {
+	for _, raw := range []string{
+		markdownField(report, "Occurred"),
+		markdownField(report, "Incident time"),
+		markdownField(report, "Incident timestamp"),
+		markdownField(report, "Tx timestamp"),
+		markdownField(report, "Transaction timestamp"),
+		markdownField(report, "Block timestamp"),
+		markdownField(report, "Funds valued at"),
+	} {
+		if formatted := formatIncidentTime(raw); formatted != "" {
+			return formatted
+		}
+	}
+	for _, raw := range []string{
+		jsonPathString(summary, "incident", "timestamp"),
+		jsonPathString(summary, "incident", "occurred_at"),
+		jsonPathString(summary, "economic_reproduction", "pricing", "tx_time"),
+		jsonPathString(summary, "economic_reproduction", "pricing", "block_timestamp"),
+		jsonPathString(reportJSON, "incident", "timestamp"),
+		jsonPathString(reportJSON, "incident", "occurred_at"),
+		jsonPathString(reportJSON, "block_timestamp"),
+	} {
+		if formatted := formatIncidentTime(raw); formatted != "" {
+			return formatted
+		}
+	}
 	for _, ts := range []float64{
 		jsonPathNumber(summary, "economic_reproduction", "pricing", "tx_timestamp"),
+		jsonPathNumber(summary, "economic_reproduction", "pricing", "block_timestamp"),
+		jsonPathNumber(summary, "incident", "timestamp"),
+		jsonPathNumber(summary, "incident", "occurred_at"),
 		jsonPathNumber(summary, "tx_timestamp"),
+		jsonPathNumber(summary, "block_timestamp"),
+		jsonPathNumber(reportJSON, "incident", "timestamp"),
+		jsonPathNumber(reportJSON, "incident", "occurred_at"),
 		jsonPathNumber(reportJSON, "tx_timestamp"),
+		jsonPathNumber(reportJSON, "block_timestamp"),
 	} {
-		if ts > 0 {
-			return time.Unix(int64(ts), 0).UTC().Format("2006-01-02 15:04 UTC")
+		if formatted := formatUnixIncidentTime(ts); formatted != "" {
+			return formatted
 		}
 	}
 	re := regexp.MustCompile(`TX_TIMESTAMP\s*=\s*(\d+)`)
@@ -1308,6 +1378,46 @@ func occurredText(summary, reportJSON []byte, poc string) string {
 		}
 	}
 	return ""
+}
+
+func formatIncidentTime(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if idx := strings.Index(raw, "("); idx >= 0 {
+		raw = strings.TrimSpace(raw[:idx])
+	}
+	raw = strings.Trim(raw, "` ")
+	if n, err := strconv.ParseFloat(raw, 64); err == nil {
+		return formatUnixIncidentTime(n)
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05 MST",
+		"2006-01-02 15:04 MST",
+		"2006-01-02 15:04:05 -0700",
+		"2006-01-02 15:04 -0700",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t.UTC().Format("2006-01-02 15:04 UTC")
+		}
+	}
+	return ""
+}
+
+func formatUnixIncidentTime(ts float64) string {
+	if ts <= 0 {
+		return ""
+	}
+	if ts > 1_000_000_000_000 {
+		ts = ts / 1000
+	}
+	return time.Unix(int64(ts), 0).UTC().Format("2006-01-02 15:04 UTC")
 }
 
 func publicRootCause(protocol string, reportJSON []byte, c Case) string {
