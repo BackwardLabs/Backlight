@@ -107,6 +107,25 @@ func TestRunnerUsesAssetSymbolForSettlementNarrative(t *testing.T) {
 	}
 }
 
+func TestOccurredTextUsesReportIncidentBasisBeforeDetectedAt(t *testing.T) {
+	summary := []byte(`{"economic_reproduction":{"pricing":{"tx_timestamp":1893456000}}}`)
+	report := strings.Join([]string{
+		"- **Detected at**: 2026-06-25T13:07:18Z",
+		"- **Funds valued at**: 2026-01-10T08:30:35Z (price as of block N-1, pre-hack)",
+	}, "\n")
+	got := occurredText(summary, nil, report, "")
+	if got != "2026-01-10 08:30 UTC" {
+		t.Fatalf("occurredText = %q, want report incident basis time", got)
+	}
+}
+
+func TestOccurredTextDoesNotUseDetectedAtAsIncidentTime(t *testing.T) {
+	report := "- **Detected at**: 2026-06-25T13:07:18Z"
+	if got := occurredText(nil, nil, report, ""); got != "" {
+		t.Fatalf("occurredText used detection timestamp as incident time: %q", got)
+	}
+}
+
 func TestRunnerBlocksWhenPublicReportURLMissing(t *testing.T) {
 	root := writeTruebitArtifacts(t)
 	r := &Runner{Enabled: true, SkillDir: writeSkillDir(t)}
