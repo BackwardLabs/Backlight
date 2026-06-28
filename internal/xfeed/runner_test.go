@@ -265,6 +265,54 @@ func TestRunnerCardBriefUsesRCAFlowAndImpact(t *testing.T) {
 	}
 }
 
+func TestRunnerCardBriefUsesRCAVulnerableFunctionForMarginWithdrawal(t *testing.T) {
+	root := writeMTTokenArtifacts(t)
+	r := &Runner{
+		Enabled:       true,
+		SkillDir:      writeSkillDirWithCard(t),
+		CardEnabled:   true,
+		CardPythonBin: writeFakeCardPython(t),
+	}
+	res, err := r.Run(context.Background(), Case{
+		CaseID:       "mttoken",
+		Chain:        "arbitrum",
+		TxHash:       "0xe1e6aa5332deaf0fa0a3584113c17bedc906148730cbbc73efae16306121687b",
+		OutputRoot:   root,
+		IncidentSlug: "mttoken",
+		Outcome:      outcome.OutcomePartial,
+		PublishTier:  outcome.PublishTierEconomicIncompleteRCA,
+		PoCState:     outcome.PoCStateEconomic,
+		RCAState:     outcome.RCAStateScopeLimited,
+		ReportURL:    "https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-06/mttoken/README.md",
+		GitHubURL:    "https://github.com/BackwardLabs/Q1-2026/tree/main/test/2026-06/mttoken",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := mustReadFile(t, res.CardBriefPath)
+	for _, want := range []string{
+		"- **RCA status**: partial (medium confidence)",
+		"- **Vulnerable path**: changePosition(int256,int256,int256)",
+		"- **Flow step 1**: 1. reach changePosition()",
+		"- **Flow step 2**: 2. position/accounting changes",
+		"- **Flow step 3**: 3. margin check accepts withdrawal",
+		"- **Flow step 4**: 4. victim assets leave",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("card brief missing %q:\n%s", want, brief)
+		}
+	}
+	for _, bad := range []string{
+		"call withdraw(victim)",
+		"helper spends allowance",
+		"- **Confidence**:",
+	} {
+		if strings.Contains(brief, bad) {
+			t.Fatalf("card brief contains stale/generic text %q:\n%s", bad, brief)
+		}
+	}
+}
+
 func writeTruebitArtifacts(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -463,6 +511,103 @@ func writeDLMCArtifacts(t *testing.T) string {
 - **Violated invariant**: A DLMC balance redeemable through sell() must not be priced using temporary buy liquidity while excluding newly minted redeemable supply.
 - **Severity**: high
 - **Confidence**: high
+`
+	if err := os.WriteFile(filepath.Join(reportDir, "REPORT.md"), []byte(report), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func writeMTTokenArtifacts(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "report_bundle", "report")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	summary := `{
+  "chain": "arbitrum",
+  "status": "partial",
+  "tx_hash": "0xe1e6aa5332deaf0fa0a3584113c17bedc906148730cbbc73efae16306121687b",
+  "economic_reproduction": {
+    "status": "pass",
+    "incident": {
+      "net_loss_usd": 406220.61,
+      "asset_legs": [
+        {"holder":"0xf7ca7384cc6619866749955065f17bedd3ed80bc","symbol":"USDC"},
+        {"holder":"0xf7ca7384cc6619866749955065f17bedd3ed80bc","symbol":"WETH"}
+      ]
+    },
+    "poc": {
+      "expected_reproduced_usd": 395149.66,
+      "gain_family_selection": {
+        "included_legs": [
+          {"symbol":"USDC"}
+        ]
+      }
+    },
+    "pricing": {"tx_timestamp": 1768033835}
+  },
+  "poc": {"status":"verified","execution_state":"economic_poc"},
+  "rca": {"status":"partial","analysis_status":"partial"}
+}`
+	if err := os.WriteFile(filepath.Join(reportDir, "run_summary.json"), []byte(summary), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := `{
+  "analysis_status": "partial",
+  "root_cause_confidence": "medium",
+  "chain": "arbitrum",
+  "attack_summary": {
+    "entry_function": "changePosition(int256,int256,int256)",
+    "attacker_callback_used": "executeOperation(address,uint256,uint256,address,bytes)"
+  },
+  "impact": {
+    "attacker_profit_symbol": "USDC",
+    "attacker_profit_formatted": "394742.852305",
+    "victim_losses": [
+      {"symbol":"USDC","delta_formatted":"-197436.748947"},
+      {"symbol":"WETH","delta_formatted":"-67.574321417357759466"}
+    ]
+  },
+  "vulnerability": {
+    "title": "changePosition allowed an under-collateralized negative margin withdrawal after attacker-controlled position accounting changes",
+    "root_cause": "After attacker-controlled position setup and a large position/accounting change, the final drain frame calls changePosition(0, -894992852305, 0), and the victim accepts the negative margin withdrawal while writing large accounting state changes and releasing funds.",
+    "violated_invariant": "A margin withdrawal must not exceed the account's verified withdrawable equity after current position size, PnL, funding, fees, and price/solvency checks are applied.",
+    "severity": "critical",
+    "confidence": "medium",
+    "affected_contracts": [
+      {
+        "address": "0xf7ca7384cc6619866749955065f17bedd3ed80bc",
+        "name": "unknown proxy",
+        "role": "primary vulnerable contract"
+      }
+    ]
+  },
+  "limitations": [
+    "source_branch_gap: verified source for implementation is not present."
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(reportDir, "report.json"), []byte(reportJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := `# MTToken Incident Report
+
+## Root Cause
+
+- **Finding**: changePosition allowed an under-collateralized negative margin withdrawal after attacker-controlled position accounting changes
+- **In short**: The victim proxy delegates changePosition(int256,int256,int256) to its implementation.
+
+Mechanism:
+
+- The exploit entered through changePosition(int256,int256,int256) before reaching the vulnerable accounting path.
+- That path trusted attacker-controlled state while performing protected accounting updates.
+- The accounting update violated the withdrawable equity invariant.
+
+Key evidence:
+
+- PoC, forge build/test, and economic proof status are pass.
+- Verified PoC sequence shows setup changePosition calls, a large position/accounting change, then drain() calling changePosition(0, -894992852305, 0).
 `
 	if err := os.WriteFile(filepath.Join(reportDir, "REPORT.md"), []byte(report), 0o644); err != nil {
 		t.Fatal(err)

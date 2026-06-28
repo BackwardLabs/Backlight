@@ -115,6 +115,7 @@ type cardFacts struct {
 	FlowSteps          []string
 	Mechanism          []string
 	KeyEvidence        []string
+	Confidence         string
 }
 
 func (r *Runner) Configured() bool {
@@ -336,7 +337,7 @@ func (r *Runner) applyExploitFlowCard(ctx context.Context, c Case, f *incidentFa
 		cardCtx,
 		pythonBin,
 		script,
-		briefPath,
+		filepath.Join(c.OutputRoot, "report_bundle"),
 		"--out-dir", outDir,
 		"--basename", "exploit-flow-card",
 		"--title", fmt.Sprintf("%s Exploit Flow", f.Protocol),
@@ -417,6 +418,7 @@ func writeCardBrief(outputRoot string, c Case, f incidentFacts) (string, error) 
 	if f.Card.AttackerGain != "" {
 		fmt.Fprintf(&b, "- **Attacker gain card**: %s\n", f.Card.AttackerGain)
 	}
+	fmt.Fprintf(&b, "- **RCA status**: %s\n", cardRCAStatus(c, f))
 	if f.Card.VulnerablePath != "" {
 		fmt.Fprintf(&b, "- **Vulnerable path**: %s\n", f.Card.VulnerablePath)
 	}
@@ -478,6 +480,7 @@ func writeCardBrief(outputRoot string, c Case, f incidentFacts) (string, error) 
 
 func buildCardFacts(protocol string, summary, reportJSON []byte, report, impact string, impactUSD, reproducedUSD float64) cardFacts {
 	vulnerablePath := cleanCardText(firstText(
+		jsonPathString(reportJSON, "attack_summary", "entry_function"),
 		jsonPathString(reportJSON, "attack_summary", "public_entrypoint_called_per_iteration"),
 		markdownField(report, "In short"),
 	))
@@ -510,6 +513,10 @@ func buildCardFacts(protocol string, summary, reportJSON []byte, report, impact 
 	}
 	evidence := cardEvidence(report, summary, reportJSON, victim, attackerGain)
 	subtitle := firstText(vulnerability, rootCause, fmt.Sprintf("%s exploit path under review", protocol))
+	confidence := cleanCardText(firstText(
+		jsonPathString(reportJSON, "vulnerability", "confidence"),
+		jsonPathString(reportJSON, "root_cause_confidence"),
+	))
 
 	return cardFacts{
 		Subtitle:           truncateText(subtitle, 180),
@@ -524,6 +531,7 @@ func buildCardFacts(protocol string, summary, reportJSON []byte, report, impact 
 		FlowSteps:          steps,
 		Mechanism:          mechanism,
 		KeyEvidence:        evidence,
+		Confidence:         truncateText(confidence, 40),
 	}
 }
 
@@ -711,7 +719,9 @@ func exploitResultText(path, rootCause, attackerGain string) string {
 	switch {
 	case strings.Contains(hay, "skim") && strings.Contains(hay, "sync"):
 		return "attacker cashes out"
-	case strings.Contains(hay, "withdraw"):
+	case strings.Contains(hay, "negative margin") || strings.Contains(hay, "changeposition") || strings.Contains(hay, "margin withdrawal"):
+		return "margin withdrawal releases value"
+	case hasExplicitWithdrawPath(hay):
 		return "withdrawal moves victim assets out"
 	case strings.Contains(hay, "buytru") && strings.Contains(hay, "selltru"):
 		return "sell path returns excessive value"
@@ -739,7 +749,14 @@ func cardFlowSteps(path, rootCause, attackerGain string) []string {
 			"3. sellTRU",
 			"4. excessive value payout",
 		}
-	case strings.Contains(hay, "withdraw"):
+	case strings.Contains(hay, "negative margin") || strings.Contains(hay, "changeposition") || strings.Contains(hay, "margin withdrawal"):
+		return []string{
+			"1. reach changePosition()",
+			"2. position/accounting changes",
+			"3. margin check accepts withdrawal",
+			"4. victim assets leave",
+		}
+	case hasExplicitWithdrawPath(hay):
 		return []string{
 			"1. call withdraw(victim)",
 			"2. helper spends allowance",
@@ -772,6 +789,13 @@ func cardFlowSteps(path, rootCause, attackerGain string) []string {
 	return steps
 }
 
+func hasExplicitWithdrawPath(hay string) bool {
+	return strings.Contains(hay, "withdraw(") ||
+		strings.Contains(hay, "withdraw(victim)") ||
+		strings.Contains(hay, "withdraw path") ||
+		strings.Contains(hay, "call withdraw")
+}
+
 func publicCallStep(part string) string {
 	part = cleanCardText(part)
 	lower := strings.ToLower(part)
@@ -793,6 +817,22 @@ func publicCallStep(part string) string {
 		}
 		return truncateText(label, 30)
 	}
+}
+
+func cardRCAStatus(c Case, f incidentFacts) string {
+	if c.RCAState == outcome.RCAStateComplete && !strings.EqualFold(f.Card.Confidence, "medium") && !strings.EqualFold(f.Card.Confidence, "low") {
+		return "complete"
+	}
+	if c.Outcome == outcome.OutcomePartial || c.PublishTier == outcome.PublishTierEconomicIncompleteRCA || (c.RCAState != "" && c.RCAState != outcome.RCAStateComplete) {
+		if f.Card.Confidence != "" {
+			return "partial (" + f.Card.Confidence + " confidence)"
+		}
+		return "partial"
+	}
+	if f.Card.Confidence != "" {
+		return f.Card.Confidence + " confidence"
+	}
+	return "complete"
 }
 
 func looksLikeRawCall(value string) bool {
