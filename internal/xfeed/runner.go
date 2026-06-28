@@ -1007,6 +1007,9 @@ func correctProtocolTypos(value string) string {
 		"Pnacakeswap", "Pancakeswap",
 		"pnacakeswap", "pancakeswap",
 		"PNACAKESWAP", "PANCAKESWAP",
+		"Mttoken", "MTToken",
+		"mttoken", "MTToken",
+		"MTTOKEN", "MTToken",
 	)
 	return replacer.Replace(value)
 }
@@ -1470,8 +1473,20 @@ func publicRootCause(protocol string, reportJSON []byte, c Case) string {
 		return fmt.Sprintf("A pricing/accounting mismatch in the %s market settlement path let payouts exceed the checked reserve state.", protocol)
 	}
 	title := jsonPathString(reportJSON, "vulnerability", "title")
-	if title != "" && !partial {
-		return sanitizeSentence(title)
+	if title != "" {
+		title = sanitizeSentence(title)
+		if partial {
+			confidence := strings.ToLower(firstText(
+				jsonPathString(reportJSON, "root_cause_confidence"),
+				jsonPathString(reportJSON, "vulnerability", "confidence"),
+			))
+			prefix := "RCA points to "
+			if confidence == "medium" {
+				prefix = "Medium-confidence RCA points to "
+			}
+			return trimSentence(prefix + lowerLeading(title) + ".")
+		}
+		return title
 	}
 	if partial {
 		return "Root cause remains under review."
@@ -1483,6 +1498,25 @@ func publicWhatHappened(protocol string, reportJSON, summary []byte) []string {
 	category := strings.ToLower(attackType(reportJSON))
 	proofVerified := strings.EqualFold(jsonPathString(summary, "poc", "status"), "verified") ||
 		strings.EqualFold(jsonPathString(summary, "economic_reproduction", "status"), "pass")
+	entryFunction := cleanPublicEntryFunction(jsonPathString(reportJSON, "attack_summary", "entry_function"))
+	vulnerabilityText := strings.ToLower(strings.Join([]string{
+		jsonPathString(reportJSON, "vulnerability", "title"),
+		jsonPathString(reportJSON, "vulnerability", "root_cause"),
+		entryFunction,
+	}, " "))
+	if entryFunction != "" && (strings.Contains(vulnerabilityText, "negative margin") ||
+		strings.Contains(vulnerabilityText, "changeposition") ||
+		strings.Contains(vulnerabilityText, "margin withdrawal")) {
+		line3 := "The observed value movement matches the RCA direction, while source-level guard details remain limited."
+		if proofVerified {
+			line3 = "The economic PoC reproduced the observed value movement at incident scale."
+		}
+		return []string{
+			fmt.Sprintf("The attacker reached %s on the vulnerable %s proxy path.", entryFunction, protocol),
+			"The RCA points to an under-collateralized negative margin withdrawal being accepted after attacker-controlled position/accounting changes.",
+			line3,
+		}
+	}
 	if strings.Contains(category, "pricing") || strings.Contains(category, "accounting") || strings.Contains(category, "settlement") {
 		asset := settlementAssetLabel(reportJSON, summary)
 		payouts := "payouts"
@@ -1508,6 +1542,41 @@ func publicWhatHappened(protocol string, reportJSON, summary []byte) []string {
 		"The protocol assumption under review is that validation and accounting checks would keep the state bounded.",
 		line3,
 	}
+}
+
+func cleanPublicEntryFunction(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if idx := strings.Index(value, "("); idx > 0 {
+		value = value[:idx]
+	}
+	value = regexp.MustCompile(`[^A-Za-z0-9_.$-]+`).ReplaceAllString(value, "")
+	if value == "" {
+		return ""
+	}
+	return value + "()"
+}
+
+func lowerLeading(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if len(value) < 2 || value[:2] == strings.ToUpper(value[:2]) {
+		return value
+	}
+	return strings.ToLower(value[:1]) + value[1:]
+}
+
+func trimSentence(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.TrimRight(value, ".") + "."
+	if len(value) > 240 {
+		value = strings.TrimRight(value[:237], " .,;:") + "..."
+	}
+	return value
 }
 
 func publicAnalysis(reportJSON, summary []byte) string {

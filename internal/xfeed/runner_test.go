@@ -311,6 +311,23 @@ func TestRunnerCardBriefUsesRCAVulnerableFunctionForMarginWithdrawal(t *testing.
 			t.Fatalf("card brief contains stale/generic text %q:\n%s", bad, brief)
 		}
 	}
+	for _, want := range []string{
+		"Medium-confidence RCA points to changePosition allowed an under-collateralized negative margin withdrawal",
+		"The attacker reached changePosition() on the vulnerable MTToken proxy path.",
+		"The RCA points to an under-collateralized negative margin withdrawal being accepted after attacker-controlled position/accounting changes.",
+	} {
+		if !strings.Contains(res.MainPost, want) {
+			t.Fatalf("main post missing %q:\n%s", want, res.MainPost)
+		}
+	}
+	for _, bad := range []string{
+		"Root cause remains under review.",
+		"validation and accounting checks would keep the state bounded",
+	} {
+		if strings.Contains(res.MainPost, bad) {
+			t.Fatalf("main post contains stale/generic text %q:\n%s", bad, res.MainPost)
+		}
+	}
 }
 
 func writeTruebitArtifacts(t *testing.T) string {
