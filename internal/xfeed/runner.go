@@ -157,6 +157,14 @@ func buildFacts(c Case) incidentFacts {
 	if len(reportJSON) == 0 {
 		reportJSON = readJSON(filepath.Join(c.OutputRoot, "artifacts", "rca", "report.json"))
 	}
+	resultJSON := readJSON(filepath.Join(c.OutputRoot, "artifacts", "agent_poc", "result.json"))
+	if len(resultJSON) == 0 {
+		resultJSON = readJSON(filepath.Join(c.OutputRoot, "result.json"))
+	}
+	txMetadataJSON := readJSON(filepath.Join(c.OutputRoot, "inputs", "tx_metadata.json"))
+	if len(txMetadataJSON) == 0 {
+		txMetadataJSON = readJSON(filepath.Join(c.OutputRoot, "artifacts", "rca", "input", "tx_metadata.json"))
+	}
 	report := firstText(
 		readFile(filepath.Join(c.OutputRoot, "report_bundle", "report", "REPORT.md")),
 		readFile(filepath.Join(c.OutputRoot, "report_bundle", "report", "Report.md")),
@@ -184,7 +192,7 @@ func buildFacts(c Case) incidentFacts {
 	impact := impactText(summary, reportJSON)
 	impactUSD := impactUSDValue(summary)
 	reproducedUSD := reproducedUSDValue(summary)
-	occurred := occurredText(summary, reportJSON, report, poc)
+	occurred := occurredText(summary, reportJSON, resultJSON, txMetadataJSON, report, poc)
 	rootCause := publicRootCause(protocol, reportJSON, c)
 	whatHappened := publicWhatHappened(protocol, reportJSON, summary)
 	analysis := publicAnalysis(reportJSON, summary)
@@ -576,10 +584,10 @@ func contractLabel(m map[string]any) string {
 	address := strings.TrimSpace(fmt.Sprint(m["address"]))
 	role := cleanCardText(fmt.Sprint(m["role"]))
 	short := shortAddress(address)
-	nameKnown := name != "" && !strings.EqualFold(name, "<nil>") && !strings.EqualFold(name, "unknown")
+	nameKnown := !isUnknownContractName(name)
 	if !nameKnown {
-		if roleLabel := contractRoleLabel(role); roleLabel != "" && short != "" {
-			return roleLabel + " " + short
+		if roleLabel := contractRoleLabel(strings.TrimSpace(role + " " + name)); roleLabel != "" && short != "" {
+			return fmt.Sprintf("%s (%s)", roleLabel, short)
 		}
 		return short
 	}
@@ -593,6 +601,15 @@ func contractLabel(m map[string]any) string {
 	default:
 		return short
 	}
+}
+
+func isUnknownContractName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return lower == "" ||
+		lower == "<nil>" ||
+		lower == "unknown" ||
+		lower == "none" ||
+		strings.HasPrefix(lower, "unknown ")
 }
 
 func contractRoleLabel(role string) string {
@@ -1371,7 +1388,7 @@ func truncateText(value string, max int) string {
 	return strings.TrimSpace(value[:max-3]) + "..."
 }
 
-func occurredText(summary, reportJSON []byte, report, poc string) string {
+func occurredText(summary, reportJSON, resultJSON, txMetadataJSON []byte, report, poc string) string {
 	for _, raw := range []string{
 		markdownField(report, "Occurred"),
 		markdownField(report, "Incident time"),
@@ -1386,6 +1403,14 @@ func occurredText(summary, reportJSON []byte, report, poc string) string {
 		}
 	}
 	for _, raw := range []string{
+		jsonPathString(resultJSON, "incident", "timestamp"),
+		jsonPathString(resultJSON, "incident", "occurred_at"),
+		jsonPathString(resultJSON, "tx_time"),
+		jsonPathString(resultJSON, "occurred"),
+		jsonPathString(resultJSON, "incident_time"),
+		jsonPathString(resultJSON, "block_timestamp"),
+		jsonPathString(txMetadataJSON, "timestamp"),
+		jsonPathString(txMetadataJSON, "block_timestamp"),
 		jsonPathString(summary, "incident", "timestamp"),
 		jsonPathString(summary, "incident", "occurred_at"),
 		jsonPathString(summary, "economic_reproduction", "pricing", "tx_time"),
@@ -1399,6 +1424,14 @@ func occurredText(summary, reportJSON []byte, report, poc string) string {
 		}
 	}
 	for _, ts := range []float64{
+		jsonPathNumber(resultJSON, "tx_timestamp"),
+		jsonPathNumber(resultJSON, "economic_reproduction", "pricing", "tx_timestamp"),
+		jsonPathNumber(resultJSON, "block_timestamp"),
+		jsonPathNumber(resultJSON, "incident", "timestamp"),
+		jsonPathNumber(resultJSON, "incident", "occurred_at"),
+		jsonPathNumber(txMetadataJSON, "timestamp"),
+		jsonPathNumber(txMetadataJSON, "tx_timestamp"),
+		jsonPathNumber(txMetadataJSON, "block_timestamp"),
 		jsonPathNumber(summary, "economic_reproduction", "pricing", "tx_timestamp"),
 		jsonPathNumber(summary, "economic_reproduction", "pricing", "block_timestamp"),
 		jsonPathNumber(summary, "incident", "timestamp"),

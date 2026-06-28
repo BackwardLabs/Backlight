@@ -113,7 +113,7 @@ func TestOccurredTextUsesReportIncidentBasisBeforeDetectedAt(t *testing.T) {
 		"- **Detected at**: 2026-06-25T13:07:18Z",
 		"- **Funds valued at**: 2026-01-10T08:30:35Z (price as of block N-1, pre-hack)",
 	}, "\n")
-	got := occurredText(summary, nil, report, "")
+	got := occurredText(summary, nil, nil, nil, report, "")
 	if got != "2026-01-10 08:30 UTC" {
 		t.Fatalf("occurredText = %q, want report incident basis time", got)
 	}
@@ -121,8 +121,17 @@ func TestOccurredTextUsesReportIncidentBasisBeforeDetectedAt(t *testing.T) {
 
 func TestOccurredTextDoesNotUseDetectedAtAsIncidentTime(t *testing.T) {
 	report := "- **Detected at**: 2026-06-25T13:07:18Z"
-	if got := occurredText(nil, nil, report, ""); got != "" {
+	if got := occurredText(nil, nil, nil, nil, report, ""); got != "" {
 		t.Fatalf("occurredText used detection timestamp as incident time: %q", got)
+	}
+}
+
+func TestOccurredTextPrefersAgentResultTimestampBeforeSummaryPricing(t *testing.T) {
+	summary := []byte(`{"economic_reproduction":{"pricing":{"tx_timestamp":1893456000}}}`)
+	result := []byte(`{"tx_timestamp":1768033835}`)
+	got := occurredText(summary, nil, result, nil, "", "")
+	if got != "2026-01-10 08:30 UTC" {
+		t.Fatalf("occurredText = %q, want agent result timestamp", got)
 	}
 }
 
@@ -293,6 +302,7 @@ func TestRunnerCardBriefUsesRCAVulnerableFunctionForMarginWithdrawal(t *testing.
 	for _, want := range []string{
 		"- **RCA status**: partial (medium confidence)",
 		"- **Vulnerable path**: changePosition(int256,int256,int256)",
+		"- **Vulnerable contract**: vulnerable proxy (0xf7ca...80bc)",
 		"- **Flow step 1**: 1. reach changePosition()",
 		"- **Flow step 2**: 2. position/accounting changes",
 		"- **Flow step 3**: 3. margin check accepts withdrawal",
@@ -305,6 +315,7 @@ func TestRunnerCardBriefUsesRCAVulnerableFunctionForMarginWithdrawal(t *testing.
 	for _, bad := range []string{
 		"call withdraw(victim)",
 		"helper spends allowance",
+		"unknown proxy",
 		"- **Confidence**:",
 	} {
 		if strings.Contains(brief, bad) {
