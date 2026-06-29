@@ -6,11 +6,13 @@
 // installs mistag guards — shared-handle collisions are flagged `review`, and a
 // small curated landmine list (personal/parent accounts) is `suppress`ed.
 //
-// Usage:
+// Usage (from the repo root):
 //
-//	HELIOS_DB_PATH=/path/var/backlight.db \
-//	SURF_EXPORT_CSV=/path/surf-full-x-account-db.csv \
-//	go run ./cmd/seed-mentions
+//	HELIOS_DB_PATH=/path/var/backlight.db go run ./cmd/seed-mentions
+//
+// SURF_EXPORT_CSV overrides the seed file (default: the committed
+// seeds/surf-full-x-account-db.csv), so an operator only needs to point at the
+// service's DB.
 package main
 
 import (
@@ -40,6 +42,11 @@ type config struct {
 	CSVPath string
 }
 
+// defaultSurfCSV is the committed seed shipped in the repo, so seeding needs no
+// separate data hand-off — only HELIOS_DB_PATH. Resolved relative to the working
+// directory (run from the repo root).
+const defaultSurfCSV = "seeds/surf-full-x-account-db.csv"
+
 func loadConfig() (*config, error) {
 	cfg := &config{
 		DBPath:  os.Getenv("HELIOS_DB_PATH"),
@@ -49,7 +56,7 @@ func loadConfig() (*config, error) {
 		return nil, fmt.Errorf("HELIOS_DB_PATH is required")
 	}
 	if cfg.CSVPath == "" {
-		return nil, fmt.Errorf("SURF_EXPORT_CSV is required")
+		cfg.CSVPath = defaultSurfCSV
 	}
 	return cfg, nil
 }
