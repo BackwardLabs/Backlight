@@ -73,6 +73,34 @@ func TestAggregateByCanonicalPreservesAliases(t *testing.T) {
 	}
 }
 
+func TestResolvedAsMismatch(t *testing.T) {
+	// Harmful: a genuinely different protocol -> return the resolved name.
+	harmful := []struct{ name, notes, want string }{
+		{"IPOR Protocol", "defi_tvl:175;defi_name_resolved_as:IQ Protocol", "IQ Protocol"},
+		{"Raft", "defi_name_resolved_as:Metakraft", "Metakraft"},
+		{"Pika Protocol", "defi_name_resolved_as:Pine Protocol", "Pine Protocol"},
+	}
+	for _, c := range harmful {
+		if got := resolvedAsMismatch(c.name, c.notes); got != c.want {
+			t.Errorf("resolvedAsMismatch(%q) = %q, want %q (harmful)", c.name, got, c.want)
+		}
+	}
+	// Harmless variants of the same org -> "".
+	harmless := []struct{ name, notes string }{
+		{"Curve", "defi_name_resolved_as:Curve DAO"},
+		{"TrueUSD", "defi_name_resolved_as:True USD"},
+		{"Marinade", "defi_name_resolved_as:Marinade Staked SOL"},
+		{"Kelp DAO", "defi_name_resolved_as:KelpDAO Restaked ETH"},
+		{"Anything", "no resolution note here"},
+		{"Self", "defi_name_resolved_as:Self"},
+	}
+	for _, c := range harmless {
+		if got := resolvedAsMismatch(c.name, c.notes); got != "" {
+			t.Errorf("resolvedAsMismatch(%q) = %q, want \"\" (harmless)", c.name, got)
+		}
+	}
+}
+
 func TestMistagGuards(t *testing.T) {
 	// Two DISTINCT canonical entities sharing one handle -> review + shared override.
 	// One curated landmine (jmilei) -> personal_account override.

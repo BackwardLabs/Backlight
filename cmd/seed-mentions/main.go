@@ -71,7 +71,7 @@ func main() {
 	}
 	defer st.Close()
 
-	rawRows, err := parseSurfCSV(cfg.CSVPath)
+	rawRows, mismatchByCanon, err := parseSurfCSV(cfg.CSVPath)
 	if err != nil {
 		logger.Error("parse surf csv failed", "err", err, "csv", cfg.CSVPath)
 		os.Exit(1)
@@ -88,15 +88,29 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Mistag guards.
+	// Mistag guards: shared-handle collisions + Surf name-resolution mismatches
+	// -> review; curated landmines (personal/parent accounts) -> suppress.
 	reviewIDs, overrides := mistagGuards(ents)
+	mismatchCanons := make([]string, 0, len(mismatchByCanon))
+	for cid := range mismatchByCanon {
+		mismatchCanons = append(mismatchCanons, cid)
+	}
+	sort.Strings(mismatchCanons)
+	for _, cid := range mismatchCanons {
+		reviewIDs = append(reviewIDs, cid)
+		overrides = append(overrides, store.MentionOverride{
+			CanonicalID: cid, Reason: "name_resolved_mismatch", Action: "suppress",
+			Note: "surf resolved name to: " + mismatchByCanon[cid],
+		})
+	}
 	if err := st.SetMentionPolicy(ctx, reviewIDs, "review"); err != nil {
-		logger.Error("flag shared-handle review failed", "err", err)
+		logger.Error("flag review failed", "err", err)
 		os.Exit(1)
 	}
-	suppressIDs := make([]string, 0, len(overrides))
+	curatedReasons := map[string]bool{"personal_account": true, "parent_account": true}
+	suppressIDs := make([]string, 0)
 	for _, o := range overrides {
-		if o.Action == "suppress" && o.Reason != "shared_handle" {
+		if curatedReasons[o.Reason] {
 			suppressIDs = append(suppressIDs, o.CanonicalID)
 		}
 	}
@@ -108,6 +122,7 @@ func main() {
 		logger.Error("seed overrides failed", "err", err)
 		os.Exit(1)
 	}
+	logger.Info("name-resolution mismatches flagged review", "count", len(mismatchCanons))
 
 	stats, err := st.MentionStoreStats(ctx)
 	if err != nil {
@@ -131,11 +146,14 @@ func main() {
 	)
 }
 
-// parseSurfCSV reads the Surf export into MentionEntity rows.
-func parseSurfCSV(path string) ([]store.MentionEntity, error) {
+// parseSurfCSV reads the Surf export into MentionEntity rows. It also returns a
+// map of canonical_id -> resolved-to name for rows where Surf fuzzy-resolved the
+// entity_name to a DIFFERENT protocol (e.g. "IPOR Protocol" -> IQ Protocol's
+// @QHUB_); those are mistag landmines to flag `review`.
+func parseSurfCSV(path string) ([]store.MentionEntity, map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open csv: %w", err)
+		return nil, nil, fmt.Errorf("open csv: %w", err)
 	}
 	defer f.Close()
 
@@ -144,7 +162,7 @@ func parseSurfCSV(path string) ([]store.MentionEntity, error) {
 
 	header, err := r.Read()
 	if err != nil {
-		return nil, fmt.Errorf("read header: %w", err)
+		return nil, nil, fmt.Errorf("read header: %w", err)
 	}
 	if len(header) > 0 {
 		header[0] = strings.TrimPrefix(header[0], "\ufeff") // strip UTF-8 BOM
@@ -156,18 +174,19 @@ func parseSurfCSV(path string) ([]store.MentionEntity, error) {
 	required := []string{"entity_name", "x_handle", "x_id"}
 	for _, c := range required {
 		if _, ok := col[c]; !ok {
-			return nil, fmt.Errorf("missing required column %q in header", c)
+			return nil, nil, fmt.Errorf("missing required column %q in header", c)
 		}
 	}
 
 	var ents []store.MentionEntity
+	mismatch := map[string]string{}
 	for {
 		rec, err := r.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read row: %w", err)
+			return nil, nil, fmt.Errorf("read row: %w", err)
 		}
 		get := func(name string) string {
 			idx, ok := col[name]
@@ -199,9 +218,14 @@ func parseSurfCSV(path string) ([]store.MentionEntity, error) {
 			Source:       "surf_seed",
 			PulledAt:     get("data_as_of_utc"),
 		}
+		if ra := resolvedAsMismatch(name, get("notes")); ra != "" {
+			if _, ok := mismatch[e.CanonicalID]; !ok {
+				mismatch[e.CanonicalID] = ra
+			}
+		}
 		ents = append(ents, e)
 	}
-	return ents, nil
+	return ents, mismatch, nil
 }
 
 // aggregateByCanonical collapses raw export rows that share a canonical_id into
@@ -387,4 +411,64 @@ func canonicalID(projectID, fundID, slug, name string) string {
 		base = name
 	}
 	return "seed:" + strings.ToLower(strings.ReplaceAll(strings.TrimSpace(base), " ", "-"))
+}
+
+var seedGenericSuffix = map[string]bool{"protocol": true, "finance": true, "network": true}
+
+// resolvedAsMismatch detects Surf's `defi_name_resolved_as:X` provenance and
+// returns X when it is a DIFFERENT protocol than entity_name (a mistag landmine
+// like "IPOR Protocol" -> IQ Protocol). It returns "" for harmless variants of
+// the same org (Curve -> Curve DAO, TrueUSD -> True USD), which share a brand
+// token or are substrings of each other.
+func resolvedAsMismatch(name, notes string) string {
+	const key = "defi_name_resolved_as:"
+	i := strings.Index(notes, key)
+	if i < 0 {
+		return ""
+	}
+	ra := notes[i+len(key):]
+	if j := strings.IndexByte(ra, ';'); j >= 0 {
+		ra = ra[:j]
+	}
+	ra = strings.TrimSpace(ra)
+	if ra == "" {
+		return ""
+	}
+	na, nb := nrm(name), nrm(ra)
+	da, db := strings.ReplaceAll(na, " ", ""), strings.ReplaceAll(nb, " ", "")
+	if da == "" || db == "" {
+		return ""
+	}
+	lo, hi := da, db
+	if len(hi) < len(lo) {
+		lo, hi = hi, lo
+	}
+	if strings.HasPrefix(hi, lo) {
+		// same brand prefix: Curve / Curve DAO, TrueUSD / True USD, Kelp DAO /
+		// KelpDAO Restaked ETH. (Prefix only — an internal substring like "raft"
+		// in "Metakraft" is coincidental, not a variant.)
+		return ""
+	}
+	tokens := map[string]bool{}
+	for _, t := range strings.Fields(stripGen(na)) {
+		tokens[t] = true
+	}
+	for _, t := range strings.Fields(stripGen(nb)) {
+		if tokens[t] {
+			return "" // shares a brand token -> same org
+		}
+	}
+	return ra
+}
+
+func nrm(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(s))), " ")
+}
+
+func stripGen(s string) string {
+	parts := strings.Fields(s)
+	for len(parts) > 1 && seedGenericSuffix[parts[len(parts)-1]] {
+		parts = parts[:len(parts)-1]
+	}
+	return strings.Join(parts, " ")
 }

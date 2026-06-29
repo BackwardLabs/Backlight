@@ -193,6 +193,38 @@ func (s *Store) SetMentionPolicy(ctx context.Context, canonicalIDs []string, pol
 	})
 }
 
+// AllMentionEntities loads every entity (with aliases parsed) for building an
+// in-memory resolution index at compose time. The store is read-mostly, so this
+// is built once and reused.
+func (s *Store) AllMentionEntities(ctx context.Context) ([]MentionEntity, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT canonical_id,
+		       COALESCE(x_id, ''), COALESCE(x_handle, ''), COALESCE(handle_norm, ''),
+		       entity_name, COALESCE(aliases, '[]'), COALESCE(entity_type, ''),
+		       COALESCE(slug, ''), COALESCE(token_symbol, ''), x_followers,
+		       mention_policy, COALESCE(source, ''), status
+		FROM protocol_mention_store`)
+	if err != nil {
+		return nil, fmt.Errorf("query mention entities: %w", err)
+	}
+	defer rows.Close()
+	var out []MentionEntity
+	for rows.Next() {
+		var e MentionEntity
+		var aliasesRaw string
+		if err := rows.Scan(&e.CanonicalID, &e.XID, &e.XHandle, &e.HandleNorm,
+			&e.EntityName, &aliasesRaw, &e.EntityType, &e.Slug, &e.TokenSymbol,
+			&e.XFollowers, &e.MentionPolicy, &e.Source, &e.Status); err != nil {
+			return nil, fmt.Errorf("scan mention entity: %w", err)
+		}
+		if aliasesRaw != "" && aliasesRaw != "[]" {
+			_ = json.Unmarshal([]byte(aliasesRaw), &e.Aliases)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // MentionStoreStats returns coverage counts for verifying a seed run.
 func (s *Store) MentionStoreStats(ctx context.Context) (MentionStoreStats, error) {
 	var st MentionStoreStats
