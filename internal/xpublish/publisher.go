@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+
+	"github.com/UPside-Lumos-V2/helios/internal/mention"
 )
 
 const (
@@ -41,6 +43,9 @@ type Config struct {
 	APIBase          string
 	Username         string
 	DryRun           bool
+	// Mentions resolves the victim protocol's official @handle. Nil = disabled
+	// (plain protocol name).
+	Mentions *mention.Index
 }
 
 type Publisher struct {
@@ -145,7 +150,7 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if !p.Configured() {
 		return nil, errors.New("x publisher is not enabled")
 	}
-	text, err := BuildPostWithTemplate(c, p.Config.TemplatePath)
+	text, err := buildPost(c, p.Config.TemplatePath, p.Config.Mentions)
 	if err != nil {
 		return nil, err
 	}
@@ -522,6 +527,10 @@ func BuildPost(c Case) (string, error) {
 }
 
 func BuildPostWithTemplate(c Case, templatePath string) (string, error) {
+	return buildPost(c, templatePath, nil)
+}
+
+func buildPost(c Case, templatePath string, mentions *mention.Index) (string, error) {
 	if strings.TrimSpace(c.OutputRoot) == "" {
 		return "", errors.New("output_root is required for x publish")
 	}
@@ -551,6 +560,7 @@ func BuildPostWithTemplate(c Case, templatePath string) (string, error) {
 	allText := strings.Join([]string{report, rca, attackFlow, string(summary), string(reportJSON), string(assetDeltas)}, "\n")
 
 	protocol := firstText(jsonString(summary, "protocol_name"), jsonString(summary, "protocol"), protocolFromSlug(c.IncidentSlug), protocolFromSlug(filepath.Base(c.OutputRoot)), field(report, "Protocol"), jsonString(reportJSON, "protocol_name", "protocol"), titleFromSlug(c.IncidentSlug), titleFromSlug(filepath.Base(c.OutputRoot)), "unknown")
+	protocol = mention.FormatTag(mentions, protocol)
 	chain := firstText(c.Chain, jsonString(summary, "chain"), jsonString(reportJSON, "chain"), field(report, "Chain"), "unknown")
 	tx := firstText(c.TxHash, txHash(allText), "unknown")
 	rootCause := rootCauseLine(reportJSON, rca, report)

@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/UPside-Lumos-V2/helios/internal/mention"
+	"github.com/UPside-Lumos-V2/helios/internal/store"
 )
 
 func TestBuildPostUsesArtifactsAndURLs(t *testing.T) {
@@ -177,6 +180,39 @@ func TestBuildPostUsesTemplatePath(t *testing.T) {
 	}
 	if text != "ExampleFi on ethereum via The attacker funded the attack contract" {
 		t.Fatalf("custom template text = %q", text)
+	}
+}
+
+func TestBuildPostTagsVictimMention(t *testing.T) {
+	root := writeArtifacts(t)
+	templatePath := filepath.Join(t.TempDir(), "x-template.md")
+	if err := os.WriteFile(templatePath, []byte("{{ .Protocol }} on {{ .Chain }}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	idx := mention.BuildIndex([]store.MentionEntity{
+		{CanonicalID: "examplefi", EntityName: "ExampleFi", Aliases: []string{"ExampleFi"}, XHandle: "examplefi", MentionPolicy: "allow", Status: "active"},
+	})
+	text, err := buildPost(Case{
+		Chain:      "ethereum",
+		TxHash:     "0x" + strings.Repeat("1", 64),
+		OutputRoot: root,
+	}, templatePath, idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "ExampleFi (@examplefi) on ethereum" {
+		t.Fatalf("tagged template text = %q", text)
+	}
+	// A suppressed protocol stays plain text.
+	idxSuppress := mention.BuildIndex([]store.MentionEntity{
+		{CanonicalID: "examplefi", EntityName: "ExampleFi", Aliases: []string{"ExampleFi"}, XHandle: "examplefi", MentionPolicy: "suppress", Status: "active"},
+	})
+	text, err = buildPost(Case{Chain: "ethereum", TxHash: "0x" + strings.Repeat("1", 64), OutputRoot: root}, templatePath, idxSuppress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "ExampleFi on ethereum" {
+		t.Fatalf("suppressed should stay plain, got %q", text)
 	}
 }
 

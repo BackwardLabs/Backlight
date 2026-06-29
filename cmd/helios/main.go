@@ -16,6 +16,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/handoff"
 	"github.com/UPside-Lumos-V2/helios/internal/incidentresolver"
 	"github.com/UPside-Lumos-V2/helios/internal/lumoskit"
+	"github.com/UPside-Lumos-V2/helios/internal/mention"
 	"github.com/UPside-Lumos-V2/helios/internal/metrics"
 	"github.com/UPside-Lumos-V2/helios/internal/notify"
 	"github.com/UPside-Lumos-V2/helios/internal/prelumos"
@@ -98,6 +99,18 @@ func main() {
 		"repo", cfg.GitHubOwner+"/"+cfg.GitHubRepo,
 		"branch", cfg.GitHubBranch,
 	)
+	var mentionIndex *mention.Index
+	if cfg.VictimMentionEnabled {
+		entities, err := st.AllMentionEntities(ctx)
+		if err != nil {
+			logger.Error("load victim mention store failed", "err", err)
+			os.Exit(2)
+		}
+		mentionIndex = mention.BuildIndex(entities)
+		logger.Info("victim mention enabled", "entities", len(entities))
+	} else {
+		logger.Info("victim mention disabled")
+	}
 	xPublisher := xpublish.New(xpublish.Config{
 		Enabled:          cfg.XPublishEnabled,
 		ClientID:         cfg.XClientID,
@@ -108,6 +121,7 @@ func main() {
 		APIBase:          cfg.XAPIBase,
 		Username:         cfg.XUsername,
 		DryRun:           cfg.XDryRun,
+		Mentions:         mentionIndex,
 	})
 	xPublisher.Client = httpClient
 	logger.Info("x publisher configured",
@@ -122,6 +136,7 @@ func main() {
 		CardEnabled:       cfg.XFeedCardEnabled,
 		CardPythonBin:     cfg.XFeedCardPythonBin,
 		CardTimeout:       time.Duration(cfg.XFeedCardTimeoutSeconds) * time.Second,
+		Mentions:          mentionIndex,
 	}
 	logger.Info("x feed runner configured",
 		"enabled", xFeedRunner.Configured(),

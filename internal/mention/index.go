@@ -32,6 +32,21 @@ func (d Decision) Mention() string {
 	return ""
 }
 
+// FormatTag renders the protocol display string for a post: "Name (@handle)"
+// when the raw name resolves to a taggable official account, otherwise the raw
+// name unchanged. A nil index (feature disabled) always returns the raw name.
+// This is the single source of the mention render format so the xfeed and
+// xpublish renderers cannot drift apart.
+func FormatTag(ix *Index, rawName string) string {
+	if ix == nil {
+		return rawName
+	}
+	if m := ix.Resolve(rawName).Mention(); m != "" {
+		return rawName + " (" + m + ")"
+	}
+	return rawName
+}
+
 // Index is an immutable lookup built from the store's entities.
 type Index struct {
 	byCanon  map[string]store.MentionEntity

@@ -92,6 +92,22 @@ func TestResolveReviewAndNoHandleAndMiss(t *testing.T) {
 	}
 }
 
+func TestFormatTag(t *testing.T) {
+	ix := testIndex()
+	if got := FormatTag(ix, "Curve"); got != "Curve (@CurveFinance)" {
+		t.Errorf("FormatTag tagged = %q", got)
+	}
+	if got := FormatTag(ix, "Binance"); got != "Binance" {
+		t.Errorf("FormatTag suppressed should be plain, got %q", got)
+	}
+	if got := FormatTag(ix, "Totally Unknown XYZ"); got != "Totally Unknown XYZ" {
+		t.Errorf("FormatTag miss should be plain, got %q", got)
+	}
+	if got := FormatTag(nil, "Curve"); got != "Curve" {
+		t.Errorf("FormatTag nil index (disabled) should be plain, got %q", got)
+	}
+}
+
 func TestResolveTokenFallback(t *testing.T) {
 	ix := testIndex()
 	d := ix.Resolve("WOW")
