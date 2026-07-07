@@ -290,6 +290,30 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			wantGitHub:   true,
 		},
 		{
+			name:         "economic poc with no patchable root cause evidence is proof boundary not rerun",
+			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"partial","analysis_status":"partial","root_cause_mode":"unknown","proof_boundary_kind":"no_patchable_root_cause_evidence","blocker_reason":"PoC profit is reproduced, but supplied trace/source/RPC artifacts do not identify a patchable contract/function/branch failed invariant."}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateNoPatchableEvidence,
+			wantTier:     PublishTierEconomicIncompleteRCA,
+			wantDecision: RerunDecisionNoRerun,
+			wantReason:   "no_patchable_root_cause_evidence",
+			wantGitHub:   true,
+		},
+		{
+			name:         "economic poc with proof boundary phrase but no explicit proof kind",
+			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"partial","analysis_status":"partial","root_cause_mode":"unknown","blocker_reason":"Closed-world artifacts prove a profitable path but do not prove a source/pseudocode-backed invariant-breaking branch."}}`,
+			wantOutcome:  OutcomePartial,
+			wantStage:    AnalysisStageRCABlocked,
+			wantPoC:      PoCStateEconomic,
+			wantRCA:      RCAStateNoPatchableEvidence,
+			wantTier:     PublishTierEconomicIncompleteRCA,
+			wantDecision: RerunDecisionNoRerun,
+			wantReason:   "Closed-world artifacts prove a profitable path but do not prove a source/pseudocode-backed invariant-breaking branch.",
+			wantGitHub:   true,
+		},
+		{
 			name:         "economic poc with scope limited rca can publish github and x",
 			summary:      `{"status":"partial","poc":{"status":"verified","execution_state":"economic_poc"},"rca":{"status":"partial","blocker_code":"scope_limited"}}`,
 			wantOutcome:  OutcomePartial,
@@ -472,6 +496,49 @@ func TestTerminalEventPayloadIncludesPoCAndRCADiagnostics(t *testing.T) {
 	failure := got["failure"].(map[string]any)
 	if failure["kind"] != "missing_profit_or_economic_oracle" {
 		t.Fatalf("unexpected failure payload: %#v", failure)
+	}
+}
+
+func TestTerminalEventPayloadIncludesRCAProofBoundary(t *testing.T) {
+	in := Input{ExitCode: 0, SummaryBytes: []byte(`{
+		"status":"partial",
+		"poc":{
+			"status":"verified",
+			"execution_state":"economic_poc"
+		},
+		"rca":{
+			"status":"partial",
+			"analysis_status":"partial",
+			"root_cause_mode":"unknown",
+			"proof_boundary_kind":"no_patchable_root_cause_evidence",
+			"blocker_reason":"PoC profit is reproduced, but supplied trace/source/RPC artifacts do not identify a patchable contract/function/branch failed invariant."
+		}
+	}`)}
+
+	mapped := Map(in)
+	payload := TerminalEventPayload(mapped, in)
+
+	if payload["outcome"] != OutcomePartial {
+		t.Fatalf("outcome = %v, want %s", payload["outcome"], OutcomePartial)
+	}
+	if payload["poc_state"] != PoCStateEconomic {
+		t.Fatalf("poc_state = %v, want %s", payload["poc_state"], PoCStateEconomic)
+	}
+	if payload["rca_state"] != RCAStateNoPatchableEvidence {
+		t.Fatalf("rca_state = %v, want %s", payload["rca_state"], RCAStateNoPatchableEvidence)
+	}
+	if payload["publish_tier"] != PublishTierEconomicIncompleteRCA || payload["github_publish_eligible"] != true || payload["x_publish_eligible"] != false {
+		t.Fatalf("publish payload = tier %v github %v x %v", payload["publish_tier"], payload["github_publish_eligible"], payload["x_publish_eligible"])
+	}
+	if payload["rerun_decision"] != RerunDecisionNoRerun {
+		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], RerunDecisionNoRerun)
+	}
+	if payload["rerun_reason"] != "no_patchable_root_cause_evidence" {
+		t.Fatalf("rerun_reason = %v", payload["rerun_reason"])
+	}
+	rca := payload["rca"].(map[string]string)
+	if rca["state"] != RCAStateNoPatchableEvidence || rca["root_cause_mode"] != "unknown" || rca["proof_boundary_kind"] != "no_patchable_root_cause_evidence" {
+		t.Fatalf("unexpected rca payload: %#v", rca)
 	}
 }
 

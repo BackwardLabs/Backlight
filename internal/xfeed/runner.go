@@ -203,6 +203,14 @@ func buildFacts(c Case) incidentFacts {
 	githubURL := firstText(c.GitHubURL, reportURL)
 
 	blockers := publishBlockers(reportURL, githubURL)
+	if !outcome.ShouldPublishX(outcome.Result{
+		Outcome:     c.Outcome,
+		PublishTier: c.PublishTier,
+		PoCState:    c.PoCState,
+		RCAState:    c.RCAState,
+	}) {
+		blockers = append(blockers, "x_publish_ineligible")
+	}
 	return incidentFacts{
 		Protocol:       protocol,
 		Chain:          chain,

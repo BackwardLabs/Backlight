@@ -155,6 +155,31 @@ func TestRunnerBlocksWhenPublicReportURLMissing(t *testing.T) {
 	}
 }
 
+func TestRunnerBlocksProofBoundaryRCAFromXPublish(t *testing.T) {
+	root := writeTruebitArtifacts(t)
+	r := &Runner{Enabled: true, SkillDir: writeSkillDir(t)}
+	res, err := r.Run(context.Background(), Case{
+		CaseID:       "004_truebit",
+		Chain:        "ethereum",
+		TxHash:       "0xcd4755645595094a8ab984d0db7e3b4aabde72a5c87c4f176a030629c47fb014",
+		OutputRoot:   root,
+		IncidentSlug: "004_truebit",
+		Outcome:      outcome.OutcomePartial,
+		PublishTier:  outcome.PublishTierEconomicIncompleteRCA,
+		PoCState:     outcome.PoCStateEconomic,
+		RCAState:     outcome.RCAStateNoPatchableEvidence,
+		ReportURL:    "https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/truebit/README.md",
+		PoCURL:       "https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/truebit/truebit.t.sol",
+		GitHubURL:    "https://github.com/BackwardLabs/Q1-2026/tree/main/test/2026-01/truebit",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ReadyToPublish || !containsString(res.Blockers, "x_publish_ineligible") {
+		t.Fatalf("proof-boundary RCA should block x publish: %+v", res)
+	}
+}
+
 func TestRunnerBlocksWhenFormatFileMissing(t *testing.T) {
 	root := writeTruebitArtifacts(t)
 	r := &Runner{Enabled: true, SkillDir: filepath.Join(t.TempDir(), "missing")}

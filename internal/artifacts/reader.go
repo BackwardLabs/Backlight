@@ -86,6 +86,8 @@ var ecwArtifacts = []artifactSpec{
 	{PublicPath: "artifacts/poc_sketch/pseudo_test_plan.md", SourcePath: "artifacts/poc_sketch/pseudo_test_plan.md"},
 	{PublicPath: "artifacts/rca/input/tx_metadata.json", SourcePath: "artifacts/rca/input/tx_metadata.json"},
 	{PublicPath: "artifacts/rca/input/asset_deltas.json", SourcePath: "artifacts/rca/input/asset_deltas.json"},
+	{PublicPath: "artifacts/rca/input/decompiled_code_context.json", SourcePath: "artifacts/rca/input/decompiled_code_context.json"},
+	{PublicPath: "artifacts/rca/input/decompiled_pseudocode.md", SourcePath: "artifacts/rca/input/decompiled_pseudocode.md"},
 	{PublicPath: "artifacts/rca/trace_read_model.json", SourcePath: "artifacts/rca/trace_read_model.json"},
 	{PublicPath: "artifacts/rca/economic_frontier.json", SourcePath: "artifacts/rca/economic_frontier.json"},
 	{PublicPath: "artifacts/rca/rca_frontier.json", SourcePath: "artifacts/rca/rca_frontier.json"},

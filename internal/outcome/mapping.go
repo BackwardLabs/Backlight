@@ -56,6 +56,7 @@ const (
 	RCAStateRuntimeError        = "rca_runtime_error"
 	RCAStateLowConfidence       = "rca_low_confidence"
 	RCAStateMissingEvidence     = "rca_missing_evidence"
+	RCAStateNoPatchableEvidence = "rca_no_patchable_root_cause_evidence"
 	RCAStatePoCDependent        = "rca_poc_dependent"
 	RCAStateScopeLimited        = "rca_scope_limited"
 	RCAStateConflictingEvidence = "rca_conflicting_evidence"
@@ -97,10 +98,12 @@ type SummaryPoC struct {
 }
 
 type SummaryRCA struct {
-	Status         string `json:"status"`
-	AnalysisStatus string `json:"analysis_status"`
-	BlockerCode    string `json:"blocker_code"`
-	BlockerReason  string `json:"blocker_reason"`
+	Status            string `json:"status"`
+	AnalysisStatus    string `json:"analysis_status"`
+	RootCauseMode     string `json:"root_cause_mode"`
+	ProofBoundaryKind string `json:"proof_boundary_kind"`
+	BlockerCode       string `json:"blocker_code"`
+	BlockerReason     string `json:"blocker_reason"`
 }
 
 // SummaryFailure is "set" when Kind != "" (Go zero-value detection).
@@ -259,6 +262,9 @@ func withRerunDecision(result Result, s Summary) Result {
 }
 
 func rcaIncompleteReason(state string, s Summary) string {
+	if state == RCAStateNoPatchableEvidence {
+		return firstNonEmpty(s.RCA.ProofBoundaryKind, s.RCA.BlockerCode, s.RCA.BlockerReason, state)
+	}
 	if reason := firstNonEmpty(s.RCA.BlockerCode, s.RCA.BlockerReason); reason != "" {
 		return reason
 	}
@@ -320,8 +326,12 @@ func isReachablePoC(p SummaryPoC) bool {
 func classifyRCAState(s Summary) string {
 	r := s.RCA
 	status := strings.TrimSpace(strings.ToLower(firstNonEmpty(r.AnalysisStatus, r.Status)))
+	rootCauseMode := strings.TrimSpace(strings.ToLower(r.RootCauseMode))
+	proofBoundaryKind := strings.TrimSpace(strings.ToLower(r.ProofBoundaryKind))
 	text := strings.ToLower(strings.Join([]string{
 		status,
+		rootCauseMode,
+		proofBoundaryKind,
 		r.BlockerCode,
 		r.BlockerReason,
 		s.Failure.Kind,
@@ -335,6 +345,10 @@ func classifyRCAState(s Summary) string {
 		return RCAStateComplete
 	case "", "not_run", "missing":
 		return RCAStateNotRun
+	}
+	if proofBoundaryKind == "no_patchable_root_cause_evidence" ||
+		(rootCauseMode == "unknown" && containsAny(text, "no_patchable_root_cause_evidence", "no source-backed patchable root cause", "do not identify a patchable", "do not prove a patchable", "patchable vulnerable branch", "invariant-breaking branch")) {
+		return RCAStateNoPatchableEvidence
 	}
 	if containsAny(text, "runtime", "timeout", "rate_limit", "rate limited", "malformed", "sdk", "output_missing") {
 		return RCAStateRuntimeError
@@ -364,7 +378,7 @@ func classifyPublishTier(pocState, rcaState string) string {
 	switch {
 	case pocState == PoCStateEconomic && rcaState == RCAStateComplete:
 		return PublishTierPublicVerified
-	case pocState == PoCStateEconomic && (rcaState == RCAStateLowConfidence || rcaState == RCAStateMissingEvidence || rcaState == RCAStateScopeLimited):
+	case pocState == PoCStateEconomic && (rcaState == RCAStateLowConfidence || rcaState == RCAStateMissingEvidence || rcaState == RCAStateNoPatchableEvidence || rcaState == RCAStateScopeLimited):
 		return PublishTierEconomicIncompleteRCA
 	case (pocState == PoCStateMissing || pocState == PoCStateFailed) && rcaState == RCAStateComplete:
 		return PublishTierInternalOnly
@@ -375,7 +389,7 @@ func classifyPublishTier(pocState, rcaState string) string {
 
 func isRCAIncompleteState(state string) bool {
 	switch state {
-	case RCAStateNotRun, RCAStateRuntimeError, RCAStateLowConfidence, RCAStateMissingEvidence, RCAStatePoCDependent, RCAStateScopeLimited, RCAStateConflictingEvidence:
+	case RCAStateNotRun, RCAStateRuntimeError, RCAStateLowConfidence, RCAStateMissingEvidence, RCAStateNoPatchableEvidence, RCAStatePoCDependent, RCAStateScopeLimited, RCAStateConflictingEvidence:
 		return true
 	default:
 		return false
@@ -607,6 +621,12 @@ func (r SummaryRCA) eventPayload(state string) map[string]string {
 	}
 	if r.AnalysisStatus != "" {
 		out["analysis_status"] = r.AnalysisStatus
+	}
+	if r.RootCauseMode != "" {
+		out["root_cause_mode"] = r.RootCauseMode
+	}
+	if r.ProofBoundaryKind != "" {
+		out["proof_boundary_kind"] = r.ProofBoundaryKind
 	}
 	if r.BlockerCode != "" {
 		out["blocker_code"] = r.BlockerCode

@@ -12,6 +12,8 @@ func TestECWReaderExposesDedicatedProfileWithoutChangingDefault(t *testing.T) {
 	root := filepath.Join(base, "case_1")
 	for _, rel := range []string{
 		"artifacts/rca/rca_frontier.json",
+		"artifacts/rca/input/decompiled_code_context.json",
+		"artifacts/rca/input/decompiled_pseudocode.md",
 		"artifacts/poc_sketch/poc_context.json",
 		"artifacts/agent_poc/result.json",
 		"artifacts/agent_poc/foundry/test/PoC.t.sol",
@@ -29,6 +31,9 @@ func TestECWReaderExposesDedicatedProfileWithoutChangingDefault(t *testing.T) {
 	if slices.Contains(defaultReader.AllowedPaths(), "artifacts/rca/rca_frontier.json") {
 		t.Fatal("default artifact profile includes ECW RCA frontier; want unchanged product profile")
 	}
+	if slices.Contains(defaultReader.AllowedPaths(), "artifacts/rca/input/decompiled_code_context.json") {
+		t.Fatal("default artifact profile includes RCA decompiler context; want unchanged product profile")
+	}
 
 	ecwReader, err := NewECWReader(base, 0)
 	if err != nil {
@@ -39,6 +44,8 @@ func TestECWReaderExposesDedicatedProfileWithoutChangingDefault(t *testing.T) {
 	}
 	for _, rel := range []string{
 		"artifacts/rca/rca_frontier.json",
+		"artifacts/rca/input/decompiled_code_context.json",
+		"artifacts/rca/input/decompiled_pseudocode.md",
 		"artifacts/poc_sketch/poc_context.json",
 		"artifacts/agent_poc/result.json",
 		"artifacts/agent_poc/foundry/test/PoC.t.sol",
