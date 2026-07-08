@@ -44,6 +44,8 @@ var defaultArtifacts = []artifactSpec{
 	{PublicPath: "x-feed-telegram-post.txt", SourcePath: "x-feed-telegram-post.txt"},
 	{PublicPath: "x-feed-card-brief.md", SourcePath: "x-feed-card-brief.md"},
 	{PublicPath: "x-feed-visuals/exploit-flow-card.svg", SourcePath: "x-feed-visuals/exploit-flow-card.svg"},
+	{PublicPath: "artifacts/pre_lumos_result.json", SourcePath: "artifacts/pre_lumos_result.json"},
+	{PublicPath: "artifacts/pre_lumos_result.md", SourcePath: "artifacts/pre_lumos_result.md"},
 }
 
 var ecwArtifacts = []artifactSpec{
@@ -71,6 +73,8 @@ var ecwArtifacts = []artifactSpec{
 	{PublicPath: "x-feed-telegram-post.txt", SourcePath: "x-feed-telegram-post.txt"},
 	{PublicPath: "x-feed-card-brief.md", SourcePath: "x-feed-card-brief.md"},
 	{PublicPath: "x-feed-visuals/exploit-flow-card.svg", SourcePath: "x-feed-visuals/exploit-flow-card.svg"},
+	{PublicPath: "artifacts/pre_lumos_result.json", SourcePath: "artifacts/pre_lumos_result.json"},
+	{PublicPath: "artifacts/pre_lumos_result.md", SourcePath: "artifacts/pre_lumos_result.md"},
 	{PublicPath: "artifacts/agent_poc/attack_flow.md", SourcePath: "artifacts/agent_poc/attack_flow.md"},
 	{PublicPath: "artifacts/agent_poc/multi_leg_reconciliation.md", SourcePath: "artifacts/agent_poc/multi_leg_reconciliation.md"},
 	{PublicPath: "artifacts/agent_poc/multi_leg_reconciliation.json", SourcePath: "artifacts/agent_poc/multi_leg_reconciliation.json"},

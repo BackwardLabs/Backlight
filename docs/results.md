@@ -133,6 +133,8 @@ Common artifact paths:
 - `report_bundle/evidence/fund_flows.json`
 - `report_bundle/visuals/asset_deltas.dot`
 - `report_bundle/visuals/fund_flows.dot`
+- `artifacts/pre_lumos_result.json`
+- `artifacts/pre_lumos_result.md`
 
 ## ECW export profile
 

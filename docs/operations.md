@@ -123,7 +123,9 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
 - **Pre-Lumos incident JSON.** When `HELIOS_PRE_LUMOS_ENABLED=true` and
   `HELIOS_PRE_LUMOS_SEED_ROOT` is set, verified cases also run
   `scripts/pre_lumos_agent.py`, write `<case output root>/pre-lumos.json`, and
-  merge rows into `seed/import_{YEAR}.json` by `slug`.
+  merge rows into `seed/import_{YEAR}.json` by `slug`. The auto-report Backlight
+  workflow also writes `artifacts/pre_lumos_result.json` and
+  `artifacts/pre_lumos_result.md` for site/API display.
 - **ECW export.** When `HELIOS_ECW_EXPORT_TOKEN` is set, `GET /ecw/cases/{case_id}/export`
   returns an `ecw-internal-complete` bundle for internal PoC replay/adaptation.
   It uses exact file allowlisting, reports absent profile files in `missing`, and

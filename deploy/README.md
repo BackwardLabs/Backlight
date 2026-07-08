@@ -270,6 +270,8 @@ The only artifact paths exposed are the text-oriented report bundle files:
 - `report_bundle/evidence/fund_flows.json`
 - `report_bundle/visuals/asset_deltas.dot`
 - `report_bundle/visuals/fund_flows.dot`
+- `artifacts/pre_lumos_result.json`
+- `artifacts/pre_lumos_result.md`
 
 Required MCP env:
 
@@ -414,7 +416,9 @@ HELIOS_PRE_LUMOS_WEB_SEARCH=false
 Backlight passes the verified case output root directly to the sidecar. The sidecar
 writes `<output_root>/pre-lumos.json`, `<output_root>/pre-lumos-status.json`,
 and merges rows by `slug` into
-`$HELIOS_PRE_LUMOS_SEED_ROOT/seed/import_{YEAR}.json`. Because the example
+`$HELIOS_PRE_LUMOS_SEED_ROOT/seed/import_{YEAR}.json`. The auto-report Backlight
+workflow additionally writes `artifacts/pre_lumos_result.json` and
+`artifacts/pre_lumos_result.md` for site/API display. Because the example
 systemd unit only grants writes under `/srv/backlight/data` and `/srv/backlight/logs`,
 keep `HELIOS_PRE_LUMOS_SEED_ROOT` under `/srv/backlight/data` or extend
 `ReadWritePaths=`.

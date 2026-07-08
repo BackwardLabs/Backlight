@@ -61,6 +61,12 @@ func TestReaderExposesPrettyProductArtifactAliases(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "artifacts", "agent_poc", "multi_leg_reconciliation.json"), []byte(`{"rows":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "artifacts", "pre_lumos_result.json"), []byte(`{"schema":"backlight-pre-lumos-artifact-v1","status":"ok"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "artifacts", "pre_lumos_result.md"), []byte("# Pre-Lumos Result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "summary.json"), []byte(`{"status":"pass"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +114,20 @@ func TestReaderExposesPrettyProductArtifactAliases(t *testing.T) {
 	}
 	if reconciliation.Text != "# Multi-leg Reconciliation\n" {
 		t.Fatalf("unexpected reconciliation artifact: %+v", reconciliation)
+	}
+	preLumos, err := reader.Read(c, "artifacts/pre_lumos_result.json", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preLumos.Text != `{"schema":"backlight-pre-lumos-artifact-v1","status":"ok"}` {
+		t.Fatalf("unexpected pre-lumos artifact: %+v", preLumos)
+	}
+	preLumosMD, err := reader.Read(c, "artifacts/pre_lumos_result.md", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preLumosMD.Text != "# Pre-Lumos Result\n" {
+		t.Fatalf("unexpected pre-lumos markdown artifact: %+v", preLumosMD)
 	}
 
 	bundleReadme, err := reader.Read(c, "report_bundle/README.md", 0)

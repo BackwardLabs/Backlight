@@ -235,7 +235,9 @@ Verified cases may trigger both optional asynchronous side effects after Backlig
 - Pre-Lumos incident JSON, enabled by `HELIOS_PRE_LUMOS_ENABLED=true` and
   `HELIOS_PRE_LUMOS_SEED_ROOT`, runs the vendored `skills/pre-lumos` bundle
   through the Agent SDK. It writes `<output_root>/pre-lumos.json` for the case
-  and merges rows by `slug` into `seed/import_{YEAR}.json`.
+  and merges rows by `slug` into `seed/import_{YEAR}.json`. When auto-report's
+  Backlight workflow is used, it also writes `artifacts/pre_lumos_result.json`
+  and `artifacts/pre_lumos_result.md` as compact site/API artifacts.
 
 Both side effects are audit events and do not gate downstream handoff. Failure is recorded as
 `github_publish_failed` or `pre_lumos_sync_failed`; it does not rewrite the
