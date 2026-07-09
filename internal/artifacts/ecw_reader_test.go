@@ -69,6 +69,37 @@ func TestECWReaderExposesDedicatedProfileWithoutChangingDefault(t *testing.T) {
 	}
 }
 
+// TestECWReaderServesRenamedPoCBaseContract guards the self-containment of the
+// exported PoC project. The engine renamed the PoC base contract file from
+// LumosPoCBase.sol to Base.sol (PoC.t.sol imports "./Base.sol"); the export
+// allowlist must expose Base.sol at both PoC locations so the exported bundle
+// compiles standalone instead of dropping the base file the PoC imports.
+func TestECWReaderServesRenamedPoCBaseContract(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "case_1")
+	writeArtifactFile(t, root, "report_bundle/poc/PoC.t.sol", "import \"./Base.sol\";\ncontract AttackTest is Base {}\n")
+	writeArtifactFile(t, root, "report_bundle/poc/Base.sol", "abstract contract Base {}\n")
+	writeArtifactFile(t, root, "artifacts/agent_poc/foundry/test/PoC.t.sol", "import \"./Base.sol\";\ncontract AttackTest is Base {}\n")
+	writeArtifactFile(t, root, "artifacts/agent_poc/foundry/test/Base.sol", "abstract contract Base {}\n")
+
+	reader, err := NewECWReader(base, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"report_bundle/poc/Base.sol", "artifacts/agent_poc/foundry/test/Base.sol"} {
+		if !slices.Contains(reader.AllowedPaths(), rel) {
+			t.Fatalf("ECW export profile missing renamed PoC base %q; exported PoC would not build", rel)
+		}
+		result, err := reader.Read(caseWithRoot(root), rel, 0)
+		if err != nil {
+			t.Fatalf("ECW Read(%q): %v", rel, err)
+		}
+		if result.Text != "abstract contract Base {}\n" {
+			t.Fatalf("unexpected PoC base content for %q: %+v", rel, result)
+		}
+	}
+}
+
 func writeArtifactFile(t *testing.T, root, rel, body string) {
 	t.Helper()
 	path := filepath.Join(root, rel)
