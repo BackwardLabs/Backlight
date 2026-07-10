@@ -128,7 +128,8 @@ Common artifact paths:
 - `report_bundle/report/report.json`
 - `report_bundle/report/run_summary.json`
 - `report_bundle/poc/PoC.t.sol`
-- `report_bundle/poc/LumosPoCBase.sol`
+- `report_bundle/poc/Base.sol` (current PoC support contract)
+- `report_bundle/poc/LumosPoCBase.sol` (legacy compatibility)
 - `report_bundle/evidence/asset_deltas.json`
 - `report_bundle/evidence/fund_flows.json`
 - `report_bundle/visuals/asset_deltas.dot`

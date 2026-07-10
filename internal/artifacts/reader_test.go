@@ -40,6 +40,9 @@ func TestReaderExposesPrettyProductArtifactAliases(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "report_bundle", "poc", "LumosPoCBase.sol"), []byte("abstract contract LumosPoCBase {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "report_bundle", "poc", "Base.sol"), []byte("abstract contract Base {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "report_bundle", "evidence", "asset_deltas.json"), []byte(`[]`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +153,13 @@ func TestReaderExposesPrettyProductArtifactAliases(t *testing.T) {
 	}
 	if pocBase.Text != "abstract contract LumosPoCBase {}\n" {
 		t.Fatalf("unexpected PoC base: %+v", pocBase)
+	}
+	currentPoCBase, err := reader.Read(c, "report_bundle/poc/Base.sol", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentPoCBase.Text != "abstract contract Base {}\n" {
+		t.Fatalf("unexpected current PoC base: %+v", currentPoCBase)
 	}
 
 	for _, path := range []string{"summary.json", "summary.md", "rca.md", "Report.md", "report_bundle/visuals/asset_deltas.png", "artifacts/secret.json", "../RCA.md", "/tmp/RCA.md"} {
