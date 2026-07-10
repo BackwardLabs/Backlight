@@ -265,7 +265,8 @@ The only artifact paths exposed are the text-oriented report bundle files:
 - `report_bundle/report/report.json`
 - `report_bundle/report/run_summary.json`
 - `report_bundle/poc/PoC.t.sol`
-- `report_bundle/poc/LumosPoCBase.sol`
+- `report_bundle/poc/Base.sol` (current PoC support contract)
+- `report_bundle/poc/LumosPoCBase.sol` (legacy compatibility)
 - `report_bundle/evidence/asset_deltas.json`
 - `report_bundle/evidence/fund_flows.json`
 - `report_bundle/visuals/asset_deltas.dot`
@@ -310,8 +311,10 @@ intentionally mount the output directory read-only to the MCP runtime.
 ## ECW internal export
 
 Backlight can expose a dedicated ECW bundle without changing the operator API,
-MCP tool list, worker queue, or the product artifact allowlist. The endpoint is
-disabled unless a separate token is configured:
+MCP tool list, or worker queue. The ECW endpoint uses a broader allowlist than
+the narrow product artifact profile, which includes the current and legacy PoC
+support contracts required by report bundles. The endpoint is disabled unless
+a separate token is configured:
 
 ```bash
 HELIOS_ECW_EXPORT_TOKEN=<separate-long-random-token>
