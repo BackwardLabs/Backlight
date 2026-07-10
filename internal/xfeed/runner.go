@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/UPside-Lumos-V2/helios/internal/mention"
 	"github.com/UPside-Lumos-V2/helios/internal/outcome"
 )
 
@@ -32,6 +33,9 @@ type Runner struct {
 	CardEnabled       bool
 	CardPythonBin     string
 	CardTimeout       time.Duration
+	// Mentions resolves the victim protocol's official @handle for the post
+	// headline. Nil = disabled (plain protocol name).
+	Mentions *mention.Index
 }
 
 type Case struct {
@@ -257,7 +261,7 @@ What happened:
 
 Need more detail? Check our repo and analysis thread below ↓ 🧵`,
 		f.StatusLabel,
-		f.Protocol,
+		mention.FormatTag(r.Mentions, f.Protocol),
 		f.Chain,
 		f.TxHash,
 		f.Occurred,

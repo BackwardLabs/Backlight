@@ -45,6 +45,7 @@ type Config struct {
 	XFeedCardEnabled                  bool
 	XFeedCardPythonBin                string
 	XFeedCardTimeoutSeconds           int
+	VictimMentionEnabled              bool
 	TelegramPublishEnabled            bool
 	PreLumosEnabled                   bool
 	PreLumosPythonBin                 string
@@ -110,6 +111,7 @@ func Load() (*Config, error) {
 		XFeedCardEnabled:                  envBool("HELIOS_X_FEED_CARD_ENABLED", true),
 		XFeedCardPythonBin:                envDefault("HELIOS_X_FEED_CARD_PYTHON_BIN", "python3"),
 		XFeedCardTimeoutSeconds:           envInt("HELIOS_X_FEED_CARD_TIMEOUT_SECONDS", 20),
+		VictimMentionEnabled:              envBool("HELIOS_VICTIM_MENTION", true),
 		TelegramPublishEnabled:            envBool("TELEGRAM_PUBLISH_ENABLED", false),
 		PreLumosEnabled:                   envBool("HELIOS_PRE_LUMOS_ENABLED", false),
 		PreLumosPythonBin:                 envDefault("HELIOS_PRE_LUMOS_PYTHON_BIN", "python3"),
