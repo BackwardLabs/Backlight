@@ -41,7 +41,6 @@ type Config struct {
 	XDryRun                           bool
 	XFeedEnabled                      bool
 	XFeedSkillDir                     string
-	XFeedIncludeAttackerCA            bool
 	XFeedCardEnabled                  bool
 	XFeedCardPythonBin                string
 	XFeedCardTimeoutSeconds           int
@@ -107,7 +106,6 @@ func Load() (*Config, error) {
 		XDryRun:                           envBool("X_DRY_RUN", true),
 		XFeedEnabled:                      envBool("HELIOS_X_FEED_ENABLED", false),
 		XFeedSkillDir:                     envDefault("HELIOS_X_FEED_SKILL_DIR", "skills/x-feed"),
-		XFeedIncludeAttackerCA:            envBool("HELIOS_X_FEED_INCLUDE_ATTACKER_CA", false),
 		XFeedCardEnabled:                  envBool("HELIOS_X_FEED_CARD_ENABLED", true),
 		XFeedCardPythonBin:                envDefault("HELIOS_X_FEED_CARD_PYTHON_BIN", "python3"),
 		XFeedCardTimeoutSeconds:           envInt("HELIOS_X_FEED_CARD_TIMEOUT_SECONDS", 20),

@@ -391,10 +391,12 @@ HELIOS_X_FEED_CARD_TIMEOUT_SECONDS=20
 TELEGRAM_PUBLISH_ENABLED=true
 ```
 
-The flow is GitHub publish -> x-feed draft -> X main post/reply -> Telegram
+The flow is GitHub publish -> x-feed draft -> X rich main post/Tx-only reply -> Telegram
 publish. Telegram gets the same main X body with `GitHub:` and `X:` links
 appended. When the card switch is enabled, Backlight also generates a public-safe
 exploit-flow card from the x-feed brief and attaches the PNG to the main X post.
+Before any live media upload or post, Backlight verifies that the refreshed OAuth
+token belongs to `X_ACCOUNT_USERNAME` and aborts on a mismatch.
 Install `requirements-x-feed.txt` in the configured Python environment to produce
 the PNG, for example a dedicated venv under `/srv/backlight/data/x-feed-venv`
 with `HELIOS_X_FEED_CARD_PYTHON_BIN=/srv/backlight/data/x-feed-venv/bin/python`.

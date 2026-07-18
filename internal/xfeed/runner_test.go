@@ -39,7 +39,7 @@ func TestRunnerTagsVictimMentionInHeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.MainPost, "🚨 Truebit (@TruebitProtocol) exploit on Ethereum") {
+	if !strings.Contains(res.MainPost, "🚨 Truebit (@TruebitProtocol) — Settlement Accounting Exploit") {
 		t.Fatalf("headline missing victim mention:\n%s", res.MainPost)
 	}
 }
@@ -70,34 +70,33 @@ func TestRunnerDraftsBacklightIncidentThread(t *testing.T) {
 		t.Fatalf("result readiness/status/image = %+v", res)
 	}
 	for _, want := range []string{
-		"[Backlight Initial Analysis]",
-		"🚨 Truebit exploit on Ethereum",
-		"Tx: " + tx,
-		"🕒 Occurred: 2026-01-08 16:02 UTC",
-		"💥 Impact: approximately ~$26.4M",
+		"🚨 Truebit — Settlement Accounting Exploit",
+		"On January 8, 2026, Truebit was exploited on Ethereum, with an estimated loss of $26.42M.",
+		"Key info",
+		"• Occurred: 2026-01-08 16:02 UTC",
+		"• Estimated loss: $26.42M",
+		"TL;DR",
 		"Evidence points to a pricing/accounting mismatch in the Truebit market settlement path.",
-		"Need more detail? Check our repo and analysis thread below ↓ 🧵",
+		"Why it matters",
+		"Builder takeaway",
 	} {
 		if !strings.Contains(res.MainPost, want) {
 			t.Fatalf("main post missing %q:\n%s", want, res.MainPost)
 		}
 	}
-	for _, want := range []string{
-		"1/ Artifacts + analysis 🧾",
-		"- Report: https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/truebit/README.md",
-		"- PoC: https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/truebit/truebit.t.sol",
-		"Analysis:\nAt a high level, this is a market interaction and settlement-accounting issue.",
-		"Explorer:\nhttps://etherscan.io/tx/" + tx,
-	} {
-		if !strings.Contains(res.ReplyPost, want) {
-			t.Fatalf("reply post missing %q:\n%s", want, res.ReplyPost)
-		}
+	if want := "Tx: https://etherscan.io/tx/" + tx; res.ReplyPost != want {
+		t.Fatalf("reply post = %q, want %q", res.ReplyPost, want)
 	}
 	if strings.Contains(res.ReplyPost, "Attacker CA") {
 		t.Fatalf("reply should omit attacker CA by default:\n%s", res.ReplyPost)
 	}
 	if strings.Contains(res.MainPost, "ETH payouts") || strings.Contains(res.ReplyPost, "ETH moved") {
 		t.Fatalf("pricing fallback should not hard-code ETH when no asset symbol is known:\nmain:\n%s\nreply:\n%s", res.MainPost, res.ReplyPost)
+	}
+	for _, bad := range []string{"[Backlight", "Tx: ", "PoC", "Forge", "Report:"} {
+		if strings.Contains(res.MainPost, bad) {
+			t.Fatalf("main post contains internal/linked detail %q:\n%s", bad, res.MainPost)
+		}
 	}
 	if !strings.Contains(res.TelegramPost, res.MainPost+"\n\nGitHub:\nhttps://github.com/BackwardLabs/Q1-2026/tree/main/test/2026-01/truebit") {
 		t.Fatalf("telegram post did not append GitHub URL:\n%s", res.TelegramPost)
@@ -130,7 +129,7 @@ func TestRunnerUsesAssetSymbolForSettlementNarrative(t *testing.T) {
 	}
 	for _, want := range []string{
 		"USDT payouts bounded by market reserves",
-		"USDT leave the market reserve",
+		"USDT leave the affected reserve",
 	} {
 		if !strings.Contains(res.MainPost, want) {
 			t.Fatalf("main post missing %q:\n%s", want, res.MainPost)
@@ -269,9 +268,13 @@ func TestRunnerGeneratesExploitFlowCardImagePath(t *testing.T) {
 	}
 	brief := mustReadFile(t, res.CardBriefPath)
 	for _, want := range []string{
-		"# Truebit Exploit Flow",
-		"- **Estimated loss**: $26423938.99",
-		"- **Proof kind**: economic_proof",
+		"# Public Card Packet — Truebit Incident",
+		"- **Disclosure status**: publishable",
+		"- **Headline**: Truebit — Settlement Accounting Exploit",
+		"- **Occurred**: 2026-01-08 16:02 UTC",
+		"- **Impact card**: $26.42M",
+		"- **RCA status**: partial",
+		"- **Violated invariant**:",
 	} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("card brief missing %q:\n%s", want, brief)
@@ -305,15 +308,17 @@ func TestRunnerCardBriefUsesRCAFlowAndImpact(t *testing.T) {
 	}
 	brief := mustReadFile(t, res.CardBriefPath)
 	for _, want := range []string{
-		"# Pancakeswap V2 Exploit Flow",
+		"# Public Card Packet — Pancakeswap V2 Incident",
+		"- **Headline**: Pancakeswap V2 — LP Reserve Burn",
 		"- **Vulnerable path**: OLPCToken.transfer -> PancakePair.skim -> PancakePair.sync",
 		"- **Vulnerable contract**: OLPCToken (0x5881...0000)",
 		"- **Victim**: PancakePair (impacted OLPC/LABUBU AMM pair)",
-		"- **Impact card**: ~$1.1M USDT",
-		"- **Flow step 2**: 2. skim() starts transfer",
-		"- **Flow step 3**: 3. pool balance drops",
-		"- **Flow step 4**: 4. attacker cashes out",
-		"- **Exploit result**: attacker cashes out",
+		"- **Impact card**: $1.12M",
+		"- **Affected assets**: USDT, LABUBU, OLPC",
+		"- **Flow step 2**: skim() starts transfer",
+		"- **Flow step 3**: pool balance drops",
+		"- **Flow step 4**: attacker cashes out",
+		"- **RCA status**: confirmed",
 	} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("card brief missing %q:\n%s", want, brief)
@@ -323,9 +328,9 @@ func TestRunnerCardBriefUsesRCAFlowAndImpact(t *testing.T) {
 		"accounting or pricing mismatch",
 		"payout > checked value",
 		"enter vulnerable path",
-		"- **Violated invariant**:",
-		"- **Severity**:",
-		"- **Confidence**:",
+		"- **PoC status**:",
+		"- **Proof kind**:",
+		"- **Attacker gain reproduced**:",
 	} {
 		if strings.Contains(brief, bad) {
 			t.Fatalf("card brief contains generic fallback %q:\n%s", bad, brief)
@@ -359,13 +364,14 @@ func TestRunnerCardBriefUsesRCAVulnerableFunctionForMarginWithdrawal(t *testing.
 	}
 	brief := mustReadFile(t, res.CardBriefPath)
 	for _, want := range []string{
-		"- **RCA status**: partial (medium confidence)",
+		"- **RCA status**: partial",
+		"- **Confidence**: medium",
 		"- **Vulnerable path**: changePosition(int256,int256,int256)",
 		"- **Vulnerable contract**: vulnerable proxy (0xf7ca...80bc)",
-		"- **Flow step 1**: 1. reach changePosition()",
-		"- **Flow step 2**: 2. position/accounting changes",
-		"- **Flow step 3**: 3. margin check accepts withdrawal",
-		"- **Flow step 4**: 4. victim assets leave",
+		"- **Flow step 1**: reach changePosition()",
+		"- **Flow step 2**: position/accounting changes",
+		"- **Flow step 3**: margin check accepts withdrawal",
+		"- **Flow step 4**: victim assets leave",
 	} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("card brief missing %q:\n%s", want, brief)
@@ -375,7 +381,6 @@ func TestRunnerCardBriefUsesRCAVulnerableFunctionForMarginWithdrawal(t *testing.
 		"call withdraw(victim)",
 		"helper spends allowance",
 		"unknown proxy",
-		"- **Confidence**:",
 	} {
 		if strings.Contains(brief, bad) {
 			t.Fatalf("card brief contains stale/generic text %q:\n%s", bad, brief)
