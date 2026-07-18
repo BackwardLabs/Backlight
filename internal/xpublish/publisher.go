@@ -11,7 +11,6 @@ import (
 	"io"
 	"math/big"
 	"mime"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -117,6 +116,13 @@ type uploadMediaResponse struct {
 	} `json:"data"`
 }
 
+type authenticatedUserResponse struct {
+	Data struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+	} `json:"data"`
+}
+
 type postOptions struct {
 	ReplyToID string
 	MediaIDs  []string
@@ -198,6 +204,9 @@ func (p *Publisher) publishThread(ctx context.Context, thread Thread, template s
 	}
 	refreshUpdated, err := p.storeRotatedRefreshToken(token)
 	if err != nil {
+		return nil, err
+	}
+	if err := p.verifyAuthenticatedUser(ctx, client, token.AccessToken); err != nil {
 		return nil, err
 	}
 	var mediaIDs []string
@@ -347,35 +356,30 @@ func writeSecretFile(path string, data []byte) error {
 }
 
 func (p *Publisher) uploadMedia(ctx context.Context, client *http.Client, accessToken, mediaPath string) (*uploadMediaResponse, error) {
-	source, fileName, mediaType, err := p.openMediaSource(ctx, client, mediaPath)
+	source, _, mediaType, err := p.openMediaSource(ctx, client, mediaPath)
 	if err != nil {
 		return nil, err
 	}
 	defer source.Close()
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("media", fileName)
+	media, err := io.ReadAll(source)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := io.Copy(part, source); err != nil {
+	body, err := json.Marshal(map[string]any{
+		"media":          base64.StdEncoding.EncodeToString(media),
+		"media_category": defaultMediaCategory,
+		"media_type":     mediaType,
+		"shared":         false,
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err := writer.WriteField("media_category", defaultMediaCategory); err != nil {
-		return nil, err
-	}
-	if err := writer.WriteField("media_type", mediaType); err != nil {
-		return nil, err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.APIBase+"/2/media/upload", &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.APIBase+"/2/media/upload", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "backlight-x-publisher/1")
 	var out uploadMediaResponse
 	if err := doJSON(client, req, &out); err != nil {
@@ -385,6 +389,31 @@ func (p *Publisher) uploadMedia(ctx context.Context, client *http.Client, access
 		return nil, errors.New("x media upload response did not include data.id")
 	}
 	return &out, nil
+}
+
+func (p *Publisher) verifyAuthenticatedUser(ctx context.Context, client *http.Client, accessToken string) error {
+	expected := strings.Trim(strings.TrimSpace(p.Config.Username), "@")
+	if expected == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Config.APIBase+"/2/users/me", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", "backlight-x-publisher/1")
+	var out authenticatedUserResponse
+	if err := doJSON(client, req, &out); err != nil {
+		return fmt.Errorf("verify x publishing account: %w", err)
+	}
+	actual := strings.Trim(strings.TrimSpace(out.Data.Username), "@")
+	if actual == "" {
+		return errors.New("verify x publishing account: response did not include data.username")
+	}
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("verify x publishing account: authenticated as @%s, expected @%s", actual, expected)
+	}
+	return nil
 }
 
 func (p *Publisher) openMediaSource(ctx context.Context, client *http.Client, mediaPath string) (io.ReadCloser, string, string, error) {

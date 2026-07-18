@@ -86,11 +86,10 @@ precedence; `.env.local` can override `.env`.
 | `X_REFRESH_TOKEN_FILE` | no | empty | optional 0600 JSON/raw-token file used before `X_REFRESH_TOKEN` and updated when X rotates the refresh token |
 | `X_POST_TEMPLATE_PATH` | no | embedded default | optional Markdown `text/template` file for the X verified-incident post body |
 | `X_API_BASE` | no | `https://api.x.com` | override for tests or proxies |
-| `X_ACCOUNT_USERNAME` | no | empty | optional username used to build the public `post_url`; omit to use `https://x.com/i/web/status/{id}` |
+| `X_ACCOUNT_USERNAME` | recommended when X publish enabled and dry-run false | empty | expected publishing username; Backlight verifies `/2/users/me` matches it before media upload or posting and uses it to build the public `post_url` |
 | `X_DRY_RUN` | no | `true` | when true, records the generated X post text as `x_publish` without calling X |
 | `HELIOS_X_FEED_ENABLED` | no | `false` | enables the structured x-feed draft path after successful GitHub publish |
 | `HELIOS_X_FEED_SKILL_DIR` | no | `skills/x-feed` | vendored x-feed skill directory containing `incident-post-format.md` |
-| `HELIOS_X_FEED_INCLUDE_ATTACKER_CA` | no | `false` | opt-in switch for attacker CA details in the X reply |
 | `HELIOS_X_FEED_CARD_ENABLED` | no | `true` | runs the vendored `exploit-flow-card` renderer during x-feed draft generation |
 | `HELIOS_X_FEED_CARD_PYTHON_BIN` | no | `python3` | Python executable used for the exploit-flow-card renderer |
 | `HELIOS_X_FEED_CARD_TIMEOUT_SECONDS` | no | `20` | timeout for the exploit-flow-card renderer; failures are recorded but do not block text publishing |
@@ -161,10 +160,13 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   Backlight can persist rotated refresh tokens with `0600` permissions. SQLite
   events record only `refresh_returned` / `refresh_token_updated`; token
   material is never stored in case events.
+- **X account preflight.** Set `X_ACCOUNT_USERNAME=BackwardLabs` in live mode.
+  After token refresh and before any media upload or post, Backlight calls
+  `/2/users/me` and aborts if the authenticated username does not match.
 - **x-feed publish sequence.** When `HELIOS_X_FEED_ENABLED=true`, Backlight waits
   for GitHub artifact publish to succeed, drafts `x-feed-main-post.txt`,
   `x-feed-reply-post.txt`, `x-feed-telegram-post.txt`, and `x-feed-status.json`,
-  then publishes the X main post and reply. `ready_to_publish=false` blocks X
+  then publishes the rich X main post and a Tx-only reply. `ready_to_publish=false` blocks X
   posting when required public URLs or the vendored format file are missing.
 - **Exploit-flow card generation.** With `HELIOS_X_FEED_CARD_ENABLED=true`,
   Backlight writes a public-safe `x-feed-card-brief.md`, runs the vendored
@@ -172,8 +174,8 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   `x-feed-status.json`. The renderer always attempts SVG output; PNG output
   requires `requirements-x-feed.txt` installed in
   `HELIOS_X_FEED_CARD_PYTHON_BIN`'s environment.
-- **X media upload.** If the x-feed draft supplies `image_path`, Backlight uploads
-  it through X API v2 media upload before creating the main post, then attaches
+- **X media upload.** If the x-feed draft supplies `image_path`, Backlight sends
+  it as a base64 JSON payload to X API v2 media upload before creating the main post, then attaches
   the returned media id to `POST /2/tweets`. The exploit-flow card PNG becomes
   that `image_path` when rendering succeeds. If card rendering fails or only SVG
   is produced, Backlight records `card_error` and still publishes the text thread
