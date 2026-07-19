@@ -41,7 +41,7 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 		}
 		const prefix = "Bearer "
 		if !strings.HasPrefix(header, prefix) || strings.TrimSpace(header[len(prefix):]) != token {
-			writeError(w, http.StatusForbidden, "invalid_token", "Bearer token does not match HELIOS_API_TOKEN", nil)
+			writeError(w, http.StatusForbidden, "invalid_token", "Bearer token does not match BACKLIGHT_API_TOKEN", nil)
 			return
 		}
 		next.ServeHTTP(w, r)

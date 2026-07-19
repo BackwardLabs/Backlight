@@ -6,21 +6,21 @@ usage() {
 Sync, build, install, and optionally restart the single-VM Backlight runtime.
 
 Usage:
-  sudo HELIOS_REF=<sha-or-tag-or-branch> \
+  sudo BACKLIGHT_REF=<sha-or-tag-or-branch> \
     LUMOSKIT_REF=<sha-or-tag-or-branch> \
-    HELIOS_RESTART_SERVICE=true \
+    BACKLIGHT_RESTART_SERVICE=true \
     deploy/vm/sync-git-runtime.sh
 
 Defaults:
   WORKSPACE_DIR=/home/ubuntu/lumos
-  HELIOS_WORKTREE=$WORKSPACE_DIR/backlight
+  BACKLIGHT_WORKTREE=$WORKSPACE_DIR/backlight
   LUMOSKIT_WORKTREE=$WORKSPACE_DIR/lumoskit
-  HELIOS_BASE_DIR=/srv/backlight
-  HELIOS_SERVICE_USER=backlight
-  HELIOS_SERVICE_NAME=backlight.service
-  HELIOS_REF=main
+  BACKLIGHT_BASE_DIR=/srv/backlight
+  BACKLIGHT_SERVICE_USER=backlight
+  BACKLIGHT_SERVICE_NAME=backlight.service
+  BACKLIGHT_REF=main
   LUMOSKIT_REF=main
-  HELIOS_RESTART_SERVICE=false
+  BACKLIGHT_RESTART_SERVICE=false
 
 This deployment uses the existing local git checkouts under /home/ubuntu/lumos.
 It does not clone into /srv/backlight/src.
@@ -38,14 +38,14 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 workspace_dir="${WORKSPACE_DIR:-/home/ubuntu/lumos}"
-helios_dir="${HELIOS_WORKTREE:-${workspace_dir}/backlight}"
+helios_dir="${BACKLIGHT_WORKTREE:-${workspace_dir}/backlight}"
 lumoskit_dir="${LUMOSKIT_WORKTREE:-${workspace_dir}/lumoskit}"
-base_dir="${HELIOS_BASE_DIR:-/srv/backlight}"
-service_user="${HELIOS_SERVICE_USER:-backlight}"
-service_name="${HELIOS_SERVICE_NAME:-backlight.service}"
-helios_ref="${HELIOS_REF:-main}"
+base_dir="${BACKLIGHT_BASE_DIR:-/srv/backlight}"
+service_user="${BACKLIGHT_SERVICE_USER:-backlight}"
+service_name="${BACKLIGHT_SERVICE_NAME:-backlight.service}"
+helios_ref="${BACKLIGHT_REF:-main}"
 lumoskit_ref="${LUMOSKIT_REF:-main}"
-restart_service="${HELIOS_RESTART_SERVICE:-false}"
+restart_service="${BACKLIGHT_RESTART_SERVICE:-false}"
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -256,7 +256,7 @@ LumosKit binary:   ${lumoskit_dir}/bin/lumoskit
 Service:           ${service_name}
 
 Expected in ${base_dir}/env/backlight.env:
-HELIOS_LUMOSKIT_BIN=${lumoskit_dir}/bin/lumoskit
+BACKLIGHT_LUMOSKIT_BIN=${lumoskit_dir}/bin/lumoskit
 EOF
 
 if [[ "${restart_service}" == "true" ]]; then

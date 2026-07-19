@@ -59,7 +59,7 @@ func OpenReadOnly(ctx context.Context, path string) (*Store, error) {
 
 func open(ctx context.Context, path string, readOnly bool) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("HELIOS_MCP_BRIDGE_DB_PATH is required")
+		return nil, fmt.Errorf("BACKLIGHT_MCP_BRIDGE_DB_PATH is required")
 	}
 	if dir := filepath.Dir(path); !readOnly && dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

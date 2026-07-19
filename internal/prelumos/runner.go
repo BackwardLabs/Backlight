@@ -1,4 +1,4 @@
-// Package prelumos invokes the vendored Pre-Lumos Agent SDK sidecar.
+// Package prelumos invokes the vendored Pre-Lumos Codex SDK sidecar.
 //
 // The skill bundle remains under skills/pre-lumos and is treated as read-only
 // prompt/context material. Backlight only decides when to run the sidecar and
@@ -34,15 +34,14 @@ type Result struct {
 }
 
 type Runner struct {
-	Enabled       bool
-	PythonBin     string
-	Script        string
-	SkillDir      string
-	SeedRoot      string
-	Year          string
-	Model         string
-	OpenAIBaseURL string
-	WebSearch     bool
+	Enabled   bool
+	PythonBin string
+	Script    string
+	SkillDir  string
+	SeedRoot  string
+	Year      string
+	Model     string
+	WebSearch bool
 
 	MaxStdoutBytes int
 	MaxStderrBytes int
@@ -126,12 +125,6 @@ func (r *Runner) Run(ctx context.Context, c Case) (Result, error) {
 
 	cmd := exec.CommandContext(ctx, r.pythonBin(), args...)
 	cmd.Env = os.Environ()
-	if r.OpenAIBaseURL != "" {
-		cmd.Env = append(cmd.Env,
-			"HELIOS_PRE_LUMOS_OPENAI_BASE_URL="+r.OpenAIBaseURL,
-			"OPENAI_BASE_URL="+r.OpenAIBaseURL,
-		)
-	}
 	stdoutBuf := newCappedBuffer(r.maxStdout())
 	stderrBuf := newCappedBuffer(r.maxStderr())
 	cmd.Stdout = stdoutBuf

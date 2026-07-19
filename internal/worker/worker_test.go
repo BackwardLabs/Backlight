@@ -278,6 +278,10 @@ func TestWorkerXFeedPublishesXThreadThenTelegram(t *testing.T) {
 				"expires_in":   7200,
 				"token_type":   "bearer",
 			})
+		case "/2/users/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]string{"id": "account-id", "username": "BackwardLabs"},
+			})
 		case "/2/tweets":
 			xPostCount++
 			var body map[string]any
@@ -287,15 +291,37 @@ func TestWorkerXFeedPublishesXThreadThenTelegram(t *testing.T) {
 			switch xPostCount {
 			case 1:
 				text := body["text"].(string)
-				if !strings.Contains(text, "[Backlight Initial Analysis]") || !strings.Contains(text, "Need more detail? Check our repo and analysis thread below ↓ 🧵") {
+				for _, want := range []string{
+					"🚨 yETH — Under review",
+					"Key info",
+					"TL;DR",
+					"Why it matters",
+					"Builder takeaway",
+				} {
+					if !strings.Contains(text, want) {
+						t.Fatalf("main X body missing %q: %q", want, text)
+					}
+				}
+				if strings.Contains(text, "[Backlight") || strings.Contains(text, "Tx: ") {
 					t.Fatalf("main X body = %q", text)
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": "main-id", "text": text}})
 			case 2:
 				text := body["text"].(string)
 				reply, ok := body["reply"].(map[string]any)
-				if !ok || reply["in_reply_to_tweet_id"] != "main-id" || !strings.Contains(text, "1/ Artifacts + analysis 🧾") {
+				if !ok || reply["in_reply_to_tweet_id"] != "main-id" {
 					t.Fatalf("reply X body = %#v", body)
+				}
+				for _, want := range []string{
+					"Artifacts + analysis 🧾",
+					"- Report: https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/yETH/README.md",
+					"- PoC: https://github.com/BackwardLabs/Q1-2026/blob/main/test/2026-01/yETH/yETH.t.sol",
+					"Analysis:\nAt a high level,",
+					"Explorer:\nhttps://etherscan.io/tx/0x" + strings.Repeat("8", 64),
+				} {
+					if !strings.Contains(text, want) {
+						t.Fatalf("reply X body missing %q: %#v", want, body)
+					}
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": "reply-id", "text": text}})
 			default:

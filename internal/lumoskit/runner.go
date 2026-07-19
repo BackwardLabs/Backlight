@@ -56,7 +56,7 @@ func (o RunOptions) stages() []string {
 type Runner struct {
 	// Binary is the lumoskit executable path. Defaults to "bin/lumoskit"
 	// resolved against the process working directory; can be overridden via
-	// env (HELIOS_LUMOSKIT_BIN) for tests and bundled images.
+	// env (BACKLIGHT_LUMOSKIT_BIN) for tests and bundled images.
 	Binary string
 
 	// MaxStderrBytes bounds how much stderr we keep for diagnosis (avoids

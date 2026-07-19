@@ -6,8 +6,8 @@ import (
 )
 
 func TestLoadConfigDefaultsDirectModeFromBacklightLegacyEnv(t *testing.T) {
-	t.Setenv("HELIOS_LISTEN_ADDR", "127.0.0.1:18080")
-	t.Setenv("HELIOS_API_TOKEN", "test-token")
+	t.Setenv("BACKLIGHT_LISTEN_ADDR", "127.0.0.1:18080")
+	t.Setenv("BACKLIGHT_API_TOKEN", "test-token")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -24,7 +24,7 @@ func TestLoadConfigDefaultsDirectModeFromBacklightLegacyEnv(t *testing.T) {
 func TestLoadConfigDefaultsBridgeOutputBaseFromBridgeDB(t *testing.T) {
 	dataDir := t.TempDir()
 	bridgeDB := filepath.Join(dataDir, "helios-mcp-bridge.db")
-	t.Setenv("HELIOS_MCP_BRIDGE_DB_PATH", bridgeDB)
+	t.Setenv("BACKLIGHT_MCP_BRIDGE_DB_PATH", bridgeDB)
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -47,9 +47,9 @@ func TestOutputBaseExplicitEnvWins(t *testing.T) {
 }
 
 func TestLoadConfigHTTPModeUsesAPITokenForMCPAuth(t *testing.T) {
-	t.Setenv("HELIOS_BASE_URL", "http://127.0.0.1:8080")
-	t.Setenv("HELIOS_API_TOKEN", "api-token")
-	t.Setenv("HELIOS_MCP_LISTEN_ADDR", "127.0.0.1:8090")
+	t.Setenv("BACKLIGHT_BASE_URL", "http://127.0.0.1:8080")
+	t.Setenv("BACKLIGHT_API_TOKEN", "api-token")
+	t.Setenv("BACKLIGHT_MCP_LISTEN_ADDR", "127.0.0.1:8090")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -67,11 +67,11 @@ func TestLoadConfigHTTPModeUsesAPITokenForMCPAuth(t *testing.T) {
 }
 
 func TestLoadConfigHTTPModeAllowsSeparateMCPToken(t *testing.T) {
-	t.Setenv("HELIOS_BASE_URL", "http://127.0.0.1:8080")
-	t.Setenv("HELIOS_API_TOKEN", "api-token")
-	t.Setenv("HELIOS_MCP_LISTEN_ADDR", "127.0.0.1:8090")
-	t.Setenv("HELIOS_MCP_HTTP_TOKEN", "mcp-token")
-	t.Setenv("HELIOS_MCP_PATH", "mcp")
+	t.Setenv("BACKLIGHT_BASE_URL", "http://127.0.0.1:8080")
+	t.Setenv("BACKLIGHT_API_TOKEN", "api-token")
+	t.Setenv("BACKLIGHT_MCP_LISTEN_ADDR", "127.0.0.1:8090")
+	t.Setenv("BACKLIGHT_MCP_HTTP_TOKEN", "mcp-token")
+	t.Setenv("BACKLIGHT_MCP_PATH", "mcp")
 
 	cfg, err := loadConfig()
 	if err != nil {

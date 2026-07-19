@@ -1,2 +1,1 @@
-openai>=2.25.0
-openai-agents
+openai-codex==0.1.0b3

@@ -20,7 +20,15 @@ func TestRunnerUsesLumoskitRepoRootForBinaryUnderBin(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", res.ExitCode, string(res.Stderr))
 	}
 	got := strings.TrimSpace(mustRead(t, filepath.Join(outputRoot, "cwd.txt")))
-	if got != root {
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("stat lumoskit cwd %q: %v", got, err)
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatalf("stat repo root %q: %v", root, err)
+	}
+	if !os.SameFile(gotInfo, rootInfo) {
 		t.Fatalf("lumoskit cwd = %q, want repo root %q", got, root)
 	}
 	if res.SummaryMissing {

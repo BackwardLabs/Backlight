@@ -11,7 +11,6 @@ import (
 	"io"
 	"math/big"
 	"mime"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -46,11 +45,21 @@ type Config struct {
 	// Mentions resolves the victim protocol's official @handle. Nil = disabled
 	// (plain protocol name).
 	Mentions *mention.Index
+	// MentionResolver performs publish-time X MCP verification for the legacy
+	// non-xfeed publishing path.
+	MentionResolver mention.Resolver
 }
 
 type Publisher struct {
-	Config Config
-	Client *http.Client
+	Config      Config
+	Client      *http.Client
+	TokenSource AccessTokenSource
+}
+
+// AccessTokenSource lets publishing share the same serialized, cached OAuth
+// token source as X MCP account verification.
+type AccessTokenSource interface {
+	AccessToken(context.Context) (string, error)
 }
 
 type Case struct {
@@ -117,6 +126,13 @@ type uploadMediaResponse struct {
 	} `json:"data"`
 }
 
+type authenticatedUserResponse struct {
+	Data struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+	} `json:"data"`
+}
+
 type postOptions struct {
 	ReplyToID string
 	MediaIDs  []string
@@ -150,7 +166,7 @@ func (p *Publisher) Publish(ctx context.Context, c Case) (*Result, error) {
 	if !p.Configured() {
 		return nil, errors.New("x publisher is not enabled")
 	}
-	text, err := buildPost(c, p.Config.TemplatePath, p.Config.Mentions)
+	text, err := buildPostContext(ctx, c, p.Config.TemplatePath, p.Config.Mentions, p.Config.MentionResolver)
 	if err != nil {
 		return nil, err
 	}
@@ -181,47 +197,62 @@ func (p *Publisher) publishThread(ctx context.Context, thread Thread, template s
 	if p.Config.DryRun {
 		return result, nil
 	}
-	refreshToken, err := p.refreshToken()
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(p.Config.ClientID) == "" || strings.TrimSpace(p.Config.ClientSecret) == "" || refreshToken == "" {
-		return nil, errors.New("x publisher requires X_CLIENT_ID, X_CLIENT_SECRET, and X_REFRESH_TOKEN")
-	}
 	client := p.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
-	token, err := p.refreshAccessToken(ctx, client, refreshToken)
-	if err != nil {
-		return nil, err
+	var accessToken string
+	var refreshReturned, refreshUpdated bool
+	if p.TokenSource != nil {
+		var err error
+		accessToken, err = p.TokenSource.AccessToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		refreshToken, err := p.refreshToken()
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.Config.ClientID) == "" || strings.TrimSpace(p.Config.ClientSecret) == "" || refreshToken == "" {
+			return nil, errors.New("x publisher requires X_CLIENT_ID, X_CLIENT_SECRET, and X_REFRESH_TOKEN")
+		}
+		token, err := p.refreshAccessToken(ctx, client, refreshToken)
+		if err != nil {
+			return nil, err
+		}
+		refreshUpdated, err = p.storeRotatedRefreshToken(token)
+		if err != nil {
+			return nil, err
+		}
+		accessToken = token.AccessToken
+		refreshReturned = strings.TrimSpace(token.RefreshToken) != ""
 	}
-	refreshUpdated, err := p.storeRotatedRefreshToken(token)
-	if err != nil {
+	if err := p.verifyAuthenticatedUser(ctx, client, accessToken); err != nil {
 		return nil, err
 	}
 	var mediaIDs []string
 	if mediaPath := strings.TrimSpace(thread.MediaPath); mediaPath != "" {
-		media, err := p.uploadMedia(ctx, client, token.AccessToken, mediaPath)
+		media, err := p.uploadMedia(ctx, client, accessToken, mediaPath)
 		if err != nil {
 			return nil, err
 		}
 		result.MediaID = media.Data.ID
 		mediaIDs = append(mediaIDs, media.Data.ID)
 	}
-	post, err := p.createPost(ctx, client, token.AccessToken, text, postOptions{MediaIDs: mediaIDs})
+	post, err := p.createPost(ctx, client, accessToken, text, postOptions{MediaIDs: mediaIDs})
 	if err != nil {
 		return nil, err
 	}
-	textVerified := p.verifyCreatedPost(ctx, client, token.AccessToken, post.Data.ID, text, post.Data.Text)
+	textVerified := p.verifyCreatedPost(ctx, client, accessToken, post.Data.ID, text, post.Data.Text)
 	var replyVerified bool
 	var reply *createPostResponse
 	if replyText != "" {
-		reply, err = p.createPost(ctx, client, token.AccessToken, replyText, postOptions{ReplyToID: post.Data.ID})
+		reply, err = p.createPost(ctx, client, accessToken, replyText, postOptions{ReplyToID: post.Data.ID})
 		if err != nil {
 			return nil, err
 		}
-		replyVerified = p.verifyCreatedPost(ctx, client, token.AccessToken, reply.Data.ID, replyText, reply.Data.Text)
+		replyVerified = p.verifyCreatedPost(ctx, client, accessToken, reply.Data.ID, replyText, reply.Data.Text)
 	}
 	result.Published = true
 	result.DryRun = false
@@ -231,7 +262,7 @@ func (p *Publisher) publishThread(ctx context.Context, thread Thread, template s
 		result.ReplyPostID = reply.Data.ID
 		result.ReplyPostURL = p.postURL(reply.Data.ID)
 	}
-	result.RefreshReturned = strings.TrimSpace(token.RefreshToken) != ""
+	result.RefreshReturned = refreshReturned
 	result.RefreshTokenUpdated = refreshUpdated
 	result.PostTextVerified = textVerified
 	result.ReplyTextVerified = replyVerified
@@ -347,35 +378,30 @@ func writeSecretFile(path string, data []byte) error {
 }
 
 func (p *Publisher) uploadMedia(ctx context.Context, client *http.Client, accessToken, mediaPath string) (*uploadMediaResponse, error) {
-	source, fileName, mediaType, err := p.openMediaSource(ctx, client, mediaPath)
+	source, _, mediaType, err := p.openMediaSource(ctx, client, mediaPath)
 	if err != nil {
 		return nil, err
 	}
 	defer source.Close()
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("media", fileName)
+	media, err := io.ReadAll(source)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := io.Copy(part, source); err != nil {
+	body, err := json.Marshal(map[string]any{
+		"media":          base64.StdEncoding.EncodeToString(media),
+		"media_category": defaultMediaCategory,
+		"media_type":     mediaType,
+		"shared":         false,
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err := writer.WriteField("media_category", defaultMediaCategory); err != nil {
-		return nil, err
-	}
-	if err := writer.WriteField("media_type", mediaType); err != nil {
-		return nil, err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.APIBase+"/2/media/upload", &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.APIBase+"/2/media/upload", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "backlight-x-publisher/1")
 	var out uploadMediaResponse
 	if err := doJSON(client, req, &out); err != nil {
@@ -385,6 +411,31 @@ func (p *Publisher) uploadMedia(ctx context.Context, client *http.Client, access
 		return nil, errors.New("x media upload response did not include data.id")
 	}
 	return &out, nil
+}
+
+func (p *Publisher) verifyAuthenticatedUser(ctx context.Context, client *http.Client, accessToken string) error {
+	expected := strings.Trim(strings.TrimSpace(p.Config.Username), "@")
+	if expected == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Config.APIBase+"/2/users/me", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", "backlight-x-publisher/1")
+	var out authenticatedUserResponse
+	if err := doJSON(client, req, &out); err != nil {
+		return fmt.Errorf("verify x publishing account: %w", err)
+	}
+	actual := strings.Trim(strings.TrimSpace(out.Data.Username), "@")
+	if actual == "" {
+		return errors.New("verify x publishing account: response did not include data.username")
+	}
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("verify x publishing account: authenticated as @%s, expected @%s", actual, expected)
+	}
+	return nil
 }
 
 func (p *Publisher) openMediaSource(ctx context.Context, client *http.Client, mediaPath string) (io.ReadCloser, string, string, error) {
@@ -531,6 +582,10 @@ func BuildPostWithTemplate(c Case, templatePath string) (string, error) {
 }
 
 func buildPost(c Case, templatePath string, mentions *mention.Index) (string, error) {
+	return buildPostContext(context.Background(), c, templatePath, mentions, nil)
+}
+
+func buildPostContext(ctx context.Context, c Case, templatePath string, mentions *mention.Index, resolver mention.Resolver) (string, error) {
 	if strings.TrimSpace(c.OutputRoot) == "" {
 		return "", errors.New("output_root is required for x publish")
 	}
@@ -560,7 +615,11 @@ func buildPost(c Case, templatePath string, mentions *mention.Index) (string, er
 	allText := strings.Join([]string{report, rca, attackFlow, string(summary), string(reportJSON), string(assetDeltas)}, "\n")
 
 	protocol := firstText(jsonString(summary, "protocol_name"), jsonString(summary, "protocol"), protocolFromSlug(c.IncidentSlug), protocolFromSlug(filepath.Base(c.OutputRoot)), field(report, "Protocol"), jsonString(reportJSON, "protocol_name", "protocol"), titleFromSlug(c.IncidentSlug), titleFromSlug(filepath.Base(c.OutputRoot)), "unknown")
-	protocol = mention.FormatTag(mentions, protocol)
+	if resolver != nil {
+		protocol, _ = mention.FormatTagContext(ctx, resolver, protocol)
+	} else {
+		protocol = mention.FormatTag(mentions, protocol)
+	}
 	chain := firstText(c.Chain, jsonString(summary, "chain"), jsonString(reportJSON, "chain"), field(report, "Chain"), "unknown")
 	tx := firstText(c.TxHash, txHash(allText), "unknown")
 	rootCause := rootCauseLine(reportJSON, rca, report)

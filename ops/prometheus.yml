@@ -12,6 +12,6 @@ scrape_configs:
       type: Bearer
       credentials_file: /etc/prometheus/token
     static_configs:
-      - targets: ['__HELIOS_HOST__']
+      - targets: ['__BACKLIGHT_HOST__']
         labels:
           instance: backlight-local

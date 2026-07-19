@@ -41,11 +41,18 @@ type Config struct {
 	XDryRun                           bool
 	XFeedEnabled                      bool
 	XFeedSkillDir                     string
-	XFeedIncludeAttackerCA            bool
 	XFeedCardEnabled                  bool
 	XFeedCardPythonBin                string
 	XFeedCardTimeoutSeconds           int
 	VictimMentionEnabled              bool
+	XMCPEnabled                       bool
+	XMCPURL                           string
+	XMCPBearerToken                   string
+	XMCPCommand                       string
+	XMCPArgs                          []string
+	XMCPTimeoutSeconds                int
+	XMentionCachedMaxAgeHours         int
+	XMentionReverifyHours             int
 	TelegramPublishEnabled            bool
 	PreLumosEnabled                   bool
 	PreLumosPythonBin                 string
@@ -54,7 +61,6 @@ type Config struct {
 	PreLumosSeedRoot                  string
 	PreLumosYear                      string
 	PreLumosModel                     string
-	PreLumosOpenAIBaseURL             string
 	PreLumosWebSearch                 bool
 	IncidentResolverEnabled           bool
 	EtherscanAPIKey                   string
@@ -74,28 +80,28 @@ func Load() (*Config, error) {
 	loadDotEnvFiles(".env", ".env.local")
 
 	c := &Config{
-		APIToken:                          os.Getenv("HELIOS_API_TOKEN"),
-		ECWExportToken:                    os.Getenv("HELIOS_ECW_EXPORT_TOKEN"),
-		ECWExportMaxBytes:                 envInt64("HELIOS_ECW_EXPORT_MAX_BYTES", 0),
-		DBPath:                            os.Getenv("HELIOS_DB_PATH"),
-		OutputRoot:                        os.Getenv("HELIOS_OUTPUT_ROOT"),
-		ListenAddr:                        envDefault("HELIOS_LISTEN_ADDR", ":8080"),
-		MaxConcurrent:                     envInt("HELIOS_MAX_CONCURRENT_LUMOSKIT", 2),
-		LumoskitBin:                       envDefault("HELIOS_LUMOSKIT_BIN", "bin/lumoskit"),
-		WorkerPollMillis:                  envInt("HELIOS_WORKER_POLL_MILLIS", 1000),
-		DownstreamURLs:                    splitCSV(os.Getenv("HELIOS_DOWNSTREAM_WEBHOOK_URLS")),
-		DownstreamBearer:                  os.Getenv("HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN"),
+		APIToken:                          os.Getenv("BACKLIGHT_API_TOKEN"),
+		ECWExportToken:                    os.Getenv("BACKLIGHT_ECW_EXPORT_TOKEN"),
+		ECWExportMaxBytes:                 envInt64("BACKLIGHT_ECW_EXPORT_MAX_BYTES", 0),
+		DBPath:                            os.Getenv("BACKLIGHT_DB_PATH"),
+		OutputRoot:                        os.Getenv("BACKLIGHT_OUTPUT_ROOT"),
+		ListenAddr:                        envDefault("BACKLIGHT_LISTEN_ADDR", ":8080"),
+		MaxConcurrent:                     envInt("BACKLIGHT_MAX_CONCURRENT_LUMOSKIT", 2),
+		LumoskitBin:                       envDefault("BACKLIGHT_LUMOSKIT_BIN", "bin/lumoskit"),
+		WorkerPollMillis:                  envInt("BACKLIGHT_WORKER_POLL_MILLIS", 1000),
+		DownstreamURLs:                    splitCSV(os.Getenv("BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS")),
+		DownstreamBearer:                  os.Getenv("BACKLIGHT_DOWNSTREAM_WEBHOOK_BEARER_TOKEN"),
 		OperatorWebhook:                   os.Getenv("OPERATOR_NOTIFY_WEBHOOK_URL"),
 		TelegramBotToken:                  os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramChatID:                    os.Getenv("TELEGRAM_CHAT_ID"),
-		TelegramAPIBase:                   os.Getenv("HELIOS_TELEGRAM_API_BASE"),
+		TelegramAPIBase:                   os.Getenv("BACKLIGHT_TELEGRAM_API_BASE"),
 		TelegramCommandEnabled:            envBool("TELEGRAM_COMMAND_ENABLED", false),
 		TelegramAllowedChatIDs:            splitCSV(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		TelegramCommandPollTimeoutSeconds: envInt("TELEGRAM_COMMAND_POLL_TIMEOUT_SECONDS", 30),
 		GitHubToken:                       firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
-		GitHubOwner:                       envDefault("HELIOS_GITHUB_PUBLISH_OWNER", "BackwardLabs"),
-		GitHubRepo:                        envDefault("HELIOS_GITHUB_PUBLISH_REPO", "Q1-2026"),
-		GitHubBranch:                      envDefault("HELIOS_GITHUB_PUBLISH_BRANCH", "main"),
+		GitHubOwner:                       envDefault("BACKLIGHT_GITHUB_PUBLISH_OWNER", "BackwardLabs"),
+		GitHubRepo:                        envDefault("BACKLIGHT_GITHUB_PUBLISH_REPO", "Q1-2026"),
+		GitHubBranch:                      envDefault("BACKLIGHT_GITHUB_PUBLISH_BRANCH", "main"),
 		XPublishEnabled:                   envBool("X_PUBLISH_ENABLED", false),
 		XClientID:                         os.Getenv("X_CLIENT_ID"),
 		XClientSecret:                     os.Getenv("X_CLIENT_SECRET"),
@@ -105,54 +111,57 @@ func Load() (*Config, error) {
 		XAPIBase:                          envDefault("X_API_BASE", "https://api.x.com"),
 		XUsername:                         os.Getenv("X_ACCOUNT_USERNAME"),
 		XDryRun:                           envBool("X_DRY_RUN", true),
-		XFeedEnabled:                      envBool("HELIOS_X_FEED_ENABLED", false),
-		XFeedSkillDir:                     envDefault("HELIOS_X_FEED_SKILL_DIR", "skills/x-feed"),
-		XFeedIncludeAttackerCA:            envBool("HELIOS_X_FEED_INCLUDE_ATTACKER_CA", false),
-		XFeedCardEnabled:                  envBool("HELIOS_X_FEED_CARD_ENABLED", true),
-		XFeedCardPythonBin:                envDefault("HELIOS_X_FEED_CARD_PYTHON_BIN", "python3"),
-		XFeedCardTimeoutSeconds:           envInt("HELIOS_X_FEED_CARD_TIMEOUT_SECONDS", 20),
-		VictimMentionEnabled:              envBool("HELIOS_VICTIM_MENTION", true),
+		XFeedEnabled:                      envBool("BACKLIGHT_X_FEED_ENABLED", false),
+		XFeedSkillDir:                     envDefault("BACKLIGHT_X_FEED_SKILL_DIR", "skills/x-feed"),
+		XFeedCardEnabled:                  envBool("BACKLIGHT_X_FEED_CARD_ENABLED", true),
+		XFeedCardPythonBin:                envDefault("BACKLIGHT_X_FEED_CARD_PYTHON_BIN", "python3"),
+		XFeedCardTimeoutSeconds:           envInt("BACKLIGHT_X_FEED_CARD_TIMEOUT_SECONDS", 20),
+		VictimMentionEnabled:              envBool("BACKLIGHT_VICTIM_MENTION", true),
+		XMCPEnabled:                       envBool("BACKLIGHT_X_MCP_ENABLED", false),
+		XMCPURL:                           envDefault("BACKLIGHT_X_MCP_URL", "https://api.x.com/mcp"),
+		XMCPBearerToken:                   firstNonEmpty(os.Getenv("BACKLIGHT_X_MCP_BEARER_TOKEN"), os.Getenv("X_BEARER_TOKEN")),
+		XMCPCommand:                       envDefault("BACKLIGHT_X_MCP_COMMAND", "xurl"),
+		XMCPArgs:                          strings.Fields(envDefault("BACKLIGHT_X_MCP_ARGS", "mcp https://api.x.com/mcp")),
+		XMCPTimeoutSeconds:                envInt("BACKLIGHT_X_MCP_TIMEOUT_SECONDS", 20),
+		XMentionCachedMaxAgeHours:         envInt("BACKLIGHT_X_MENTION_CACHE_MAX_AGE_HOURS", 168),
+		XMentionReverifyHours:             envInt("BACKLIGHT_X_MENTION_REVERIFY_HOURS", 24),
 		TelegramPublishEnabled:            envBool("TELEGRAM_PUBLISH_ENABLED", false),
-		PreLumosEnabled:                   envBool("HELIOS_PRE_LUMOS_ENABLED", false),
-		PreLumosPythonBin:                 envDefault("HELIOS_PRE_LUMOS_PYTHON_BIN", "python3"),
-		PreLumosAgentScript:               envDefault("HELIOS_PRE_LUMOS_AGENT_SCRIPT", "scripts/pre_lumos_agent.py"),
-		PreLumosSkillDir:                  envDefault("HELIOS_PRE_LUMOS_SKILL_DIR", "skills/pre-lumos"),
-		PreLumosSeedRoot:                  os.Getenv("HELIOS_PRE_LUMOS_SEED_ROOT"),
-		PreLumosYear:                      os.Getenv("HELIOS_PRE_LUMOS_YEAR"),
-		PreLumosModel:                     firstNonEmpty(os.Getenv("HELIOS_PRE_LUMOS_MODEL"), os.Getenv("OPENAI_MODEL")),
-		PreLumosOpenAIBaseURL:             envDefault("HELIOS_PRE_LUMOS_OPENAI_BASE_URL", "http://127.0.0.1:10631/v1"),
-		PreLumosWebSearch:                 envBool("HELIOS_PRE_LUMOS_WEB_SEARCH", false),
-		IncidentResolverEnabled:           envBool("HELIOS_INCIDENT_RESOLVER_ENABLED", true),
-		EtherscanAPIKey:                   firstNonEmpty(os.Getenv("HELIOS_ETHERSCAN_API_KEY"), os.Getenv("ETHERSCAN_API_KEY")),
-		EtherscanBaseURL:                  envDefault("HELIOS_ETHERSCAN_BASE_URL", "https://api.etherscan.io/v2/api"),
-		IncidentRPCURL:                    firstNonEmpty(os.Getenv("HELIOS_INCIDENT_RPC_URL"), os.Getenv("CEFG_LIVE_RPC_URL"), os.Getenv("RPC_URL"), os.Getenv("ETH_RPC_URL")),
-		PartialAutoRerunMaxAttempts:       envInt("HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS", 3),
-		HandoffRetryMaxAttempts:           envInt("HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS", 5),
-		HandoffRetryBackoffBaseSeconds:    envInt("HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS", 2),
-		HandoffRetryBackoffMaxSeconds:     envInt("HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS", 300),
-		NotifyRetryMaxAttempts:            envInt("HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS", 5),
-		NotifyRetryBackoffBaseSeconds:     envInt("HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS", 2),
-		NotifyRetryBackoffMaxSeconds:      envInt("HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS", 300),
+		PreLumosEnabled:                   envBool("BACKLIGHT_PRE_LUMOS_ENABLED", false),
+		PreLumosPythonBin:                 envDefault("BACKLIGHT_PRE_LUMOS_PYTHON_BIN", "python3"),
+		PreLumosAgentScript:               envDefault("BACKLIGHT_PRE_LUMOS_AGENT_SCRIPT", "scripts/pre_lumos_agent.py"),
+		PreLumosSkillDir:                  envDefault("BACKLIGHT_PRE_LUMOS_SKILL_DIR", "skills/pre-lumos"),
+		PreLumosSeedRoot:                  os.Getenv("BACKLIGHT_PRE_LUMOS_SEED_ROOT"),
+		PreLumosYear:                      os.Getenv("BACKLIGHT_PRE_LUMOS_YEAR"),
+		PreLumosModel:                     os.Getenv("BACKLIGHT_PRE_LUMOS_MODEL"),
+		PreLumosWebSearch:                 envBool("BACKLIGHT_PRE_LUMOS_WEB_SEARCH", false),
+		IncidentResolverEnabled:           envBool("BACKLIGHT_INCIDENT_RESOLVER_ENABLED", true),
+		EtherscanAPIKey:                   firstNonEmpty(os.Getenv("BACKLIGHT_ETHERSCAN_API_KEY"), os.Getenv("ETHERSCAN_API_KEY")),
+		EtherscanBaseURL:                  envDefault("BACKLIGHT_ETHERSCAN_BASE_URL", "https://api.etherscan.io/v2/api"),
+		IncidentRPCURL:                    firstNonEmpty(os.Getenv("BACKLIGHT_INCIDENT_RPC_URL"), os.Getenv("CEFG_LIVE_RPC_URL"), os.Getenv("RPC_URL"), os.Getenv("ETH_RPC_URL")),
+		PartialAutoRerunMaxAttempts:       envInt("BACKLIGHT_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS", 3),
+		HandoffRetryMaxAttempts:           envInt("BACKLIGHT_HANDOFF_RETRY_MAX_ATTEMPTS", 5),
+		HandoffRetryBackoffBaseSeconds:    envInt("BACKLIGHT_HANDOFF_RETRY_BACKOFF_BASE_SECONDS", 2),
+		HandoffRetryBackoffMaxSeconds:     envInt("BACKLIGHT_HANDOFF_RETRY_BACKOFF_MAX_SECONDS", 300),
+		NotifyRetryMaxAttempts:            envInt("BACKLIGHT_NOTIFY_RETRY_MAX_ATTEMPTS", 5),
+		NotifyRetryBackoffBaseSeconds:     envInt("BACKLIGHT_NOTIFY_RETRY_BACKOFF_BASE_SECONDS", 2),
+		NotifyRetryBackoffMaxSeconds:      envInt("BACKLIGHT_NOTIFY_RETRY_BACKOFF_MAX_SECONDS", 300),
 	}
 
 	if c.APIToken == "" {
-		return nil, errors.New("HELIOS_API_TOKEN is required")
+		return nil, errors.New("BACKLIGHT_API_TOKEN is required")
 	}
 	if c.DBPath == "" {
-		return nil, errors.New("HELIOS_DB_PATH is required")
+		return nil, errors.New("BACKLIGHT_DB_PATH is required")
 	}
 	if c.OutputRoot == "" {
-		return nil, errors.New("HELIOS_OUTPUT_ROOT is required")
+		return nil, errors.New("BACKLIGHT_OUTPUT_ROOT is required")
 	}
 	if strings.TrimSpace(c.ECWExportToken) != "" && strings.TrimSpace(c.ECWExportToken) == strings.TrimSpace(c.APIToken) {
-		return nil, errors.New("HELIOS_ECW_EXPORT_TOKEN must differ from HELIOS_API_TOKEN")
+		return nil, errors.New("BACKLIGHT_ECW_EXPORT_TOKEN must differ from BACKLIGHT_API_TOKEN")
 	}
 	if c.PreLumosEnabled {
 		if c.PreLumosSeedRoot == "" {
-			return nil, errors.New("HELIOS_PRE_LUMOS_SEED_ROOT is required when HELIOS_PRE_LUMOS_ENABLED=true")
-		}
-		if os.Getenv("OPENAI_API_KEY") == "" {
-			return nil, errors.New("OPENAI_API_KEY is required when HELIOS_PRE_LUMOS_ENABLED=true")
+			return nil, errors.New("BACKLIGHT_PRE_LUMOS_SEED_ROOT is required when BACKLIGHT_PRE_LUMOS_ENABLED=true")
 		}
 	}
 	return c, nil

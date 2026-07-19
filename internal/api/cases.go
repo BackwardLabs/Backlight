@@ -163,7 +163,7 @@ func (s *Server) handleRetryHandoff(w http.ResponseWriter, r *http.Request) {
 	if s.Dispatcher == nil || !s.Dispatcher.Configured() {
 		writeJSON(w, http.StatusConflict, ErrorBody{
 			ErrorCode:     "handoff_not_retryable",
-			Message:       "no downstream URLs are configured (HELIOS_DOWNSTREAM_WEBHOOK_URLS is empty)",
+			Message:       "no downstream URLs are configured (BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS is empty)",
 			State:         c.State,
 			HandoffStatus: c.HandoffStatus,
 		})

@@ -65,16 +65,16 @@ type config struct {
 
 func loadConfig() (*config, error) {
 	cfg := &config{
-		ListenAddr:    envDefault("HELIOS_MCP_BRIDGE_LISTEN_ADDR", "127.0.0.1:9090"),
-		DBPath:        os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH"),
-		Token:         os.Getenv("HELIOS_MCP_BRIDGE_TOKEN"),
-		AllowInsecure: envBool("HELIOS_MCP_BRIDGE_ALLOW_INSECURE", false),
+		ListenAddr:    envDefault("BACKLIGHT_MCP_BRIDGE_LISTEN_ADDR", "127.0.0.1:9090"),
+		DBPath:        os.Getenv("BACKLIGHT_MCP_BRIDGE_DB_PATH"),
+		Token:         os.Getenv("BACKLIGHT_MCP_BRIDGE_TOKEN"),
+		AllowInsecure: envBool("BACKLIGHT_MCP_BRIDGE_ALLOW_INSECURE", false),
 	}
 	if cfg.DBPath == "" {
-		return nil, fmt.Errorf("HELIOS_MCP_BRIDGE_DB_PATH is required")
+		return nil, fmt.Errorf("BACKLIGHT_MCP_BRIDGE_DB_PATH is required")
 	}
 	if cfg.Token == "" && !cfg.AllowInsecure {
-		return nil, fmt.Errorf("HELIOS_MCP_BRIDGE_TOKEN is required unless HELIOS_MCP_BRIDGE_ALLOW_INSECURE=true")
+		return nil, fmt.Errorf("BACKLIGHT_MCP_BRIDGE_TOKEN is required unless BACKLIGHT_MCP_BRIDGE_ALLOW_INSECURE=true")
 	}
 	return cfg, nil
 }

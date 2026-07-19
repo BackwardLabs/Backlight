@@ -89,29 +89,29 @@ type config struct {
 
 func loadConfig() (*config, error) {
 	cfg := &config{
-		BacklightBaseURL:  firstNonEmpty(os.Getenv("HELIOS_BASE_URL"), baseURLFromListenAddr(os.Getenv("HELIOS_LISTEN_ADDR"))),
-		BacklightAPIToken: os.Getenv("HELIOS_API_TOKEN"),
-		BridgeDBPath:      os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH"),
-		OutputBase:        outputBaseFromEnv(os.Getenv("HELIOS_OUTPUT_BASE"), os.Getenv("HELIOS_OUTPUT_ROOT"), os.Getenv("HELIOS_MCP_BRIDGE_DB_PATH")),
-		MaxBytes:          envInt64("HELIOS_MCP_MAX_BYTES", artifacts.DefaultMaxBytes),
-		HTTPTimeout:       time.Duration(envInt64("HELIOS_MCP_HTTP_TIMEOUT_SECONDS", 30)) * time.Second,
-		MCPListenAddr:     strings.TrimSpace(os.Getenv("HELIOS_MCP_LISTEN_ADDR")),
-		MCPPath:           envDefault("HELIOS_MCP_PATH", "/mcp"),
-		MCPHTTPToken:      firstNonEmpty(os.Getenv("HELIOS_MCP_HTTP_TOKEN"), os.Getenv("HELIOS_API_TOKEN")),
+		BacklightBaseURL:  firstNonEmpty(os.Getenv("BACKLIGHT_BASE_URL"), baseURLFromListenAddr(os.Getenv("BACKLIGHT_LISTEN_ADDR"))),
+		BacklightAPIToken: os.Getenv("BACKLIGHT_API_TOKEN"),
+		BridgeDBPath:      os.Getenv("BACKLIGHT_MCP_BRIDGE_DB_PATH"),
+		OutputBase:        outputBaseFromEnv(os.Getenv("BACKLIGHT_OUTPUT_BASE"), os.Getenv("BACKLIGHT_OUTPUT_ROOT"), os.Getenv("BACKLIGHT_MCP_BRIDGE_DB_PATH")),
+		MaxBytes:          envInt64("BACKLIGHT_MCP_MAX_BYTES", artifacts.DefaultMaxBytes),
+		HTTPTimeout:       time.Duration(envInt64("BACKLIGHT_MCP_HTTP_TIMEOUT_SECONDS", 30)) * time.Second,
+		MCPListenAddr:     strings.TrimSpace(os.Getenv("BACKLIGHT_MCP_LISTEN_ADDR")),
+		MCPPath:           envDefault("BACKLIGHT_MCP_PATH", "/mcp"),
+		MCPHTTPToken:      firstNonEmpty(os.Getenv("BACKLIGHT_MCP_HTTP_TOKEN"), os.Getenv("BACKLIGHT_API_TOKEN")),
 	}
 	if cfg.BridgeDBPath == "" {
 		if cfg.BacklightBaseURL == "" {
-			return nil, fmt.Errorf("HELIOS_BASE_URL is required unless HELIOS_MCP_BRIDGE_DB_PATH is set")
+			return nil, fmt.Errorf("BACKLIGHT_BASE_URL is required unless BACKLIGHT_MCP_BRIDGE_DB_PATH is set")
 		}
 		if cfg.BacklightAPIToken == "" {
-			return nil, fmt.Errorf("HELIOS_API_TOKEN is required unless HELIOS_MCP_BRIDGE_DB_PATH is set")
+			return nil, fmt.Errorf("BACKLIGHT_API_TOKEN is required unless BACKLIGHT_MCP_BRIDGE_DB_PATH is set")
 		}
 	}
 	if cfg.BridgeDBPath != "" && cfg.OutputBase == "" {
-		return nil, fmt.Errorf("HELIOS_OUTPUT_BASE or HELIOS_OUTPUT_ROOT is required for bridge mode")
+		return nil, fmt.Errorf("BACKLIGHT_OUTPUT_BASE or BACKLIGHT_OUTPUT_ROOT is required for bridge mode")
 	}
 	if cfg.MCPListenAddr != "" && cfg.MCPHTTPToken == "" {
-		return nil, fmt.Errorf("HELIOS_MCP_HTTP_TOKEN is required for HTTP mode unless HELIOS_API_TOKEN is set")
+		return nil, fmt.Errorf("BACKLIGHT_MCP_HTTP_TOKEN is required for HTTP mode unless BACKLIGHT_API_TOKEN is set")
 	}
 	return cfg, nil
 }

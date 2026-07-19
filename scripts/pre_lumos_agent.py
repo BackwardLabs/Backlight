@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the vendored Pre-Lumos skill through the OpenAI Agents SDK.
+"""Run the vendored Pre-Lumos skill through the Codex SDK.
 
 The skill bundle under skills/pre-lumos is treated as read-only source
 material. This harness supplies local case artifacts, runs the skill's
@@ -14,15 +14,23 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SKILL_DIR = REPO_ROOT / "skills" / "pre-lumos"
 CASE_ARTIFACTS = (
+    "helios_signal_context.json",
+    "report_bundle/README.md",
+    "report_bundle/report/REPORT.md",
+    "report_bundle/report/RCA.md",
+    "report_bundle/report/run_summary.json",
+    "report_bundle/poc/PoC.t.sol",
     "Report.md",
     "README.md",
     "summary.json",
@@ -104,18 +112,15 @@ def load_env_files() -> None:
                 load_dotenv_file(path)
 
 
-def configure_openai_proxy() -> None:
-    base_url = os.getenv("HELIOS_PRE_LUMOS_OPENAI_BASE_URL")
-    if base_url:
-        os.environ["OPENAI_BASE_URL"] = base_url
-    elif not os.getenv("OPENAI_BASE_URL"):
-        os.environ["OPENAI_BASE_URL"] = "http://127.0.0.1:10631/v1"
+def discard_legacy_openai_transport_env() -> None:
+    for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "BACKLIGHT_PRE_LUMOS_OPENAI_BASE_URL"):
+        os.environ.pop(key, None)
 
 
 def env_case_output_roots() -> list[str]:
     raw_values = [
-        os.getenv("HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOTS", ""),
-        os.getenv("HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOT", ""),
+        os.getenv("BACKLIGHT_PRE_LUMOS_CASE_OUTPUT_ROOTS", ""),
+        os.getenv("BACKLIGHT_PRE_LUMOS_CASE_OUTPUT_ROOT", ""),
     ]
     roots: list[str] = []
     for raw in raw_values:
@@ -456,135 +461,199 @@ def write_json_atomic(path: Path, payload: Any) -> None:
     tmp_path.replace(path)
 
 
-async def run_agent(args: argparse.Namespace, materials: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+def load_codex_sdk() -> SimpleNamespace:
     try:
-        from agents import Agent, Runner
+        from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
     except Exception as exc:  # pragma: no cover - depends on optional runtime package
-        raise PreLumosError("missing OpenAI Agents SDK; install with: pip install -r requirements-pre-lumos.txt") from exc
+        raise PreLumosError("missing Codex SDK; install with: pip install -r requirements-pre-lumos.txt") from exc
 
-    tools: list[Any] = []
-    if args.web_search:
-        try:
-            from agents import WebSearchTool
-        except Exception as exc:  # pragma: no cover - depends on optional runtime package
-            raise PreLumosError("installed Agents SDK does not expose WebSearchTool") from exc
-        tools.append(WebSearchTool(search_context_size=args.search_context_size))
+    return SimpleNamespace(
+        ApprovalMode=ApprovalMode,
+        AsyncCodex=AsyncCodex,
+        CodexConfig=CodexConfig,
+        Sandbox=Sandbox,
+    )
+
+
+def codex_working_directory(args: argparse.Namespace) -> Path:
+    for output_root in args.case_output_root:
+        path = Path(output_root).resolve()
+        if path.is_dir():
+            return path
+    return REPO_ROOT
+
+
+async def run_codex_turn(
+    codex: Any,
+    sdk: SimpleNamespace,
+    *,
+    cwd: Path,
+    instructions: str,
+    prompt: str,
+    model: str | None,
+    service_name: str,
+) -> str:
+    try:
+        thread = await codex.thread_start(
+            approval_mode=sdk.ApprovalMode.deny_all,
+            cwd=str(cwd),
+            developer_instructions=instructions,
+            ephemeral=True,
+            model=model,
+            sandbox=sdk.Sandbox.read_only,
+            service_name=service_name,
+        )
+        result = await thread.run(
+            prompt,
+            cwd=str(cwd),
+            model=model,
+            sandbox=sdk.Sandbox.read_only,
+        )
+    except Exception as exc:  # pragma: no cover - depends on Codex runtime/auth
+        raise PreLumosError(f"Codex SDK turn failed ({service_name}): {type(exc).__name__}: {exc}") from exc
+
+    if result.error is not None:
+        raise PreLumosError(f"Codex SDK turn failed ({service_name}): {result.error}")
+    output = (result.final_response or "").strip()
+    if not output:
+        raise PreLumosError(f"Codex SDK turn returned no final response ({service_name})")
+    return output
+
+
+async def run_agent(
+    args: argparse.Namespace,
+    materials: list[dict[str, Any]],
+    *,
+    sdk: SimpleNamespace | None = None,
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    sdk = sdk or load_codex_sdk()
 
     skill_dir = Path(args.skill_dir).resolve()
     bundle = load_skill_bundle(skill_dir, args.max_skill_bytes)
     model = args.model or None
-
-    def agent_kwargs(name: str, instructions: str) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"name": name, "instructions": instructions}
-        if model:
-            kwargs["model"] = model
-        return kwargs
-
-    contract_validator = Agent(
-        **agent_kwargs(
-            "contract-validator",
-            load_skill_file(skill_dir, "agents/contract-validator.md", args.max_skill_bytes)
-            + "\nReturn only the validator finding JSON object.",
-        )
+    cwd = codex_working_directory(args)
+    contract_validator_instructions = (
+        load_skill_file(skill_dir, "agents/contract-validator.md", args.max_skill_bytes)
+        + "\nReturn only the validator finding JSON object."
     )
-    rule_validator = Agent(
-        **agent_kwargs(
-            "rule-validator",
-            load_skill_file(skill_dir, "agents/rule-validator.md", args.max_skill_bytes)
-            + "\nReturn only the validator finding JSON object.",
-        )
+    rule_validator_instructions = (
+        load_skill_file(skill_dir, "agents/rule-validator.md", args.max_skill_bytes)
+        + "\nReturn only the validator finding JSON object."
     )
-    merge_validator = Agent(
-        **agent_kwargs(
-            "merge-validator",
-            load_skill_file(skill_dir, "agents/merge-validator.md", args.max_skill_bytes)
-            + "\nReturn only the validator finding JSON object.",
-        )
+    merge_validator_instructions = (
+        load_skill_file(skill_dir, "agents/merge-validator.md", args.max_skill_bytes)
+        + "\nReturn only the validator finding JSON object."
     )
-
-    orchestrator_tools = [
-        contract_validator.as_tool(
-            tool_name="contract_validator",
-            tool_description="Read-only validator for Pre-Lumos row shape and required fields.",
-        ),
-        rule_validator.as_tool(
-            tool_name="rule_validator",
-            tool_description="Read-only validator for Pre-Lumos normalization and importer semantics.",
-        ),
-        *tools,
-    ]
-    orchestrator = Agent(
-        **agent_kwargs(
-            "pre-lumos-orchestrator",
-            guard_instructions()
-            + bundle
-            + "\nYou must use the contract_validator and rule_validator tools before finalizing rows.",
-        ),
-        tools=orchestrator_tools,
+    orchestrator_instructions = (
+        guard_instructions()
+        + bundle
+        + "\nProduce the best importer-safe rows; the harness runs independent validators before syncing."
     )
-
-    result = await Runner.run(orchestrator, build_orchestrator_prompt(args, materials), max_turns=args.max_turns)
-    output = str(result.final_output)
-    rows = normalize_rows(extract_json_array(output))
-    validate_rows(rows)
 
     reports: list[dict[str, Any]] = []
-    if not args.skip_agent_validators:
-        row_payload = json.dumps(rows, ensure_ascii=False, indent=2)
-        for validator in (contract_validator, rule_validator):
-            validation = await Runner.run(
-                validator,
-                "Validate this current-run row batch against the Pre-Lumos contract. "
-                "Return only the validator finding JSON object.\n\n"
-                f"```json\n{row_payload}\n```",
-                max_turns=args.validator_max_turns,
-            )
-            report = extract_json_object(str(validation.final_output))
-            reports.append(report)
+    web_search_mode = "live" if args.web_search else "disabled"
+    codex_bin = os.getenv("BACKLIGHT_PRE_LUMOS_CODEX_BIN") or shutil.which("codex")
+    codex_config = sdk.CodexConfig(
+        codex_bin=codex_bin,
+        cwd=str(cwd),
+        config_overrides=(f'web_search="{web_search_mode}"',),
+    )
+    async with sdk.AsyncCodex(config=codex_config) as codex:
+        output = await run_codex_turn(
+            codex,
+            sdk,
+            cwd=cwd,
+            instructions=orchestrator_instructions,
+            prompt=build_orchestrator_prompt(args, materials),
+            model=model,
+            service_name="backlight-pre-lumos",
+        )
+        rows = normalize_rows(extract_json_array(output))
+        validate_rows(rows)
 
-        if has_repairable_or_blocking_findings(reports):
-            repair_prompt = (
-                build_orchestrator_prompt(args, materials)
-                + "\n\nThe first validation pass found these issues. Repair the rows once, "
-                "respecting the Pre-Lumos repair boundaries, and return only the final fenced JSON array.\n\n"
-                f"```json\n{json.dumps(reports, ensure_ascii=False, indent=2)}\n```"
-            )
-            repaired = await Runner.run(orchestrator, repair_prompt, max_turns=args.max_turns)
-            output = str(repaired.final_output)
-            rows = normalize_rows(extract_json_array(output))
-            validate_rows(rows)
-            reports = []
+        if not args.skip_agent_validators:
             row_payload = json.dumps(rows, ensure_ascii=False, indent=2)
-            for validator in (contract_validator, rule_validator):
-                validation = await Runner.run(
-                    validator,
-                    "Revalidate this repaired current-run row batch. Return only the validator finding JSON object.\n\n"
+            for name, instructions in (
+                ("contract", contract_validator_instructions),
+                ("rule", rule_validator_instructions),
+            ):
+                validation = await run_codex_turn(
+                    codex,
+                    sdk,
+                    cwd=cwd,
+                    instructions=instructions,
+                    prompt="Validate this current-run row batch against the Pre-Lumos contract. "
+                    "Return only the validator finding JSON object.\n\n"
                     f"```json\n{row_payload}\n```",
-                    max_turns=args.validator_max_turns,
+                    model=model,
+                    service_name=f"backlight-pre-lumos-{name}-validator",
                 )
-                report = extract_json_object(str(validation.final_output))
-                reports.append(report)
-            if has_repairable_or_blocking_findings(reports):
-                raise PreLumosError("row validation still has blocker or repairable findings after one repair pass")
+                reports.append(extract_json_object(validation))
 
-        groups = infer_years(rows, args.year)
-        merge_reports = []
-        for year, group_rows in groups.items():
-            target = target_file_for_year(Path(args.seed_root), year)
-            merged = merge_by_slug(read_existing(target), group_rows)
-            merge_prompt = (
-                "Validate this Pre-Lumos merged payload before write. "
-                "Return only the validator finding JSON object.\n\n"
-                f"Target file: {target}\n"
-                f"Touched slugs: {', '.join(row['slug'] for row in group_rows)}\n\n"
-                f"```json\n{json.dumps(merged, ensure_ascii=False, indent=2)}\n```"
-            )
-            validation = await Runner.run(merge_validator, merge_prompt, max_turns=args.validator_max_turns)
-            report = extract_json_object(str(validation.final_output))
-            merge_reports.append(report)
-        reports.extend(merge_reports)
-        if has_blocking_findings(merge_reports):
-            raise PreLumosError("merge validation has blocker findings")
+            if has_repairable_or_blocking_findings(reports):
+                repair_prompt = (
+                    build_orchestrator_prompt(args, materials)
+                    + "\n\nThe first validation pass found these issues. Repair the rows once, "
+                    "respecting the Pre-Lumos repair boundaries, and return only the final fenced JSON array.\n\n"
+                    f"```json\n{json.dumps(reports, ensure_ascii=False, indent=2)}\n```"
+                )
+                output = await run_codex_turn(
+                    codex,
+                    sdk,
+                    cwd=cwd,
+                    instructions=orchestrator_instructions,
+                    prompt=repair_prompt,
+                    model=model,
+                    service_name="backlight-pre-lumos-repair",
+                )
+                rows = normalize_rows(extract_json_array(output))
+                validate_rows(rows)
+                reports = []
+                row_payload = json.dumps(rows, ensure_ascii=False, indent=2)
+                for name, instructions in (
+                    ("contract", contract_validator_instructions),
+                    ("rule", rule_validator_instructions),
+                ):
+                    validation = await run_codex_turn(
+                        codex,
+                        sdk,
+                        cwd=cwd,
+                        instructions=instructions,
+                        prompt="Revalidate this repaired current-run row batch. "
+                        "Return only the validator finding JSON object.\n\n"
+                        f"```json\n{row_payload}\n```",
+                        model=model,
+                        service_name=f"backlight-pre-lumos-{name}-revalidator",
+                    )
+                    reports.append(extract_json_object(validation))
+                if has_repairable_or_blocking_findings(reports):
+                    raise PreLumosError("row validation still has blocker or repairable findings after one repair pass")
+
+            groups = infer_years(rows, args.year)
+            merge_reports = []
+            for year, group_rows in groups.items():
+                target = target_file_for_year(Path(args.seed_root), year)
+                merged = merge_by_slug(read_existing(target), group_rows)
+                merge_prompt = (
+                    "Validate this Pre-Lumos merged payload before write. "
+                    "Return only the validator finding JSON object.\n\n"
+                    f"Target file: {target}\n"
+                    f"Touched slugs: {', '.join(row['slug'] for row in group_rows)}\n\n"
+                    f"```json\n{json.dumps(merged, ensure_ascii=False, indent=2)}\n```"
+                )
+                validation = await run_codex_turn(
+                    codex,
+                    sdk,
+                    cwd=cwd,
+                    instructions=merge_validator_instructions,
+                    prompt=merge_prompt,
+                    model=model,
+                    service_name="backlight-pre-lumos-merge-validator",
+                )
+                merge_reports.append(extract_json_object(validation))
+            reports.extend(merge_reports)
+            if has_blocking_findings(merge_reports):
+                raise PreLumosError("merge validation has blocker findings")
 
     return output, rows, reports
 
@@ -654,39 +723,34 @@ def write_status(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the vendored Pre-Lumos Agent SDK workflow")
+    parser = argparse.ArgumentParser(description="Run the vendored Pre-Lumos Codex SDK workflow")
     parser.add_argument(
         "--case-output-root",
         action="append",
         default=env_case_output_roots(),
-        help="LumosKit/Backlight output root to read; defaults to HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOT(S)",
+        help="LumosKit/Backlight output root to read; defaults to BACKLIGHT_PRE_LUMOS_CASE_OUTPUT_ROOT(S)",
     )
     parser.add_argument("--source", action="append", default=[], help="Local file, URL, or inline note")
     parser.add_argument("--note", action="append", default=[], help="Additional operator note")
     parser.add_argument("--year", help="Force all rows into seed/import_YEAR.json")
     parser.add_argument("--seed-root", default=os.getcwd(), help="Repository root containing seed/")
     parser.add_argument("--skill-dir", default=str(DEFAULT_SKILL_DIR), help="Vendored pre-lumos skill directory")
-    parser.add_argument("--model", default=os.getenv("HELIOS_PRE_LUMOS_MODEL") or os.getenv("OPENAI_MODEL"), help="Optional OpenAI model override")
-    parser.add_argument("--web-search", dest="web_search", action="store_true", default=os.getenv("HELIOS_PRE_LUMOS_WEB_SEARCH") == "1")
+    parser.add_argument("--model", default=os.getenv("BACKLIGHT_PRE_LUMOS_MODEL"), help="Optional Codex model override")
+    parser.add_argument("--web-search", dest="web_search", action="store_true", default=os.getenv("BACKLIGHT_PRE_LUMOS_WEB_SEARCH") == "1")
     parser.add_argument("--no-web-search", dest="web_search", action="store_false")
-    parser.add_argument("--search-context-size", choices=("low", "medium", "high"), default="medium")
     parser.add_argument("--dry-run", action="store_true", help="Validate and print without writing seed/import_YEAR.json")
     parser.add_argument("--output-path", help="Optional JSON array output file for the current run")
     parser.add_argument("--status-path", help="Optional machine-readable status JSON output path")
     parser.add_argument("--skip-agent-validators", action="store_true", help="Only run local shape validation")
     parser.add_argument("--max-source-bytes", type=int, default=256 * 1024)
     parser.add_argument("--max-skill-bytes", type=int, default=512 * 1024)
-    parser.add_argument("--max-turns", type=int, default=12)
-    parser.add_argument("--validator-max-turns", type=int, default=4)
     return parser.parse_args()
 
 
 async def main_async() -> int:
     load_env_files()
-    configure_openai_proxy()
+    discard_legacy_openai_transport_env()
     args = parse_args()
-    if not os.getenv("OPENAI_API_KEY"):
-        raise PreLumosError("OPENAI_API_KEY is required for the OpenAI Agents SDK")
 
     materials: list[dict[str, Any]] = []
     for output_root in args.case_output_root:

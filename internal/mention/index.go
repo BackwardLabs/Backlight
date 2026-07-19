@@ -9,6 +9,7 @@
 package mention
 
 import (
+	"context"
 	"strings"
 
 	"github.com/UPside-Lumos-V2/helios/internal/store"
@@ -16,11 +17,19 @@ import (
 
 // Decision is the result of resolving one raw protocol name.
 type Decision struct {
-	CanonicalID string
-	EntityName  string // store's canonical name when matched, else the raw input
-	Handle      string // bare handle (no leading '@') when ShouldTag
-	ShouldTag   bool
-	Reason      string // tagged | miss | ambiguous | suppress | review | no_handle | inactive | empty
+	CanonicalID  string
+	EntityName   string // store's canonical name when matched, else the raw input
+	XID          string // immutable X user id when known
+	Handle       string // bare handle (no leading '@') when ShouldTag
+	ShouldTag    bool
+	Reason       string // tagged | miss | ambiguous | suppress | review | no_handle | inactive | empty
+	Verification string // static | verified | replaced | cached | unresolved | unavailable
+}
+
+// Resolver performs the final, context-aware mention decision. Index implements
+// this interface with a local lookup; VerifiedResolver adds an X MCP check.
+type Resolver interface {
+	ResolveContext(context.Context, string) Decision
 }
 
 // Mention returns the "@handle" token to inject, or "" when the post must stay
@@ -45,6 +54,19 @@ func FormatTag(ix *Index, rawName string) string {
 		return rawName + " (" + m + ")"
 	}
 	return rawName
+}
+
+// FormatTagContext is the context-aware equivalent used by the publishing hot
+// path. It renders plain text whenever the resolver cannot prove the account.
+func FormatTagContext(ctx context.Context, resolver Resolver, rawName string) (string, Decision) {
+	if resolver == nil {
+		return rawName, Decision{EntityName: rawName, Reason: "disabled", Verification: "unavailable"}
+	}
+	d := resolver.ResolveContext(ctx, rawName)
+	if m := d.Mention(); m != "" {
+		return rawName + " (" + m + ")", d
+	}
+	return rawName, d
 }
 
 // Index is an immutable lookup built from the store's entities.
@@ -117,9 +139,25 @@ func (ix *Index) Resolve(raw string) Decision {
 	return Decision{EntityName: raw, Reason: "miss"}
 }
 
+// ResolveContext lets the immutable local index satisfy Resolver.
+func (ix *Index) ResolveContext(_ context.Context, raw string) Decision {
+	d := ix.Resolve(raw)
+	d.Verification = "static"
+	return d
+}
+
+// Entity returns the stored entity behind a resolved canonical id.
+func (ix *Index) Entity(canonicalID string) (store.MentionEntity, bool) {
+	if ix == nil {
+		return store.MentionEntity{}, false
+	}
+	e, ok := ix.byCanon[canonicalID]
+	return e, ok
+}
+
 func (ix *Index) decide(canonicalID, raw string) Decision {
 	e := ix.byCanon[canonicalID]
-	d := Decision{CanonicalID: canonicalID, EntityName: e.EntityName}
+	d := Decision{CanonicalID: canonicalID, EntityName: e.EntityName, XID: e.XID}
 	switch {
 	case e.MentionPolicy == "suppress":
 		d.Reason = "suppress"

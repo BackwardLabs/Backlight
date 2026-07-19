@@ -7,17 +7,17 @@ Prometheus that scrapes it and a Grafana that visualises it.
 ## Prerequisites
 
 - Docker + Docker Compose v2 (`docker compose ...`)
-- Backlight already running locally on port 8080 with `HELIOS_API_TOKEN` set
-- The same `HELIOS_API_TOKEN` value exported in the shell that runs
+- Backlight already running locally on port 8080 with `BACKLIGHT_API_TOKEN` set
+- The same `BACKLIGHT_API_TOKEN` value exported in the shell that runs
   `docker compose up` so Prometheus can scrape the protected endpoint
 
 ## Start
 
 ```bash
-export HELIOS_API_TOKEN=<the same token Backlight is running with>
+export BACKLIGHT_API_TOKEN=<the same token Backlight is running with>
 
 # optional: override the host:port Prometheus scrapes (defaults to host.docker.internal:8080)
-# export HELIOS_HOST=host.docker.internal:8080
+# export BACKLIGHT_HOST=host.docker.internal:8080
 
 docker compose -f ops/docker-compose.yml up
 ```
@@ -31,14 +31,14 @@ The Backlight dashboard is auto-provisioned under `Dashboards -> backlight -> Ba
 
 In Prometheus UI: **Status -> Targets** should show `backlight` with state UP.
 
-If it's DOWN with "401 Unauthorized": the token in `HELIOS_API_TOKEN` does not
+If it's DOWN with "401 Unauthorized": the token in `BACKLIGHT_API_TOKEN` does not
 match what Backlight is running with. Stop the stack, re-export the right token,
 and `docker compose up` again.
 
 If it's DOWN with "connection refused": Backlight isn't actually listening on
 the resolved host:port. On Linux the compose file uses `host-gateway` so
 `host.docker.internal` resolves to the host. If Backlight listens only on
-`127.0.0.1`, set `HELIOS_LISTEN_ADDR=0.0.0.0:8080` and restart it.
+`127.0.0.1`, set `BACKLIGHT_LISTEN_ADDR=0.0.0.0:8080` and restart it.
 
 ## Panels in the auto-loaded dashboard
 

@@ -32,7 +32,7 @@ var engineErrorDiagnoses = map[string]Diagnosis{
 	FailureRPCUnavailable:              {FailureRPCUnavailable, "infrastructure", true, "check RPC provider status, env (CEFG_LIVE_RPC_URL/RPC_URL/ETH_RPC_URL), rate limits and auth"},
 	FailureTraceUnavailable:            {FailureTraceUnavailable, "infrastructure", true, "use an archive/debug-trace capable RPC (debug_traceTransaction / trace API)"},
 	FailureUnsupportedChain:            {FailureUnsupportedChain, "configuration", false, "add the chain alias/config to the lumoskit RPC resolver"},
-	FailureBinaryExecError:             {FailureBinaryExecError, "deployment", false, "check HELIOS_LUMOSKIT_BIN path, executable bit and architecture"},
+	FailureBinaryExecError:             {FailureBinaryExecError, "deployment", false, "check BACKLIGHT_LUMOSKIT_BIN path, executable bit and architecture"},
 	FailureToolchainError:              {FailureToolchainError, "deployment", false, "check systemd PATH/drop-in for cast/forge/node/python"},
 	FailureSummaryMissing:              {FailureSummaryMissing, "engine", false, "check the output root and lumoskit stderr"},
 	FailureSummaryUnreadable:           {FailureSummaryUnreadable, "engine", false, "inspect lumoskit stderr_tail and the run summary file"},

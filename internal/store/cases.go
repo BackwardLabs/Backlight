@@ -518,7 +518,7 @@ func boolToInt(b bool) int {
 // and appends a state_transition case_events row — all in one SQLite tx.
 //
 // outputRootParent is the directory under which per-case roots are created
-// (HELIOS_OUTPUT_ROOT). The returned *Case carries the updated paths and
+// (BACKLIGHT_OUTPUT_ROOT). The returned *Case carries the updated paths and
 // state; nil/nil means "no queued work right now".
 func (s *Store) ClaimNextQueued(ctx context.Context, outputRootParent string) (*Case, error) {
 	var claimed *Case

@@ -152,3 +152,110 @@ func TestSetMentionPolicyAndOverrides(t *testing.T) {
 		t.Fatalf("Overrides after re-upsert = %d, want 3", st2.Overrides)
 	}
 }
+
+func TestRecordMentionVerificationUpdatesIdentityWithoutOverwritingPolicy(t *testing.T) {
+	ctx := context.Background()
+	s := newMentionTestStore(t)
+	if err := s.UpsertMentionEntities(ctx, []MentionEntity{{
+		CanonicalID: "surf:edel", EntityName: "Edel Finance", Aliases: []string{"Edel"},
+		XID: "42", XHandle: "EdelFinance", HandleNorm: "edelfinance",
+		MentionPolicy: "review", Website: "https://old.example", Status: "active",
+	}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	err := s.RecordMentionVerification(ctx, MentionVerification{
+		CanonicalID: "surf:edel", EntityName: "Edel Finance", XID: "42",
+		XHandle: "EdelProtocol", XDisplayName: "Edel Finance", XFollowers: 1234,
+		Website: "https://edel.finance", VerifiedAt: "2026-07-19T01:00:00Z",
+		ReverifyDueAt: "2026-07-20T01:00:00Z", Outcome: "replaced",
+	})
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	entities, err := s.AllMentionEntities(ctx)
+	if err != nil || len(entities) != 1 {
+		t.Fatalf("entities=%+v err=%v", entities, err)
+	}
+	got := entities[0]
+	if got.XID != "42" || got.XHandle != "EdelProtocol" || got.HandleNorm != "edelprotocol" || got.XDisplayName != "Edel Finance" {
+		t.Fatalf("identity = %+v", got)
+	}
+	if got.MentionPolicy != "review" {
+		t.Fatalf("mention policy overwritten: %+v", got)
+	}
+	if got.Website != "https://edel.finance" || got.LastVerifiedAt != "2026-07-19T01:00:00Z" || got.Status != "active" {
+		t.Fatalf("verification metadata = %+v", got)
+	}
+}
+
+func TestRecordMentionVerificationCreatesAndReusesDiscoveredXID(t *testing.T) {
+	ctx := context.Background()
+	s := newMentionTestStore(t)
+	verification := MentionVerification{
+		EntityName: "New Protocol", XID: "99", XHandle: "NewProtocol",
+		XDisplayName: "New Protocol", XFollowers: 5000, Outcome: "verified",
+	}
+	if err := s.RecordMentionVerification(ctx, verification); err != nil {
+		t.Fatalf("first record: %v", err)
+	}
+	verification.XHandle = "NewProtocolDAO"
+	verification.Outcome = "replaced"
+	if err := s.RecordMentionVerification(ctx, verification); err != nil {
+		t.Fatalf("second record: %v", err)
+	}
+	entities, err := s.AllMentionEntities(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entities) != 1 || entities[0].CanonicalID != "x_mcp:99" || entities[0].XHandle != "NewProtocolDAO" {
+		t.Fatalf("entities = %+v", entities)
+	}
+}
+
+func TestRecordMentionVerificationReusesExistingXIDAndCachesNewAlias(t *testing.T) {
+	ctx := context.Background()
+	s := newMentionTestStore(t)
+	if err := s.UpsertMentionEntities(ctx, []MentionEntity{{
+		CanonicalID: "surf:new", EntityName: "New Protocol DAO", Aliases: []string{"New Protocol DAO"},
+		XID: "99", XHandle: "NewProtocol", Status: "active",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMentionVerification(ctx, MentionVerification{
+		EntityName: "New Protocol", XID: "99", XHandle: "NewProtocol",
+		XDisplayName: "New Protocol", Outcome: "verified",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	entities, err := s.AllMentionEntities(ctx)
+	if err != nil || len(entities) != 1 {
+		t.Fatalf("entities=%+v err=%v", entities, err)
+	}
+	if entities[0].CanonicalID != "surf:new" || len(entities[0].Aliases) != 2 || entities[0].Aliases[1] != "New Protocol" {
+		t.Fatalf("entity = %+v", entities[0])
+	}
+}
+
+func TestRecordMentionVerificationMarksExistingCandidateUnresolvedWithoutErasingHandle(t *testing.T) {
+	ctx := context.Background()
+	s := newMentionTestStore(t)
+	if err := s.UpsertMentionEntities(ctx, []MentionEntity{{
+		CanonicalID: "surf:edel", EntityName: "Edel", XID: "42", XHandle: "EdelFinance", Status: "active",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMentionVerification(ctx, MentionVerification{
+		CanonicalID: "surf:edel", EntityName: "Edel", Outcome: "unresolved",
+		VerifiedAt: "2026-07-19T01:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	entities, err := s.AllMentionEntities(ctx)
+	if err != nil || len(entities) != 1 {
+		t.Fatalf("entities=%+v err=%v", entities, err)
+	}
+	if entities[0].Status != "needs_resolution" || entities[0].XStatus != "unresolved" || entities[0].XHandle != "EdelFinance" {
+		t.Fatalf("entity = %+v", entities[0])
+	}
+}

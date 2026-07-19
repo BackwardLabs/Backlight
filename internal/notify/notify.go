@@ -8,7 +8,7 @@
 //   - notification failure NEVER changes case state and NEVER blocks
 //     downstream fan-out;
 //   - per-channel retries use bounded exponential backoff governed by
-//     HELIOS_NOTIFY_RETRY_* env vars.
+//     BACKLIGHT_NOTIFY_RETRY_* env vars.
 package notify
 
 import (

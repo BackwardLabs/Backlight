@@ -11,8 +11,8 @@ those live in `hack-detector` and `lumoskit`.
 Spec: [`seeds/v1.yaml`](seeds/v1.yaml)
 
 Compatibility note: the current runtime still uses the legacy `helios` binary,
-service paths, MCP tool namespace, and `HELIOS_*` env prefix. Treat those as
-stable runtime identifiers until a dedicated migration changes deployed hosts.
+service paths, and MCP tool namespace. Environment variables now use the
+`BACKLIGHT_*` prefix; the old `HELIOS_*` names are no longer read.
 
 ## Workflow
 
@@ -51,7 +51,7 @@ flowchart LR
 
 Backlight records `analysis_stage`, `rerun_decision`, `rerun_reason`, and the
 selected `auto_rerun_resume_stage` on the terminal `state_transition` event.
-Automatic reruns are bounded by `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS`.
+Automatic reruns are bounded by `BACKLIGHT_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS`.
 
 See [`docs/results.md`](docs/results.md) for the full result payload, MCP usage,
 and downstream handoff behavior.
@@ -60,13 +60,13 @@ and downstream handoff behavior.
 
 ```bash
 go mod tidy
-HELIOS_API_TOKEN=dev-token \
-HELIOS_DB_PATH=$(pwd)/var/backlight.db \
-HELIOS_OUTPUT_ROOT=$(pwd)/var/outputs \
+BACKLIGHT_API_TOKEN=dev-token \
+BACKLIGHT_DB_PATH=$(pwd)/var/backlight.db \
+BACKLIGHT_OUTPUT_ROOT=$(pwd)/var/outputs \
 go run ./cmd/helios
 ```
 
-`bin/lumoskit` must be on PATH, or set `HELIOS_LUMOSKIT_BIN`. For local
+`bin/lumoskit` must be on PATH, or set `BACKLIGHT_LUMOSKIT_BIN`. For local
 development without the real engine, use `scripts/fake-lumoskit.sh`.
 
 Optional Telegram alerts can reuse an existing bot, including the hackdetector
@@ -111,7 +111,7 @@ The flow leans on inline buttons because button taps are delivered to the bot re
 Only one process may long-poll a given bot token at a time, and the bot clears
 any stale webhook at startup so polling does not conflict.
 
-Open the UI at the address from `HELIOS_LISTEN_ADDR`:
+Open the UI at the address from `BACKLIGHT_LISTEN_ADDR`:
 
 ```text
 http://127.0.0.1:8080/ui
@@ -124,8 +124,8 @@ The dashboard host only needs `/ui`, `/cases...`, and `/healthz`; `/signals`,
 
 ## Core API
 
-Core API endpoints except `/healthz` require `Authorization: Bearer $HELIOS_API_TOKEN`.
-The internal ECW export uses a separate `HELIOS_ECW_EXPORT_TOKEN` and is disabled
+Core API endpoints except `/healthz` require `Authorization: Bearer $BACKLIGHT_API_TOKEN`.
+The internal ECW export uses a separate `BACKLIGHT_ECW_EXPORT_TOKEN` and is disabled
 when that token is unset.
 
 | Endpoint | Purpose |
@@ -137,7 +137,7 @@ when that token is unset.
 | `GET /cases/{case_id}` | case detail, events, handoff attempts, notifications, exposed on both dashboard/API hosts |
 | `POST /cases/{case_id}/retry-handoff` | retry failed downstream delivery, exposed on both dashboard/API hosts |
 | `GET /metrics` | Prometheus metrics, exposed on `api.backwardlabs.io` |
-| `GET /ecw/cases/{case_id}/export` | internal ECW replay/RCA bundle export, exposed on `api.backwardlabs.io` with `HELIOS_ECW_EXPORT_TOKEN` |
+| `GET /ecw/cases/{case_id}/export` | internal ECW replay/RCA bundle export, exposed on `api.backwardlabs.io` with `BACKLIGHT_ECW_EXPORT_TOKEN` |
 | `/mcp` | remote MCP endpoint, exposed on `api.backwardlabs.io` when `backlight-mcp` HTTP mode is enabled |
 
 ## Docs

@@ -3,8 +3,8 @@
     "backlight": {
       "command": "/srv/backlight/bin/backlight-mcp",
       "env": {
-        "HELIOS_BASE_URL": "http://127.0.0.1:8080",
-        "HELIOS_API_TOKEN": "replace-with-a-read-only-or-operator-token"
+        "BACKLIGHT_BASE_URL": "http://127.0.0.1:8080",
+        "BACKLIGHT_API_TOKEN": "replace-with-a-read-only-or-operator-token"
       }
     }
   }

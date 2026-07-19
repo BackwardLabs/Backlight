@@ -147,6 +147,11 @@ def main():
         type=Path,
         default=Path(os.environ.get("X_REFRESH_TOKEN_FILE", "/private/tmp/backlight_x_oauth_tokens.json")),
     )
+    parser.add_argument(
+        "--manual-callback",
+        action="store_true",
+        help="Paste the final redirect URL instead of accepting it on a local HTTP server.",
+    )
     args = parser.parse_args()
 
     client_id = args.client_id.strip() or input("X Client ID: ").strip()
@@ -163,25 +168,38 @@ def main():
     state = secrets.token_urlsafe(24)
     url = build_authorize_url(client_id, args.redirect_uri, args.scope, state, challenge)
 
-    server = http.server.HTTPServer((host, port), CallbackHandler)
-    server.callback_path = path
-    server.auth_code = ""
-    server.auth_state = ""
-    server.auth_error = ""
-
     print("\nOpen this URL in your browser and approve the X app:\n")
     print(url)
-    print(f"\nWaiting for callback on {args.redirect_uri} ...", flush=True)
-    server.serve_forever()
 
-    if server.auth_error:
-        raise SystemExit(f"authorization failed: {server.auth_error}")
-    if not server.auth_code:
+    if args.manual_callback:
+        print("\nAfter approval, the callback page may fail to load. That is expected.")
+        callback_url = input("Paste the complete URL from the browser address bar here:\n").strip()
+        callback = urllib.parse.urlparse(callback_url)
+        params = urllib.parse.parse_qs(callback.query)
+        auth_code = first(params.get("code"))
+        auth_state = first(params.get("state"))
+        auth_error = first(params.get("error"))
+    else:
+        server = http.server.HTTPServer((host, port), CallbackHandler)
+        server.callback_path = path
+        server.auth_code = ""
+        server.auth_state = ""
+        server.auth_error = ""
+
+        print(f"\nWaiting for callback on {args.redirect_uri} ...", flush=True)
+        server.serve_forever()
+        auth_code = server.auth_code
+        auth_state = server.auth_state
+        auth_error = server.auth_error
+
+    if auth_error:
+        raise SystemExit(f"authorization failed: {auth_error}")
+    if not auth_code:
         raise SystemExit("authorization failed: callback did not include code")
-    if server.auth_state != state:
+    if auth_state != state:
         raise SystemExit("authorization failed: state mismatch")
 
-    tokens = exchange_code(client_id, client_secret, args.redirect_uri, server.auth_code, verifier)
+    tokens = exchange_code(client_id, client_secret, args.redirect_uri, auth_code, verifier)
     write_tokens(args.token_output, tokens, client_id, args.redirect_uri)
 
     print("\nToken exchange succeeded.")

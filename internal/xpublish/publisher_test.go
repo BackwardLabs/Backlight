@@ -2,6 +2,7 @@ package xpublish
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -267,7 +268,7 @@ func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte(`{"refresh_token":"refresh-token"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var sawRefresh, sawPost bool
+	var sawRefresh, sawAccount, sawPost bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/2/oauth2/token":
@@ -302,6 +303,11 @@ func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]string{"id": "12345", "text": body["text"]},
 			})
+		case "/2/users/me":
+			sawAccount = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]string{"id": "account-id", "username": "BackwardLabs"},
+			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -323,8 +329,8 @@ func TestPublishRefreshesTokenAndCreatesPost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sawRefresh || !sawPost {
-		t.Fatalf("saw refresh=%v post=%v", sawRefresh, sawPost)
+	if !sawRefresh || !sawAccount || !sawPost {
+		t.Fatalf("saw refresh=%v account=%v post=%v", sawRefresh, sawAccount, sawPost)
 	}
 	if !res.Published || res.PostID != "12345" || res.PostURL != "https://x.com/BackwardLabs/status/12345" || !res.RefreshReturned || !res.RefreshTokenUpdated || !res.PostTextVerified {
 		t.Fatalf("publish result = %+v", res)
@@ -348,7 +354,7 @@ func TestPublishThreadUploadsMediaAndCreatesReply(t *testing.T) {
 	if err := os.WriteFile(mediaPath, []byte("png-data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var sawRefresh, sawMedia bool
+	var sawRefresh, sawAccount, sawMedia bool
 	var postCount int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -364,14 +370,23 @@ func TestPublishThreadUploadsMediaAndCreatesReply(t *testing.T) {
 			if got := r.Header.Get("Authorization"); got != "Bearer access-token" {
 				t.Fatalf("media auth header = %q", got)
 			}
-			if err := r.ParseMultipartForm(1 << 20); err != nil {
+			if got := r.Header.Get("Content-Type"); got != "application/json" {
+				t.Fatalf("media content type = %q", got)
+			}
+			var body struct {
+				Media         string `json:"media"`
+				MediaCategory string `json:"media_category"`
+				MediaType     string `json:"media_type"`
+				Shared        bool   `json:"shared"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if r.FormValue("media_category") != defaultMediaCategory || r.FormValue("media_type") != "image/png" {
-				t.Fatalf("media form category/type = %q/%q", r.FormValue("media_category"), r.FormValue("media_type"))
+			if body.MediaCategory != defaultMediaCategory || body.MediaType != "image/png" || body.Shared {
+				t.Fatalf("media body = %#v", body)
 			}
-			if _, _, err := r.FormFile("media"); err != nil {
-				t.Fatalf("media form file missing: %v", err)
+			if body.Media != base64.StdEncoding.EncodeToString([]byte("png-data")) {
+				t.Fatalf("media payload = %q", body.Media)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]string{"id": "media-1"},
@@ -412,6 +427,11 @@ func TestPublishThreadUploadsMediaAndCreatesReply(t *testing.T) {
 			default:
 				t.Fatalf("unexpected tweet create #%d", postCount)
 			}
+		case "/2/users/me":
+			sawAccount = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]string{"id": "account-id", "username": "BackwardLabs"},
+			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -432,8 +452,8 @@ func TestPublishThreadUploadsMediaAndCreatesReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sawRefresh || !sawMedia || postCount != 2 {
-		t.Fatalf("saw refresh=%v media=%v post_count=%d", sawRefresh, sawMedia, postCount)
+	if !sawRefresh || !sawAccount || !sawMedia || postCount != 2 {
+		t.Fatalf("saw refresh=%v account=%v media=%v post_count=%d", sawRefresh, sawAccount, sawMedia, postCount)
 	}
 	if !res.Published || res.PostID != "main-id" || res.ReplyPostID != "reply-id" || res.MediaID != "media-1" {
 		t.Fatalf("thread publish result = %+v", res)
@@ -443,6 +463,48 @@ func TestPublishThreadUploadsMediaAndCreatesReply(t *testing.T) {
 	}
 	if !res.PostTextVerified || !res.ReplyTextVerified {
 		t.Fatalf("thread text verification = %+v", res)
+	}
+}
+
+func TestPublishThreadRejectsUnexpectedPublishingAccount(t *testing.T) {
+	var sawPost bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/2/oauth2/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-token",
+				"expires_in":   7200,
+				"token_type":   "bearer",
+			})
+		case "/2/users/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]string{"id": "wrong-account-id", "username": "NotBackwardLabs"},
+			})
+		case "/2/tweets":
+			sawPost = true
+			http.Error(w, "must not publish", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	pub := New(Config{
+		Enabled:      true,
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		RefreshToken: "refresh-token",
+		APIBase:      server.URL,
+		Username:     "@BackwardLabs",
+		DryRun:       false,
+	})
+	pub.Client = server.Client()
+	_, err := pub.PublishThread(context.Background(), Thread{MainText: "must not publish"})
+	if err == nil || !strings.Contains(err.Error(), "authenticated as @NotBackwardLabs, expected @BackwardLabs") {
+		t.Fatalf("unexpected account error = %v", err)
+	}
+	if sawPost {
+		t.Fatal("post was created before publishing account verification")
 	}
 }
 

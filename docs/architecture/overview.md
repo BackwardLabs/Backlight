@@ -26,7 +26,7 @@ flowchart LR
     outputs["Output roots<br/>summary.json + analysis bundle"]
     lumoskit["lumoskit<br/>analysis engine subprocess"]
     github["GitHub product repo<br/>verified bundles"]
-    prelumos["Pre-Lumos Agent SDK<br/>incident JSON sidecar"]
+    prelumos["Pre-Lumos Codex SDK<br/>incident JSON sidecar"]
     seed["Lumos importer JSON<br/>seed/import_YEAR.json"]
     downstream["Downstream agents<br/>webhook receivers"]
     notify["Operator notifications<br/>webhook / Telegram"]
@@ -132,14 +132,14 @@ flowchart TD
 | Field / surface | What it means | Typical action |
 | --- | --- | --- |
 | `case_id` | Stable ID for one Backlight attempt. | Use it when opening the UI detail page, searching logs, or retrying handoff. |
-| `state=queued` | The case is waiting for an available worker slot. | Check queue depth and `HELIOS_MAX_CONCURRENT_LUMOSKIT` if many cases wait. |
+| `state=queued` | The case is waiting for an available worker slot. | Check queue depth and `BACKLIGHT_MAX_CONCURRENT_LUMOSKIT` if many cases wait. |
 | `state=running` | `lumoskit` is currently running for this case. | Wait, or inspect host resources if it stays running unexpectedly long. |
 | `state=done` | `lumoskit` finished with a non-engine-error outcome. | Check `outcome` and `handoff_status`. |
 | `state=handed-off` | Backlight is finished with the case. | Downstream systems should now have the result, or handoff was intentionally skipped. |
 | `state=failed` + `outcome=engine_error` | The engine run failed or the summary could not be used. | Inspect `failure_kind`, `summary_json_path`, output files, and operator notifications. |
 | `outcome=verified` | The case produced a verified PoC. | Treat as high-confidence downstream material. |
 | `case_events.event_type=github_publish` | The verified artifact bundle was published to the configured GitHub repo. | Open the payload's `poc_url`, `report_url`, or `commit_url`. |
-| `case_events.event_type=pre_lumos_sync` | The Pre-Lumos Agent SDK generated importer-ready incident JSON. | Open the payload's `output_path` for this case, or `target_files` for merged importer JSON. |
+| `case_events.event_type=pre_lumos_sync` | The Pre-Lumos Codex SDK generated importer-ready incident JSON. | Open the payload's `output_path` for this case, or `target_files` for merged importer JSON. |
 | `outcome=partial` | The engine produced useful but incomplete material. | Review the output bundle before relying on it fully. |
 | `outcome=unverified` | The engine completed but did not verify the PoC. | Review manually or rerun with better inputs if needed. |
 | `handoff_status=retrying` | Backlight is still delivering to downstream URLs. | Wait unless attempts are repeatedly failing. |
@@ -215,7 +215,7 @@ Then it queues a new linked child case with a fresh output root.
 
 ### Empty downstream URL list
 
-If `HELIOS_DOWNSTREAM_WEBHOOK_URLS` is empty, successful engine outcomes still
+If `BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS` is empty, successful engine outcomes still
 finish normally. Backlight immediately moves the case to:
 
 ```text
@@ -232,9 +232,10 @@ Verified cases may trigger both optional asynchronous side effects after Backlig
 - GitHub publish, enabled by `GITHUB_TOKEN` or `GH_TOKEN`, copies `PoC.t.sol`
   and `Report.md` into `test/{YYYY-MM}/{Protocol}/` in the configured repo.
   `Report.md` is published as `README.md`.
-- Pre-Lumos incident JSON, enabled by `HELIOS_PRE_LUMOS_ENABLED=true` and
-  `HELIOS_PRE_LUMOS_SEED_ROOT`, runs the vendored `skills/pre-lumos` bundle
-  through the Agent SDK. It writes `<output_root>/pre-lumos.json` for the case
+- Pre-Lumos incident JSON, enabled by `BACKLIGHT_PRE_LUMOS_ENABLED=true` and
+  `BACKLIGHT_PRE_LUMOS_SEED_ROOT`, runs the vendored `skills/pre-lumos` bundle
+  through the Codex SDK using the service user's existing Codex login. It writes
+  `<output_root>/pre-lumos.json` for the case
   and merges rows by `slug` into `seed/import_{YEAR}.json`. When auto-report's
   Backlight workflow is used, it also writes `artifacts/pre_lumos_result.json`
   and `artifacts/pre_lumos_result.md` as compact site/API artifacts.

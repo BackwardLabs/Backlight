@@ -90,7 +90,7 @@ func (s *Server) handleECWExport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) authorizeECWExport(w http.ResponseWriter, r *http.Request) bool {
 	if s.Config == nil || strings.TrimSpace(s.Config.ECWExportToken) == "" {
-		writeError(w, http.StatusForbidden, "ecw_export_disabled", "HELIOS_ECW_EXPORT_TOKEN is not configured", nil)
+		writeError(w, http.StatusForbidden, "ecw_export_disabled", "BACKLIGHT_ECW_EXPORT_TOKEN is not configured", nil)
 		return false
 	}
 	header := r.Header.Get("Authorization")
@@ -100,7 +100,7 @@ func (s *Server) authorizeECWExport(w http.ResponseWriter, r *http.Request) bool
 	}
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) || strings.TrimSpace(header[len(prefix):]) != s.Config.ECWExportToken {
-		writeError(w, http.StatusForbidden, "invalid_ecw_token", "Bearer token does not match HELIOS_ECW_EXPORT_TOKEN", nil)
+		writeError(w, http.StatusForbidden, "invalid_ecw_token", "Bearer token does not match BACKLIGHT_ECW_EXPORT_TOKEN", nil)
 		return false
 	}
 	return true

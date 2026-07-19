@@ -13,6 +13,6 @@ FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/helios /helios
 
 # helios reads its config from env (see internal/config). Persistent volume must
-# be mounted at HELIOS_DB_PATH parent and HELIOS_OUTPUT_ROOT.
+# be mounted at BACKLIGHT_DB_PATH parent and BACKLIGHT_OUTPUT_ROOT.
 EXPOSE 8080
 ENTRYPOINT ["/helios"]

@@ -21,21 +21,23 @@ import (
 )
 
 const (
-	formatVersion         = "backlight_x_feed_incident_v1"
+	formatVersion         = "backlight_x_feed_incident_v3"
 	defaultIncidentFormat = "skills/draft-x-exploit-thread/references/incident-post-format.md"
 	defaultCardScript     = "skills/exploit-flow-card/scripts/render_card.py"
 )
 
 type Runner struct {
-	Enabled           bool
-	SkillDir          string
-	IncludeAttackerCA bool
-	CardEnabled       bool
-	CardPythonBin     string
-	CardTimeout       time.Duration
+	Enabled       bool
+	SkillDir      string
+	CardEnabled   bool
+	CardPythonBin string
+	CardTimeout   time.Duration
 	// Mentions resolves the victim protocol's official @handle for the post
 	// headline. Nil = disabled (plain protocol name).
 	Mentions *mention.Index
+	// MentionResolver performs publish-time X MCP verification. When set, it
+	// takes precedence over the static Mentions index.
+	MentionResolver mention.Resolver
 }
 
 type Case struct {
@@ -54,56 +56,66 @@ type Case struct {
 }
 
 type Result struct {
-	ReadyToPublish   bool     `json:"ready_to_publish"`
-	StatusLabel      string   `json:"status_label"`
-	MainPost         string   `json:"main_post"`
-	ReplyPost        string   `json:"reply_post"`
-	TelegramPost     string   `json:"telegram_post"`
-	ImagePath        string   `json:"image_path,omitempty"`
-	ImageMode        string   `json:"image_mode"`
-	CardBriefPath    string   `json:"card_brief_path,omitempty"`
-	CardSVGPath      string   `json:"card_svg_path,omitempty"`
-	CardPNGPath      string   `json:"card_png_path,omitempty"`
-	CardError        string   `json:"card_error,omitempty"`
-	Format           string   `json:"format"`
-	ExplorerURL      string   `json:"explorer_url,omitempty"`
-	GitHubURL        string   `json:"github_url,omitempty"`
-	ReportURL        string   `json:"report_url,omitempty"`
-	PoCURL           string   `json:"poc_url,omitempty"`
-	Blockers         []string `json:"blockers,omitempty"`
-	SourceFormat     string   `json:"source_format_path,omitempty"`
-	MainPostPath     string   `json:"main_post_path,omitempty"`
-	ReplyPostPath    string   `json:"reply_post_path,omitempty"`
-	TelegramPostPath string   `json:"telegram_post_path,omitempty"`
-	StatusPath       string   `json:"status_path,omitempty"`
+	ReadyToPublish      bool     `json:"ready_to_publish"`
+	StatusLabel         string   `json:"status_label"`
+	MainPost            string   `json:"main_post"`
+	ReplyPost           string   `json:"reply_post"`
+	TelegramPost        string   `json:"telegram_post"`
+	ImagePath           string   `json:"image_path,omitempty"`
+	ImageMode           string   `json:"image_mode"`
+	CardBriefPath       string   `json:"card_brief_path,omitempty"`
+	CardSVGPath         string   `json:"card_svg_path,omitempty"`
+	CardPNGPath         string   `json:"card_png_path,omitempty"`
+	CardError           string   `json:"card_error,omitempty"`
+	Format              string   `json:"format"`
+	ExplorerURL         string   `json:"explorer_url,omitempty"`
+	GitHubURL           string   `json:"github_url,omitempty"`
+	ReportURL           string   `json:"report_url,omitempty"`
+	PoCURL              string   `json:"poc_url,omitempty"`
+	Blockers            []string `json:"blockers,omitempty"`
+	SourceFormat        string   `json:"source_format_path,omitempty"`
+	MainPostPath        string   `json:"main_post_path,omitempty"`
+	ReplyPostPath       string   `json:"reply_post_path,omitempty"`
+	TelegramPostPath    string   `json:"telegram_post_path,omitempty"`
+	StatusPath          string   `json:"status_path,omitempty"`
+	ProtocolMention     string   `json:"protocol_mention,omitempty"`
+	MentionVerification string   `json:"mention_verification,omitempty"`
+	MentionReason       string   `json:"mention_reason,omitempty"`
 }
 
 type incidentFacts struct {
-	Protocol       string
-	Chain          string
-	TxHash         string
-	Occurred       string
-	Impact         string
-	RootCause      string
-	AttackType     string
-	WhatHappened   []string
-	Analysis       string
-	ReportURL      string
-	PoCURL         string
-	GitHubURL      string
-	ExplorerURL    string
-	StatusLabel    string
-	ImageMode      string
-	ImagePath      string
-	CardBriefPath  string
-	CardSVGPath    string
-	CardPNGPath    string
-	CardError      string
-	ImpactUSD      float64
-	ReproducedUSD  float64
-	Card           cardFacts
-	ReadyToPublish bool
-	Blockers       []string
+	Protocol        string
+	ProtocolDisplay string
+	MentionDecision mention.Decision
+	Chain           string
+	TxHash          string
+	Occurred        string
+	Impact          string
+	RootCause       string
+	AttackType      string
+	WhatHappened    []string
+	Analysis        string
+	ReportURL       string
+	PoCURL          string
+	GitHubURL       string
+	ExplorerURL     string
+	StatusLabel     string
+	ImageMode       string
+	ImagePath       string
+	CardBriefPath   string
+	CardSVGPath     string
+	CardPNGPath     string
+	CardError       string
+	ImpactUSD       float64
+	ReproducedUSD   float64
+	AffectedAssets  []string
+	ImpactCaveat    string
+	Invariant       string
+	Severity        string
+	Confidence      string
+	Card            cardFacts
+	ReadyToPublish  bool
+	Blockers        []string
 }
 
 type cardFacts struct {
@@ -140,8 +152,16 @@ func (r *Runner) Run(ctx context.Context, c Case) (*Result, error) {
 	}
 
 	facts := buildFacts(c)
+	facts.ProtocolDisplay = facts.Protocol
+	if r.MentionResolver != nil {
+		facts.ProtocolDisplay, facts.MentionDecision = mention.FormatTagContext(ctx, r.MentionResolver, facts.Protocol)
+	} else if r.Mentions != nil {
+		facts.ProtocolDisplay = mention.FormatTag(r.Mentions, facts.Protocol)
+		facts.MentionDecision = r.Mentions.Resolve(facts.Protocol)
+		facts.MentionDecision.Verification = "static"
+	}
 	r.applyExploitFlowCard(ctx, c, &facts)
-	result := renderResult(r, c, facts)
+	result := renderResult(r, facts)
 	if _, err := os.Stat(result.SourceFormat); err != nil {
 		result.ReadyToPublish = false
 		result.Blockers = append(result.Blockers, "x_feed_format_missing")
@@ -207,6 +227,9 @@ func buildFacts(c Case) incidentFacts {
 	githubURL := firstText(c.GitHubURL, reportURL)
 
 	blockers := publishBlockers(reportURL, githubURL)
+	if explorer == "" {
+		blockers = append(blockers, "explorer_url_missing")
+	}
 	if !outcome.ShouldPublishX(outcome.Result{
 		Outcome:     c.Outcome,
 		PublishTier: c.PublishTier,
@@ -215,6 +238,7 @@ func buildFacts(c Case) incidentFacts {
 	}) {
 		blockers = append(blockers, "x_publish_ineligible")
 	}
+	card := buildCardFacts(protocol, summary, reportJSON, report, impact, impactUSD, reproducedUSD)
 	return incidentFacts{
 		Protocol:       protocol,
 		Chain:          chain,
@@ -233,65 +257,23 @@ func buildFacts(c Case) incidentFacts {
 		ImageMode:      "none",
 		ImpactUSD:      impactUSD,
 		ReproducedUSD:  reproducedUSD,
-		Card:           buildCardFacts(protocol, summary, reportJSON, report, impact, impactUSD, reproducedUSD),
+		AffectedAssets: affectedAssetSymbols(summary, reportJSON),
+		ImpactCaveat:   impactCaveat(summary, reportJSON, report),
+		Invariant:      publicInvariant(reportJSON, report),
+		Severity:       cleanCardText(firstText(jsonPathString(reportJSON, "vulnerability", "severity"), markdownField(report, "Severity"), "under review")),
+		Confidence:     cleanCardText(firstText(jsonPathString(reportJSON, "vulnerability", "confidence"), jsonPathString(reportJSON, "root_cause_confidence"), markdownField(report, "Confidence"), "under review")),
+		Card:           card,
 		ReadyToPublish: len(blockers) == 0,
 		Blockers:       blockers,
 	}
 }
 
-func renderResult(r *Runner, c Case, f incidentFacts) *Result {
+func renderResult(r *Runner, f incidentFacts) *Result {
 	for len(f.WhatHappened) < 3 {
 		f.WhatHappened = append(f.WhatHappened, "Details remain under review.")
 	}
-	main := strings.TrimSpace(fmt.Sprintf(`[Backlight %s]
-
-🚨 %s exploit on %s
-Tx: %s
-
-🕒 Occurred: %s
-💥 Impact: %s
-
-🔎 Root cause:
-%s
-
-What happened:
-%s
-%s
-%s
-
-Need more detail? Check our repo and analysis thread below ↓ 🧵`,
-		f.StatusLabel,
-		mention.FormatTag(r.Mentions, f.Protocol),
-		f.Chain,
-		f.TxHash,
-		f.Occurred,
-		f.Impact,
-		f.RootCause,
-		f.WhatHappened[0],
-		f.WhatHappened[1],
-		f.WhatHappened[2],
-	))
-	report := fallback(f.ReportURL, "pending")
-	poc := pocLine(f.PoCURL, c)
-	replyParts := []string{
-		"1/ Artifacts + analysis 🧾",
-		"",
-		"Artifacts:",
-		"- Report: " + report,
-		"- PoC: " + poc,
-		"",
-		"Analysis:",
-		f.Analysis,
-	}
-	if f.ExplorerURL != "" {
-		replyParts = append(replyParts, "", "Explorer:", f.ExplorerURL)
-	}
-	if r != nil && r.IncludeAttackerCA {
-		// Reserved for the original x-feed reference format. It stays opt-in
-		// because the current Backlight public thread omits attacker CA details.
-		replyParts = append(replyParts, "", "Attacker CA:", "- under review")
-	}
-	reply := strings.TrimSpace(strings.Join(replyParts, "\n"))
+	main := renderRichMainPost(r, f)
+	reply := renderEvidenceReply(f)
 	telegram := main
 	if f.GitHubURL != "" {
 		telegram += "\n\nGitHub:\n" + f.GitHubURL
@@ -303,24 +285,240 @@ Need more detail? Check our repo and analysis thread below ↓ 🧵`,
 	}
 	sourceFormat := filepath.Join(skillDir, defaultIncidentFormat)
 	return &Result{
-		ReadyToPublish: f.ReadyToPublish,
-		StatusLabel:    f.StatusLabel,
-		MainPost:       main,
-		ReplyPost:      reply,
-		TelegramPost:   strings.TrimSpace(telegram),
-		ImagePath:      f.ImagePath,
-		ImageMode:      f.ImageMode,
-		CardBriefPath:  f.CardBriefPath,
-		CardSVGPath:    f.CardSVGPath,
-		CardPNGPath:    f.CardPNGPath,
-		CardError:      f.CardError,
-		Format:         formatVersion,
-		ExplorerURL:    f.ExplorerURL,
-		GitHubURL:      f.GitHubURL,
-		ReportURL:      f.ReportURL,
-		PoCURL:         f.PoCURL,
-		Blockers:       f.Blockers,
-		SourceFormat:   sourceFormat,
+		ReadyToPublish:      f.ReadyToPublish,
+		StatusLabel:         f.StatusLabel,
+		MainPost:            main,
+		ReplyPost:           reply,
+		TelegramPost:        strings.TrimSpace(telegram),
+		ImagePath:           f.ImagePath,
+		ImageMode:           f.ImageMode,
+		CardBriefPath:       f.CardBriefPath,
+		CardSVGPath:         f.CardSVGPath,
+		CardPNGPath:         f.CardPNGPath,
+		CardError:           f.CardError,
+		Format:              formatVersion,
+		ExplorerURL:         f.ExplorerURL,
+		GitHubURL:           f.GitHubURL,
+		ReportURL:           f.ReportURL,
+		PoCURL:              f.PoCURL,
+		Blockers:            f.Blockers,
+		SourceFormat:        sourceFormat,
+		ProtocolMention:     f.MentionDecision.Mention(),
+		MentionVerification: f.MentionDecision.Verification,
+		MentionReason:       f.MentionDecision.Reason,
+	}
+}
+
+func renderEvidenceReply(f incidentFacts) string {
+	reportURL := firstText(f.ReportURL, f.GitHubURL)
+	pocURL := strings.TrimSpace(f.PoCURL)
+	explorerURL := strings.TrimSpace(f.ExplorerURL)
+	analysis := strings.TrimSpace(f.Analysis)
+	if reportURL == "" && pocURL == "" && explorerURL == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	if reportURL != "" || pocURL != "" {
+		b.WriteString("Artifacts + analysis 🧾\n\nArtifacts:")
+		if reportURL != "" {
+			b.WriteString("\n- Report: ")
+			b.WriteString(reportURL)
+		}
+		if pocURL != "" {
+			b.WriteString("\n- PoC: ")
+			b.WriteString(pocURL)
+		}
+		if analysis != "" {
+			b.WriteString("\n\nAnalysis:\n")
+			b.WriteString(analysis)
+		}
+	}
+	if explorerURL != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\nExplorer:\n")
+		} else {
+			b.WriteString("Tx: ")
+		}
+		b.WriteString(explorerURL)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func renderRichMainPost(r *Runner, f incidentFacts) string {
+	protocol := firstText(f.ProtocolDisplay, f.Protocol)
+	loss := estimatedLossLabel(f)
+	component := firstText(f.Card.Victim, f.Card.VulnerableContract, "affected protocol component")
+	assets := "under review"
+	if len(f.AffectedAssets) > 0 {
+		assets = strings.Join(f.AffectedAssets, ", ")
+	}
+	mechanism := strings.TrimSpace(strings.Join(f.WhatHappened[:2], " "))
+	outcomeLine := strings.TrimSpace(f.WhatHappened[2])
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "🚨 %s — %s\n\n", protocol, incidentHeadline(f))
+	fmt.Fprintf(&b, "%s\n\n", incidentLead(protocol, f, loss))
+	fmt.Fprintf(&b, "Key info\n")
+	fmt.Fprintf(&b, "• Chain: %s\n", f.Chain)
+	fmt.Fprintf(&b, "• Occurred: %s\n", f.Occurred)
+	fmt.Fprintf(&b, "• Estimated loss: %s\n", loss)
+	fmt.Fprintf(&b, "• Affected component: %s\n", component)
+	fmt.Fprintf(&b, "• Affected assets: %s\n\n", assets)
+	fmt.Fprintf(&b, "TL;DR\n%s\n\n%s\n\n%s\n\n", trimSentence(f.RootCause), trimSentence(mechanism), trimSentence(outcomeLine))
+	fmt.Fprintf(&b, "Why it matters\n%s\n\n", whyItMatters(f))
+	fmt.Fprintf(&b, "Builder takeaway\n%s", builderTakeaway(f))
+	if caveat := strings.TrimSpace(f.ImpactCaveat); caveat != "" {
+		fmt.Fprintf(&b, "\n\n%s", trimSentence(caveat))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func incidentHeadline(f incidentFacts) string {
+	hay := strings.ToLower(strings.Join([]string{f.AttackType, f.RootCause, f.Invariant, f.Card.Vulnerability, f.Card.VulnerablePath}, " "))
+	switch {
+	case strings.Contains(hay, "pair") && strings.Contains(hay, "burn"):
+		return "LP Reserve Burn"
+	case strings.Contains(hay, "skim") && strings.Contains(hay, "sync"):
+		return "AMM Reserve Manipulation"
+	case strings.Contains(hay, "negative margin") || strings.Contains(hay, "under-collateralized"):
+		return "Unsafe Margin Withdrawal"
+	case strings.Contains(hay, "referral") && strings.Contains(hay, "price"):
+		return "Redeemable Supply Mispricing"
+	case strings.Contains(hay, "reward") && (strings.Contains(hay, "repeat") || strings.Contains(hay, "duplicate")):
+		return "Repeated Reward Claim"
+	case strings.Contains(hay, "authorization") || strings.Contains(hay, "permission"):
+		return "Authorization Bypass"
+	case strings.Contains(hay, "pricing") || strings.Contains(hay, "accounting") || strings.Contains(hay, "settlement"):
+		return "Settlement Accounting Exploit"
+	default:
+		return titleFromSlug(truncateText(firstText(f.Card.Vulnerability, f.AttackType, "Incident Analysis"), 72))
+	}
+}
+
+func incidentLead(protocol string, f incidentFacts, loss string) string {
+	date := longIncidentDate(f.Occurred)
+	prefix := protocol
+	if date != "" {
+		prefix = "On " + date + ", " + protocol
+	}
+	if f.ImpactCaveat != "" && loss != "under review" {
+		return fmt.Sprintf("%s was exploited on %s, causing at least %s in priced losses.", prefix, f.Chain, strings.TrimSuffix(loss, "+"))
+	}
+	if loss == "under review" {
+		return fmt.Sprintf("%s was exploited on %s. The loss remains under review.", prefix, f.Chain)
+	}
+	return fmt.Sprintf("%s was exploited on %s, with an estimated loss of %s.", prefix, f.Chain, loss)
+}
+
+func longIncidentDate(occurred string) string {
+	fields := strings.Fields(occurred)
+	if len(fields) == 0 {
+		return ""
+	}
+	parsed, err := time.Parse("2006-01-02", fields[0])
+	if err != nil {
+		return ""
+	}
+	return parsed.Format("January 2, 2006")
+}
+
+func estimatedLossLabel(f incidentFacts) string {
+	if f.ImpactUSD > 0 {
+		label := detailedUSD(f.ImpactUSD)
+		if f.ImpactCaveat != "" {
+			label += "+"
+		}
+		return label
+	}
+	value := strings.TrimSpace(f.Impact)
+	value = strings.TrimPrefix(value, "approximately ")
+	value = strings.TrimPrefix(value, "~")
+	if value == "" {
+		return "under review"
+	}
+	if match := regexp.MustCompile(`^([0-9][0-9,]*(?:\.[0-9]+)?)\s+(USDT|USDC|DAI)$`).FindStringSubmatch(strings.ToUpper(value)); len(match) == 3 {
+		if amount, err := strconv.ParseFloat(strings.ReplaceAll(match[1], ",", ""), 64); err == nil {
+			return detailedUSD(amount)
+		}
+	}
+	return value
+}
+
+func detailedUSD(value float64) string {
+	abs := math.Abs(value)
+	switch {
+	case abs >= 1_000_000_000:
+		return compactUSDScale(value/1_000_000_000, "B")
+	case abs >= 1_000_000:
+		return compactUSDScale(value/1_000_000, "M")
+	case abs >= 1_000:
+		return compactUSDScale(value/1_000, "K")
+	default:
+		return fmt.Sprintf("$%.0f", value)
+	}
+}
+
+func compactUSDScale(value float64, suffix string) string {
+	number := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", value), "0"), ".")
+	return "$" + number + suffix
+}
+
+func whyItMatters(f incidentFacts) string {
+	hay := strings.ToLower(strings.Join([]string{f.RootCause, f.Invariant, f.Card.Vulnerability, f.Card.VulnerablePath}, " "))
+	switch {
+	case strings.Contains(hay, "pair") && strings.Contains(hay, "burn"):
+		return "AMMs assume a token transfer cannot rewrite the pool's existing inventory as if it were trader input. Breaking that boundary turns transfer-side token logic into a reserve-manipulation primitive."
+	case strings.Contains(hay, "negative margin") || strings.Contains(hay, "withdrawable equity"):
+		return "Margin engines must derive withdrawals from current collateral, position, PnL, funding, and fee state. Accepting stale or attacker-shaped accounting can turn a position update into direct asset release."
+	case strings.Contains(hay, "redeemable supply") || strings.Contains(hay, "liveprice"):
+		return "Redemption pricing is only safe when reserve value and every redeemable balance are updated on the same accounting basis. Temporary liquidity must not inflate the price of newly redeemable supply."
+	case f.Invariant != "":
+		return "The incident broke a core safety boundary: " + trimSentence(lowerLeading(f.Invariant))
+	default:
+		return "The incident shows how an internal accounting assumption can become an asset-extraction path when state validation and value transfer are not kept on the same boundary."
+	}
+}
+
+func builderTakeaway(f incidentFacts) string {
+	hay := strings.ToLower(strings.Join([]string{f.RootCause, f.Invariant, f.Card.Vulnerability, f.Card.VulnerablePath}, " "))
+	switch {
+	case strings.Contains(hay, "pair") && strings.Contains(hay, "burn"):
+		return "A token should never burn from or resynchronize an AMM pair's existing inventory during transfer. Bound fees and burns to the sender's input without mutating LP reserves mid-transfer."
+	case strings.Contains(hay, "negative margin") || strings.Contains(hay, "withdrawable equity"):
+		return "Recompute withdrawable equity from current state immediately before releasing funds, and reject any withdrawal that would leave the account below its solvency requirement."
+	case strings.Contains(hay, "redeemable supply") || strings.Contains(hay, "liveprice"):
+		return "Update redeemable supply and reserve accounting before calculating a redemption price, and prevent same-transaction liquidity from pricing balances created in that transaction."
+	case f.Invariant != "":
+		return "Enforce the invariant against current state before value moves: " + trimSentence(lowerLeading(f.Invariant))
+	default:
+		return "Validate the complete post-action state before releasing assets, and keep attacker-controlled intermediate state out of pricing, solvency, and authorization decisions."
+	}
+}
+
+func publicInvariant(reportJSON []byte, report string) string {
+	explicit := firstText(
+		jsonPathString(reportJSON, "vulnerability", "violated_invariant"),
+		markdownField(report, "Violated invariant"),
+	)
+	if explicit != "" {
+		return sanitizeSentence(explicit)
+	}
+	hay := strings.ToLower(strings.Join([]string{
+		jsonPathString(reportJSON, "vulnerability", "title"),
+		jsonPathString(reportJSON, "vulnerability", "root_cause"),
+		jsonPathString(reportJSON, "attack_summary", "entry_function"),
+		jsonPathString(reportJSON, "attack_summary", "public_entrypoint_called_per_iteration"),
+	}, " "))
+	switch {
+	case strings.Contains(hay, "pair") && strings.Contains(hay, "burn"):
+		return "Token transfers must not debit or resynchronize an AMM pair's existing inventory before crediting the incoming transfer."
+	case strings.Contains(hay, "negative margin") || strings.Contains(hay, "under-collateralized"):
+		return "A margin withdrawal must not exceed verified withdrawable equity after current position, PnL, funding, fee, and solvency checks."
+	case strings.Contains(hay, "price") || strings.Contains(hay, "accounting") || strings.Contains(hay, "settlement"):
+		return "The state used to price and validate a payout must include every balance that is redeemable through that payout path."
+	default:
+		return "The state used to authorize and price value release must remain consistent with the state changed by the action."
 	}
 }
 
@@ -357,10 +555,9 @@ func (r *Runner) applyExploitFlowCard(ctx context.Context, c Case, f *incidentFa
 		cardCtx,
 		pythonBin,
 		script,
-		filepath.Join(c.OutputRoot, "report_bundle"),
+		briefPath,
 		"--out-dir", outDir,
 		"--basename", "exploit-flow-card",
-		"--title", fmt.Sprintf("%s Exploit Flow", f.Protocol),
 	)
 	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	output, err := cmd.CombinedOutput()
@@ -406,96 +603,71 @@ func writeCardBrief(outputRoot string, c Case, f incidentFacts) (string, error) 
 		return "", errors.New("output_root is required for card brief")
 	}
 	path := filepath.Join(outputRoot, "x-feed-card-brief.md")
-	reproduced := f.ReproducedUSD
-	if reproduced <= 0 {
-		reproduced = f.ImpactUSD
+	steps := append([]string(nil), f.Card.FlowSteps...)
+	if len(steps) == 0 {
+		steps = append(steps, f.WhatHappened...)
 	}
-	proofKind := "proof under review"
-	if c.PoCState == outcome.PoCStateEconomic {
-		proofKind = "economic_proof"
+	for len(steps) < 3 {
+		steps = append(steps, "Details remain under review.")
 	}
-	pocStatus := "under review"
-	if c.PoCState == outcome.PoCStateEconomic || c.Outcome == outcome.OutcomeVerified || c.Outcome == outcome.OutcomePartial {
-		pocStatus = "verified"
+	for i := range steps {
+		steps[i] = stripStepNumber(steps[i])
 	}
-	mechanism := append([]string(nil), f.WhatHappened...)
-	if len(f.Card.FlowSteps) > 0 {
-		mechanism = append([]string(nil), f.Card.FlowSteps...)
+	inShort := strings.TrimSpace(strings.Join(f.WhatHappened[:min(len(f.WhatHappened), 2)], " "))
+	disclosure := "approved-for-draft"
+	if f.ReadyToPublish {
+		disclosure = "publishable"
 	}
-	for len(mechanism) < 3 {
-		mechanism = append(mechanism, "Details remain under review.")
+	assets := "under review"
+	if len(f.AffectedAssets) > 0 {
+		assets = strings.Join(f.AffectedAssets, ", ")
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s Exploit Flow\n\n", f.Protocol)
+	fmt.Fprintf(&b, "# Public Card Packet — %s Incident\n\n", f.Protocol)
+	fmt.Fprintf(&b, "- **Disclosure status**: %s\n", disclosure)
 	fmt.Fprintf(&b, "- **Protocol**: %s\n", f.Protocol)
+	fmt.Fprintf(&b, "- **Headline**: %s — %s\n", f.Protocol, incidentHeadline(f))
 	fmt.Fprintf(&b, "- **Chain**: %s\n", f.Chain)
-	fmt.Fprintf(&b, "- **Estimated loss**: %s\n", moneyForCard(f.ImpactUSD, f.Impact))
-	fmt.Fprintf(&b, "- **Attacker gain reproduced**: %s\n", moneyForCard(reproduced, "unknown"))
-	if f.Card.Impact != "" {
-		fmt.Fprintf(&b, "- **Impact card**: %s\n", f.Card.Impact)
+	fmt.Fprintf(&b, "- **Occurred**: %s\n", f.Occurred)
+	fmt.Fprintf(&b, "- **Finding**: %s\n", trimSentence(f.RootCause))
+	fmt.Fprintf(&b, "- **In short**: %s\n", trimSentence(inShort))
+	fmt.Fprintf(&b, "- **Severity**: %s\n", fallback(f.Severity, "under review"))
+	fmt.Fprintf(&b, "- **Confidence**: %s\n", fallback(f.Confidence, "under review"))
+	fmt.Fprintf(&b, "- **RCA status**: %s\n", publicCardRCAStatus(c, f))
+	fmt.Fprintf(&b, "- **Vulnerable contract**: %s\n", firstText(f.Card.VulnerableContract, "Affected protocol contract"))
+	fmt.Fprintf(&b, "- **Vulnerable path**: %s\n", firstText(f.Card.VulnerablePath, "affected accounting path"))
+	fmt.Fprintf(&b, "- **Victim**: %s\n", firstText(f.Card.Victim, "Affected protocol component"))
+	fmt.Fprintf(&b, "- **Impact card**: %s\n", estimatedLossLabel(f))
+	if f.ImpactCaveat != "" {
+		fmt.Fprintf(&b, "- **Impact note**: %s\n", strings.TrimSuffix(f.ImpactCaveat, "."))
 	}
-	if f.Card.AttackerGain != "" {
-		fmt.Fprintf(&b, "- **Attacker gain card**: %s\n", f.Card.AttackerGain)
-	}
-	fmt.Fprintf(&b, "- **RCA status**: %s\n", cardRCAStatus(c, f))
-	if f.Card.VulnerablePath != "" {
-		fmt.Fprintf(&b, "- **Vulnerable path**: %s\n", f.Card.VulnerablePath)
-	}
-	if f.Card.VulnerableContract != "" {
-		fmt.Fprintf(&b, "- **Vulnerable contract**: %s\n", f.Card.VulnerableContract)
-	}
-	if f.Card.Vulnerability != "" {
-		fmt.Fprintf(&b, "- **Vulnerability**: %s\n", f.Card.Vulnerability)
-	}
-	if f.Card.ExploitResult != "" {
-		fmt.Fprintf(&b, "- **Exploit result**: %s\n", f.Card.ExploitResult)
-	}
-	if f.Card.Victim != "" {
-		fmt.Fprintf(&b, "- **Victim**: %s\n", f.Card.Victim)
-	}
-	if f.Card.LoopLabel != "" {
-		fmt.Fprintf(&b, "- **Loop label**: %s\n", f.Card.LoopLabel)
-	}
-	for i, step := range f.Card.FlowSteps {
+	fmt.Fprintf(&b, "- **Affected assets**: %s\n", assets)
+	for i, step := range steps {
 		if i >= 4 {
 			break
 		}
 		fmt.Fprintf(&b, "- **Flow step %d**: %s\n", i+1, step)
 	}
-	fmt.Fprintf(&b, "- **PoC status**: %s\n", pocStatus)
-	fmt.Fprintf(&b, "- **Proof kind**: %s\n", proofKind)
-	fmt.Fprintf(&b, "- **Tx**: %s\n\n", f.TxHash)
-	fmt.Fprintf(&b, "## Root Cause\n\n%s\n\n", firstText(f.Card.Subtitle, f.RootCause))
-	fmt.Fprintf(&b, "Mechanism:\n")
-	cardMechanism := append([]string(nil), f.Card.Mechanism...)
-	if len(cardMechanism) == 0 {
-		cardMechanism = mechanism
-	}
-	for len(cardMechanism) < 3 {
-		cardMechanism = append(cardMechanism, "Details remain under review.")
-	}
-	for _, line := range cardMechanism[:3] {
-		fmt.Fprintf(&b, "- %s\n", line)
-	}
-	fmt.Fprintf(&b, "\nKey evidence:\n")
-	if len(f.Card.KeyEvidence) > 0 {
-		for _, line := range f.Card.KeyEvidence {
-			fmt.Fprintf(&b, "- %s\n", strings.TrimSuffix(line, ".")+".")
-		}
-	} else {
-		fmt.Fprintf(&b, "- Impact scale: %s.\n", f.Impact)
-	}
-	if f.ReproducedUSD > 0 {
-		fmt.Fprintf(&b, "- Economic reproduction matched approximately %s.\n", moneyForCard(f.ReproducedUSD, "unknown"))
-	}
-	if f.ExplorerURL != "" {
-		fmt.Fprintf(&b, "- Explorer: %s.\n", f.ExplorerURL)
-	}
+	fmt.Fprintf(&b, "- **Violated invariant**: %s\n", f.Invariant)
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+func stripStepNumber(value string) string {
+	return strings.TrimSpace(regexp.MustCompile(`^\s*\d+\s*[.)-]\s*`).ReplaceAllString(value, ""))
+}
+
+func publicCardRCAStatus(c Case, f incidentFacts) string {
+	if c.RCAState == outcome.RCAStateComplete && !strings.EqualFold(f.Confidence, "low") {
+		return "confirmed"
+	}
+	if c.Outcome == outcome.OutcomePartial || c.PublishTier == outcome.PublishTierEconomicIncompleteRCA || (c.RCAState != "" && c.RCAState != outcome.RCAStateComplete) {
+		return "partial"
+	}
+	return "unproven"
 }
 
 func buildCardFacts(protocol string, summary, reportJSON []byte, report, impact string, impactUSD, reproducedUSD float64) cardFacts {
@@ -1363,6 +1535,105 @@ func reproducedUSDValue(summary []byte) float64 {
 	return 0
 }
 
+func affectedAssetSymbols(summary, reportJSON []byte) []string {
+	out := make([]string, 0, 3)
+	add := func(raw string) {
+		symbol := strings.ToUpper(strings.TrimSpace(cleanCardText(raw)))
+		if symbol == "" || strings.EqualFold(symbol, "unknown") || containsValue(out, symbol) {
+			return
+		}
+		if !regexp.MustCompile(`^[A-Z0-9._-]{1,16}$`).MatchString(symbol) {
+			return
+		}
+		out = append(out, symbol)
+	}
+	add(jsonPathString(reportJSON, "impact", "attacker_profit_symbol"))
+	for _, path := range [][]string{
+		{"economic_reproduction", "incident", "asset_legs"},
+		{"economic_reproduction", "incident", "drain_legs"},
+		{"economic_reproduction", "poc", "included_legs"},
+		{"economic_reproduction", "poc", "gain_family_selection", "included_legs"},
+	} {
+		arr, _ := jsonValue(summary, path...).([]any)
+		for _, item := range arr {
+			if m, ok := item.(map[string]any); ok {
+				add(fmt.Sprint(m["symbol"]))
+			}
+			if len(out) >= 3 {
+				return out[:3]
+			}
+		}
+	}
+	if losses, ok := jsonValue(reportJSON, "impact", "victim_losses").([]any); ok {
+		for _, item := range losses {
+			if m, ok := item.(map[string]any); ok {
+				add(fmt.Sprint(m["symbol"]))
+			}
+			if len(out) >= 3 {
+				return out[:3]
+			}
+		}
+	}
+	return out
+}
+
+func impactCaveat(summary, reportJSON []byte, report string) string {
+	count := 0
+	for _, path := range [][]string{
+		{"economic_reproduction", "incident", "unpriced_leg_count"},
+		{"economic_reproduction", "pricing", "unpriced_leg_count"},
+		{"impact", "unpriced_leg_count"},
+	} {
+		source := summary
+		if path[0] == "impact" {
+			source = reportJSON
+		}
+		if n := int(jsonPathNumber(source, path...)); n > count {
+			count = n
+		}
+	}
+	for _, path := range [][]string{
+		{"economic_reproduction", "incident", "unpriced_legs"},
+		{"economic_reproduction", "pricing", "unpriced_legs"},
+	} {
+		if arr, ok := jsonValue(summary, path...).([]any); ok && len(arr) > count {
+			count = len(arr)
+		}
+	}
+	incomplete := jsonTruthy(jsonValue(summary, "economic_reproduction", "incident", "usd_incomplete")) ||
+		jsonTruthy(jsonValue(summary, "economic_reproduction", "pricing", "usd_incomplete")) ||
+		jsonTruthy(jsonValue(reportJSON, "impact", "usd_incomplete"))
+	field := strings.ToLower(markdownField(report, "USD incomplete"))
+	if strings.Contains(field, "true") || strings.Contains(field, "yes") || strings.Contains(field, "unpriced") {
+		incomplete = true
+		if count == 0 {
+			if match := regexp.MustCompile(`(\d+)\s+unpriced`).FindStringSubmatch(field); len(match) == 2 {
+				count, _ = strconv.Atoi(match[1])
+			}
+		}
+	}
+	if !incomplete && count == 0 {
+		return ""
+	}
+	if count > 0 {
+		return fmt.Sprintf("The loss estimate is a lower bound because %d affected asset leg(s) could not be priced.", count)
+	}
+	return "The loss estimate is a lower bound because part of the affected asset movement could not be priced."
+}
+
+func jsonTruthy(value any) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true") || strings.EqualFold(strings.TrimSpace(v), "yes")
+	case float64:
+		return v > 0
+	default:
+		return false
+	}
+}
+
 func moneyForCard(value float64, fallbackText string) string {
 	if value > 0 {
 		return fmt.Sprintf("$%.2f", value)
@@ -1541,8 +1812,6 @@ func publicRootCause(protocol string, reportJSON []byte, c Case) string {
 
 func publicWhatHappened(protocol string, reportJSON, summary []byte) []string {
 	category := strings.ToLower(attackType(reportJSON))
-	proofVerified := strings.EqualFold(jsonPathString(summary, "poc", "status"), "verified") ||
-		strings.EqualFold(jsonPathString(summary, "economic_reproduction", "status"), "pass")
 	entryFunction := cleanPublicEntryFunction(jsonPathString(reportJSON, "attack_summary", "entry_function"))
 	vulnerabilityText := strings.ToLower(strings.Join([]string{
 		jsonPathString(reportJSON, "vulnerability", "title"),
@@ -1552,14 +1821,10 @@ func publicWhatHappened(protocol string, reportJSON, summary []byte) []string {
 	if entryFunction != "" && (strings.Contains(vulnerabilityText, "negative margin") ||
 		strings.Contains(vulnerabilityText, "changeposition") ||
 		strings.Contains(vulnerabilityText, "margin withdrawal")) {
-		line3 := "The observed value movement matches the RCA direction, while source-level guard details remain limited."
-		if proofVerified {
-			line3 = "The economic PoC reproduced the observed value movement at incident scale."
-		}
 		return []string{
 			fmt.Sprintf("The attacker reached %s on the vulnerable %s proxy path.", entryFunction, protocol),
 			"The RCA points to an under-collateralized negative margin withdrawal being accepted after attacker-controlled position/accounting changes.",
-			line3,
+			"The resulting state transition released value from the affected margin account.",
 		}
 	}
 	if strings.Contains(category, "pricing") || strings.Contains(category, "accounting") || strings.Contains(category, "settlement") {
@@ -1568,24 +1833,16 @@ func publicWhatHappened(protocol string, reportJSON, summary []byte) []string {
 		if asset != "value" {
 			payouts = asset + " payouts"
 		}
-		line3 := fmt.Sprintf("That mismatch let %s leave the affected reserve.", asset)
-		if proofVerified {
-			line3 = fmt.Sprintf("That mismatch let %s leave the market reserve, and the economic PoC reproduced the observed loss scale.", asset)
-		}
 		return []string{
 			fmt.Sprintf("An attacker-controlled setup repeatedly interacted with a %s market path.", protocol),
 			fmt.Sprintf("The protocol assumption under review is that settlement accounting would keep %s bounded by market reserves.", payouts),
-			line3,
+			fmt.Sprintf("That mismatch let %s leave the affected reserve.", asset),
 		}
-	}
-	line3 := "That mismatch created an extractable value movement."
-	if proofVerified {
-		line3 = "The economic PoC reproduced the observed value movement at incident scale."
 	}
 	return []string{
 		fmt.Sprintf("An attacker-controlled setup interacted with a %s protocol path.", protocol),
 		"The protocol assumption under review is that validation and accounting checks would keep the state bounded.",
-		line3,
+		"That mismatch created an extractable value movement.",
 	}
 }
 
@@ -1629,6 +1886,20 @@ func publicAnalysis(reportJSON, summary []byte) string {
 	if strings.Contains(category, "pricing") || strings.Contains(category, "accounting") || strings.Contains(category, "settlement") {
 		asset := settlementAssetLabel(reportJSON, summary)
 		return fmt.Sprintf("At a high level, this is a market interaction and settlement-accounting issue. %s moved out of the market reserve while the reproduced PoC matched the observed loss scale. The exact pricing formula or missing guard remains under review.", sentenceStart(asset))
+	}
+	confidence := strings.ToLower(firstText(
+		jsonPathString(reportJSON, "vulnerability", "confidence"),
+		jsonPathString(reportJSON, "root_cause_confidence"),
+	))
+	if confidence == "high" {
+		invariant := publicInvariant(reportJSON, "")
+		if invariant != "" {
+			effect := "value extraction"
+			if asset := settlementAssetLabel(reportJSON, summary); asset != "value" {
+				effect = asset + " extraction"
+			}
+			return fmt.Sprintf("At a high level, this incident broke a protocol-state invariant: %s The resulting state distortion enabled %s. The public report and PoC document the observed economic effect.", lowerLeading(trimSentence(invariant)), effect)
+		}
 	}
 	if strings.EqualFold(jsonPathString(summary, "poc", "status"), "verified") {
 		return "At a high level, this is a protocol-state assumption issue. The reproduced PoC matched the observed economic effect, while lower-level implementation details remain under review."

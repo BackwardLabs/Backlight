@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // MentionEntity is one protocol/entity row in the protocol_mention_store.
@@ -52,6 +53,24 @@ type MentionStoreStats struct {
 	PolicySuppress int
 	PolicyReview   int
 	Overrides      int
+}
+
+// MentionVerification records the result of checking a mention candidate
+// against X immediately before composing a post. CanonicalID is empty when the
+// protocol was not present in the local mention store and X MCP discovered it.
+type MentionVerification struct {
+	CanonicalID   string
+	EntityName    string
+	XID           string
+	XHandle       string
+	XDisplayName  string
+	XFollowers    int64
+	XStatus       string
+	Website       string
+	Source        string
+	VerifiedAt    string
+	ReverifyDueAt string
+	Outcome       string // verified | replaced | unresolved
 }
 
 func aliasesJSON(a []string) string {
@@ -193,6 +212,154 @@ func (s *Store) SetMentionPolicy(ctx context.Context, canonicalIDs []string, pol
 	})
 }
 
+// RecordMentionVerification updates only the mutable X identity fields for an
+// existing entity. For a newly discovered protocol it reuses an existing row
+// with the same immutable X user id, or creates an x_mcp:<id> entity. Manual
+// mention policy is deliberately preserved and unresolved checks never erase a
+// previously known handle.
+func (s *Store) RecordMentionVerification(ctx context.Context, raw MentionVerification) error {
+	v := raw
+	v.CanonicalID = strings.TrimSpace(v.CanonicalID)
+	v.EntityName = strings.TrimSpace(v.EntityName)
+	v.XID = strings.TrimSpace(v.XID)
+	v.XHandle = strings.TrimLeft(strings.TrimSpace(v.XHandle), "@")
+	v.XDisplayName = strings.TrimSpace(v.XDisplayName)
+	v.Website = strings.TrimSpace(v.Website)
+	v.Source = strings.TrimSpace(v.Source)
+	v.Outcome = strings.TrimSpace(v.Outcome)
+	if v.Source == "" {
+		v.Source = "x_mcp"
+	}
+	if v.VerifiedAt == "" {
+		v.VerifiedAt = nowUTC()
+	}
+	if v.Outcome != "verified" && v.Outcome != "replaced" && v.Outcome != "unresolved" {
+		return fmt.Errorf("invalid mention verification outcome %q", v.Outcome)
+	}
+	if v.CanonicalID == "" && v.Outcome == "unresolved" {
+		return nil
+	}
+	if v.CanonicalID == "" && (v.XID == "" || v.XHandle == "" || v.EntityName == "") {
+		return fmt.Errorf("new mention verification requires entity_name, x_id, and x_handle")
+	}
+
+	return s.Tx(ctx, func(tx *sql.Tx) error {
+		canonicalID := v.CanonicalID
+		discoveredExisting := false
+		if canonicalID == "" {
+			if err := tx.QueryRowContext(ctx,
+				`SELECT canonical_id FROM protocol_mention_store WHERE x_id = ? ORDER BY updated_at DESC LIMIT 1`,
+				v.XID,
+			).Scan(&canonicalID); err == nil {
+				discoveredExisting = true
+			}
+		}
+
+		now := nowUTC()
+		if canonicalID != "" {
+			if v.Outcome == "unresolved" {
+				_, err := tx.ExecContext(ctx, `
+					UPDATE protocol_mention_store
+					SET x_status = 'unresolved', status = 'needs_resolution',
+					    pulled_at = ?, reverify_due_at = ?, updated_at = ?
+					WHERE canonical_id = ?`,
+					v.VerifiedAt, v.ReverifyDueAt, now, canonicalID,
+				)
+				return err
+			}
+			result, err := tx.ExecContext(ctx, `
+				UPDATE protocol_mention_store
+				SET x_id = ?, x_handle = ?, handle_norm = ?, x_display_name = ?,
+				    x_followers = ?, x_status = ?,
+				    website = CASE WHEN ? <> '' THEN ? ELSE website END,
+				    source = CASE WHEN ? = 'replaced' THEN 'drift_repair' ELSE source END,
+				    last_verified_at = ?, reverify_due_at = ?,
+				    status = 'active', updated_at = ?
+				WHERE canonical_id = ?`,
+				v.XID, v.XHandle, strings.ToLower(v.XHandle), v.XDisplayName,
+				v.XFollowers, firstNonEmptyMention(v.XStatus, "active"),
+				v.Website, v.Website, v.Outcome, v.VerifiedAt, v.ReverifyDueAt,
+				now, canonicalID,
+			)
+			if err != nil {
+				return fmt.Errorf("update mention verification %q: %w", canonicalID, err)
+			}
+			if affected, _ := result.RowsAffected(); affected == 0 {
+				return fmt.Errorf("mention verification canonical_id %q not found", canonicalID)
+			}
+			if discoveredExisting && v.EntityName != "" {
+				if err := appendMentionAlias(ctx, tx, canonicalID, v.EntityName, now); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
+		canonicalID = "x_mcp:" + v.XID
+		aliases := aliasesJSON([]string{v.EntityName})
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO protocol_mention_store (
+				canonical_id, x_id, x_handle, handle_norm, entity_name, aliases,
+				x_display_name, x_followers, x_status, website, mention_policy,
+				source, pulled_at, last_verified_at, reverify_due_at, status,
+				created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'allow', ?, ?, ?, ?, 'active', ?, ?)
+			ON CONFLICT(canonical_id) DO UPDATE SET
+				x_handle = excluded.x_handle,
+				handle_norm = excluded.handle_norm,
+				x_display_name = excluded.x_display_name,
+				x_followers = excluded.x_followers,
+				x_status = excluded.x_status,
+				website = excluded.website,
+				last_verified_at = excluded.last_verified_at,
+				reverify_due_at = excluded.reverify_due_at,
+				status = 'active',
+				updated_at = excluded.updated_at`,
+			canonicalID, v.XID, v.XHandle, strings.ToLower(v.XHandle), v.EntityName,
+			aliases, v.XDisplayName, v.XFollowers, firstNonEmptyMention(v.XStatus, "active"),
+			v.Website, v.Source, v.VerifiedAt, v.VerifiedAt, v.ReverifyDueAt, now, now,
+		)
+		if err != nil {
+			return fmt.Errorf("insert discovered mention %q: %w", canonicalID, err)
+		}
+		return nil
+	})
+}
+
+func appendMentionAlias(ctx context.Context, tx *sql.Tx, canonicalID, alias, now string) error {
+	var raw string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(aliases, '[]') FROM protocol_mention_store WHERE canonical_id = ?`,
+		canonicalID,
+	).Scan(&raw); err != nil {
+		return fmt.Errorf("read aliases for %q: %w", canonicalID, err)
+	}
+	var aliases []string
+	_ = json.Unmarshal([]byte(raw), &aliases)
+	for _, existing := range aliases {
+		if strings.EqualFold(strings.TrimSpace(existing), strings.TrimSpace(alias)) {
+			return nil
+		}
+	}
+	aliases = append(aliases, alias)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE protocol_mention_store SET aliases = ?, updated_at = ? WHERE canonical_id = ?`,
+		aliasesJSON(aliases), now, canonicalID,
+	); err != nil {
+		return fmt.Errorf("append mention alias for %q: %w", canonicalID, err)
+	}
+	return nil
+}
+
+func firstNonEmptyMention(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // AllMentionEntities loads every entity (with aliases parsed) for building an
 // in-memory resolution index at compose time. The store is read-mostly, so this
 // is built once and reused.
@@ -201,8 +368,11 @@ func (s *Store) AllMentionEntities(ctx context.Context) ([]MentionEntity, error)
 		SELECT canonical_id,
 		       COALESCE(x_id, ''), COALESCE(x_handle, ''), COALESCE(handle_norm, ''),
 		       entity_name, COALESCE(aliases, '[]'), COALESCE(entity_type, ''),
-		       COALESCE(slug, ''), COALESCE(token_symbol, ''), x_followers,
-		       mention_policy, COALESCE(source, ''), status
+		       COALESCE(slug, ''), COALESCE(token_symbol, ''), COALESCE(category_tags, ''),
+		       COALESCE(x_display_name, ''), x_followers, COALESCE(x_status, ''),
+		       COALESCE(website, ''), mention_policy, COALESCE(source, ''),
+		       COALESCE(pulled_at, ''), COALESCE(last_verified_at, ''),
+		       COALESCE(reverify_due_at, ''), status
 		FROM protocol_mention_store`)
 	if err != nil {
 		return nil, fmt.Errorf("query mention entities: %w", err)
@@ -214,7 +384,9 @@ func (s *Store) AllMentionEntities(ctx context.Context) ([]MentionEntity, error)
 		var aliasesRaw string
 		if err := rows.Scan(&e.CanonicalID, &e.XID, &e.XHandle, &e.HandleNorm,
 			&e.EntityName, &aliasesRaw, &e.EntityType, &e.Slug, &e.TokenSymbol,
-			&e.XFollowers, &e.MentionPolicy, &e.Source, &e.Status); err != nil {
+			&e.CategoryTags, &e.XDisplayName, &e.XFollowers, &e.XStatus,
+			&e.Website, &e.MentionPolicy, &e.Source, &e.PulledAt,
+			&e.LastVerifiedAt, &e.ReverifyDueAt, &e.Status); err != nil {
 			return nil, fmt.Errorf("scan mention entity: %w", err)
 		}
 		if aliasesRaw != "" && aliasesRaw != "[]" {

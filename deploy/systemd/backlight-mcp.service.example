@@ -10,9 +10,9 @@ Group=backlight
 WorkingDirectory=/srv/backlight
 EnvironmentFile=/srv/backlight/env/backlight.env
 Environment="HOME=/srv/backlight"
-Environment=HELIOS_BASE_URL=http://127.0.0.1:8080
-Environment=HELIOS_MCP_LISTEN_ADDR=127.0.0.1:8090
-Environment=HELIOS_MCP_PATH=/mcp
+Environment=BACKLIGHT_BASE_URL=http://127.0.0.1:8080
+Environment=BACKLIGHT_MCP_LISTEN_ADDR=127.0.0.1:8090
+Environment=BACKLIGHT_MCP_PATH=/mcp
 ExecStart=/srv/backlight/bin/backlight-mcp
 Restart=always
 RestartSec=5
@@ -20,8 +20,8 @@ KillSignal=SIGTERM
 TimeoutStopSec=15
 
 # Expose this service through a TLS reverse proxy; do not bind it directly to a
-# public interface without HTTPS. Bearer auth uses HELIOS_MCP_HTTP_TOKEN when set,
-# otherwise HELIOS_API_TOKEN from the EnvironmentFile.
+# public interface without HTTPS. Bearer auth uses BACKLIGHT_MCP_HTTP_TOKEN when set,
+# otherwise BACKLIGHT_API_TOKEN from the EnvironmentFile.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

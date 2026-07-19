@@ -8,7 +8,7 @@
 //
 // Usage (from the repo root):
 //
-//	HELIOS_DB_PATH=/path/var/backlight.db go run ./cmd/seed-mentions
+//	BACKLIGHT_DB_PATH=/path/var/backlight.db go run ./cmd/seed-mentions
 //
 // SURF_EXPORT_CSV overrides the seed file (default: the committed
 // seeds/surf-full-x-account-db.csv), so an operator only needs to point at the
@@ -43,17 +43,17 @@ type config struct {
 }
 
 // defaultSurfCSV is the committed seed shipped in the repo, so seeding needs no
-// separate data hand-off — only HELIOS_DB_PATH. Resolved relative to the working
+// separate data hand-off — only BACKLIGHT_DB_PATH. Resolved relative to the working
 // directory (run from the repo root).
 const defaultSurfCSV = "seeds/surf-full-x-account-db.csv"
 
 func loadConfig() (*config, error) {
 	cfg := &config{
-		DBPath:  os.Getenv("HELIOS_DB_PATH"),
+		DBPath:  os.Getenv("BACKLIGHT_DB_PATH"),
 		CSVPath: os.Getenv("SURF_EXPORT_CSV"),
 	}
 	if cfg.DBPath == "" {
-		return nil, fmt.Errorf("HELIOS_DB_PATH is required")
+		return nil, fmt.Errorf("BACKLIGHT_DB_PATH is required")
 	}
 	if cfg.CSVPath == "" {
 		cfg.CSVPath = defaultSurfCSV

@@ -20,7 +20,7 @@ This page keeps the operational details out of the project README.
 | Outcome mapping (O1..O8) | done (strict precedence O5 -> O6 -> O7 -> O4 -> O1 -> O2 -> O3 -> O8) |
 | Downstream fan-out | done (per-URL bounded exp backoff, multi-URL aggregation) |
 | GitHub product publish | done (`verified` and final `partial`, `test/{YYYY-MM}/{Protocol}/`, `Report.md` -> `README.md`) |
-| Pre-Lumos incident JSON | done (verified only, Agent SDK sidecar, case `pre-lumos.json` + `seed/import_{YEAR}.json`) |
+| Pre-Lumos incident JSON | done (verified only, Codex SDK sidecar, case `pre-lumos.json` + `seed/import_{YEAR}.json`) |
 | Operator notifications | done (webhook + Telegram native; 5 events; per-channel retry) |
 | Restart recovery | done (orphan running cases -> failed/host_restart + linked child queued) |
 | Prometheus metrics | done (case_state/outcome counters, queue_depth gauge, lumoskit duration histogram, handoff/notification attempt counters) |
@@ -28,9 +28,9 @@ This page keeps the operational details out of the project README.
 ## Web UI
 
 Open `http://127.0.0.1:8080/ui` or the matching host/port from
-`HELIOS_LISTEN_ADDR`. The UI is a lightweight console for manual analysis work:
+`BACKLIGHT_LISTEN_ADDR`. The UI is a lightweight console for manual analysis work:
 
-- save the local `HELIOS_API_TOKEN` in browser localStorage
+- save the local `BACKLIGHT_API_TOKEN` in browser localStorage
 - submit `POST /cases` with `chain`, `tx_hash`, optional incident metadata,
   and optional `force_rerun`
 - poll `GET /cases` for queued/running/done/failed progress
@@ -47,38 +47,43 @@ the token entered in the UI.
 All configuration is via env. Defaults match `seeds/v1.yaml` ->
 `runtime_config_surface`.
 
+Backlight-owned variables use the `BACKLIGHT_*` namespace. This is a breaking
+rename from the former product prefix: use `BACKLIGHT_<SUFFIX>` everywhere and
+restart each Backlight, MCP, bridge, or ops process after updating its env. The
+runtime does not fall back to the former names.
+
 For local runs, Backlight loads `.env` and `.env.local` from the current working
 directory before reading configuration. Existing process env values take
 precedence; `.env.local` can override `.env`.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `HELIOS_API_TOKEN` | yes | - | Bearer token for core API endpoints except `/healthz` |
-| `HELIOS_ECW_EXPORT_TOKEN` | no | empty | separate Bearer token for `GET /ecw/cases/{case_id}/export`; unset disables ECW export and the value must differ from `HELIOS_API_TOKEN` |
-| `HELIOS_ECW_EXPORT_MAX_BYTES` | no | `16777216` | per-artifact read cap for ECW export responses |
-| `HELIOS_DB_PATH` | yes | - | SQLite file path |
-| `HELIOS_OUTPUT_ROOT` | yes | - | fixed parent directory for flat human-readable LumosKit `--output-root` directories (`<YYMMDD>_<chain-alias>_<protocol>[-N]`) |
-| `HELIOS_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
-| `HELIOS_LUMOSKIT_BIN` | no | `bin/lumoskit` | child-process executable invoked per case |
-| `HELIOS_WORKER_POLL_MILLIS` | no | `1000` | worker poll cadence |
-| `HELIOS_MAX_CONCURRENT_LUMOSKIT` | no | `2` | parallel lumoskit ceiling |
-| `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` | no | `3` | linked rerun ceiling for `rerun_decision=auto_rerun`; set `0` to disable |
-| `HELIOS_DOWNSTREAM_WEBHOOK_URLS` | no | empty | comma-separated webhook list (empty means `handoff_status=skipped`, case advances directly to `handed-off`) |
-| `HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN` | no | empty | optional Bearer token sent to downstream webhook targets, useful for `backlight-mcp-bridge` |
-| `HELIOS_HANDOFF_RETRY_MAX_ATTEMPTS` | no | `5` | per-URL retry ceiling |
-| `HELIOS_HANDOFF_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | exponential backoff base |
-| `HELIOS_HANDOFF_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | exponential backoff ceiling |
+| `BACKLIGHT_API_TOKEN` | yes | - | Bearer token for core API endpoints except `/healthz` |
+| `BACKLIGHT_ECW_EXPORT_TOKEN` | no | empty | separate Bearer token for `GET /ecw/cases/{case_id}/export`; unset disables ECW export and the value must differ from `BACKLIGHT_API_TOKEN` |
+| `BACKLIGHT_ECW_EXPORT_MAX_BYTES` | no | `16777216` | per-artifact read cap for ECW export responses |
+| `BACKLIGHT_DB_PATH` | yes | - | SQLite file path |
+| `BACKLIGHT_OUTPUT_ROOT` | yes | - | fixed parent directory for flat human-readable LumosKit `--output-root` directories (`<YYMMDD>_<chain-alias>_<protocol>[-N]`) |
+| `BACKLIGHT_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
+| `BACKLIGHT_LUMOSKIT_BIN` | no | `bin/lumoskit` | child-process executable invoked per case |
+| `BACKLIGHT_WORKER_POLL_MILLIS` | no | `1000` | worker poll cadence |
+| `BACKLIGHT_MAX_CONCURRENT_LUMOSKIT` | no | `2` | parallel lumoskit ceiling |
+| `BACKLIGHT_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` | no | `3` | linked rerun ceiling for `rerun_decision=auto_rerun`; set `0` to disable |
+| `BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS` | no | empty | comma-separated webhook list (empty means `handoff_status=skipped`, case advances directly to `handed-off`) |
+| `BACKLIGHT_DOWNSTREAM_WEBHOOK_BEARER_TOKEN` | no | empty | optional Bearer token sent to downstream webhook targets, useful for `backlight-mcp-bridge` |
+| `BACKLIGHT_HANDOFF_RETRY_MAX_ATTEMPTS` | no | `5` | per-URL retry ceiling |
+| `BACKLIGHT_HANDOFF_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | exponential backoff base |
+| `BACKLIGHT_HANDOFF_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | exponential backoff ceiling |
 | `OPERATOR_NOTIFY_WEBHOOK_URL` | no | empty | enables operator-webhook channel when set |
 | `TELEGRAM_BOT_TOKEN` | no | empty | Backlight process env var required with chat id for Telegram alerts; can reuse the hackdetector bot token |
 | `TELEGRAM_CHAT_ID` | no | empty | Backlight process env var required with bot token; target group/channel/user id for Backlight alerts |
-| `HELIOS_TELEGRAM_API_BASE` | no | `https://api.telegram.org` | override for tests / self-hosted Telegram proxies |
-| `HELIOS_NOTIFY_RETRY_MAX_ATTEMPTS` | no | `5` | notification retry ceiling |
-| `HELIOS_NOTIFY_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | |
-| `HELIOS_NOTIFY_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | |
+| `BACKLIGHT_TELEGRAM_API_BASE` | no | `https://api.telegram.org` | override for tests / self-hosted Telegram proxies |
+| `BACKLIGHT_NOTIFY_RETRY_MAX_ATTEMPTS` | no | `5` | notification retry ceiling |
+| `BACKLIGHT_NOTIFY_RETRY_BACKOFF_BASE_SECONDS` | no | `2` | |
+| `BACKLIGHT_NOTIFY_RETRY_BACKOFF_MAX_SECONDS` | no | `300` | |
 | `GITHUB_TOKEN` / `GH_TOKEN` | no | empty | enables GitHub publish for verified LumosKit outputs; skipped when unset |
-| `HELIOS_GITHUB_PUBLISH_OWNER` | no | `BackwardLabs` | GitHub owner for product artifact publish |
-| `HELIOS_GITHUB_PUBLISH_REPO` | no | `Q1-2026` | GitHub repo for product artifact publish |
-| `HELIOS_GITHUB_PUBLISH_BRANCH` | no | `main` | GitHub branch for product artifact publish |
+| `BACKLIGHT_GITHUB_PUBLISH_OWNER` | no | `BackwardLabs` | GitHub owner for product artifact publish |
+| `BACKLIGHT_GITHUB_PUBLISH_REPO` | no | `Q1-2026` | GitHub repo for product artifact publish |
+| `BACKLIGHT_GITHUB_PUBLISH_BRANCH` | no | `main` | GitHub branch for product artifact publish |
 | `X_PUBLISH_ENABLED` | no | `false` | enables X side-effect publishing for verified Backlight incident posts |
 | `X_CLIENT_ID` | when X publish enabled and dry-run false | empty | OAuth 2.0 client id for the X app |
 | `X_CLIENT_SECRET` | when X publish enabled and dry-run false | empty | OAuth 2.0 client secret for the X app |
@@ -88,23 +93,32 @@ precedence; `.env.local` can override `.env`.
 | `X_API_BASE` | no | `https://api.x.com` | override for tests or proxies |
 | `X_ACCOUNT_USERNAME` | no | empty | optional username used to build the public `post_url`; omit to use `https://x.com/i/web/status/{id}` |
 | `X_DRY_RUN` | no | `true` | when true, records the generated X post text as `x_publish` without calling X |
-| `HELIOS_X_FEED_ENABLED` | no | `false` | enables the structured x-feed draft path after successful GitHub publish |
-| `HELIOS_X_FEED_SKILL_DIR` | no | `skills/x-feed` | vendored x-feed skill directory containing `incident-post-format.md` |
-| `HELIOS_X_FEED_INCLUDE_ATTACKER_CA` | no | `false` | opt-in switch for attacker CA details in the X reply |
-| `HELIOS_X_FEED_CARD_ENABLED` | no | `true` | runs the vendored `exploit-flow-card` renderer during x-feed draft generation |
-| `HELIOS_X_FEED_CARD_PYTHON_BIN` | no | `python3` | Python executable used for the exploit-flow-card renderer |
-| `HELIOS_X_FEED_CARD_TIMEOUT_SECONDS` | no | `20` | timeout for the exploit-flow-card renderer; failures are recorded but do not block text publishing |
+| `BACKLIGHT_X_FEED_ENABLED` | no | `false` | enables the structured x-feed draft path after successful GitHub publish |
+| `BACKLIGHT_X_FEED_SKILL_DIR` | no | `skills/x-feed` | vendored x-feed skill directory containing `incident-post-format.md` |
+| `BACKLIGHT_X_FEED_INCLUDE_ATTACKER_CA` | no | `false` | opt-in switch for attacker CA details in the X reply |
+| `BACKLIGHT_X_FEED_CARD_ENABLED` | no | `true` | runs the vendored `exploit-flow-card` renderer during x-feed draft generation |
+| `BACKLIGHT_X_FEED_CARD_PYTHON_BIN` | no | `python3` | Python executable used for the exploit-flow-card renderer |
+| `BACKLIGHT_X_FEED_CARD_TIMEOUT_SECONDS` | no | `20` | timeout for the exploit-flow-card renderer; failures are recorded but do not block text publishing |
+| `BACKLIGHT_VICTIM_MENTION` | no | `true` | enables local protocol-to-X account candidate resolution |
+| `BACKLIGHT_X_MCP_ENABLED` | no | `false` | verifies a local mention candidate with X MCP before tagging; misses are searched and high-confidence discoveries are persisted |
+| `BACKLIGHT_X_MCP_URL` | no | `https://api.x.com/mcp` | hosted X MCP Streamable HTTP endpoint |
+| `BACKLIGHT_X_MCP_BEARER_TOKEN` / `X_BEARER_TOKEN` | no | empty | app-only fallback for exact public-user lookup; X user search requires the shared OAuth user-context token configured by `X_CLIENT_ID`, `X_CLIENT_SECRET`, and the refresh-token settings |
+| `BACKLIGHT_X_MCP_COMMAND` | no | `xurl` | installed X MCP bridge executable |
+| `BACKLIGHT_X_MCP_ARGS` | no | `mcp https://api.x.com/mcp` | whitespace-separated bridge arguments used only when no MCP Bearer token is configured |
+| `BACKLIGHT_X_MCP_TIMEOUT_SECONDS` | no | `20` | total lookup/search deadline per protocol |
+| `BACKLIGHT_X_MENTION_CACHE_MAX_AGE_HOURS` | no | `168` | maximum age of a previously verified DB identity allowed when X MCP is unavailable; older identities are not tagged |
+| `BACKLIGHT_X_MENTION_REVERIFY_HOURS` | no | `24` | metadata interval written to `reverify_due_at`; publish-time verification still runs for every incident |
 | `TELEGRAM_PUBLISH_ENABLED` | no | `false` | after live X thread publish succeeds, sends the same main X body plus GitHub and X links to Telegram |
-| `HELIOS_PRE_LUMOS_ENABLED` | no | `false` | enables the Pre-Lumos Agent SDK sidecar for verified cases |
-| `HELIOS_PRE_LUMOS_SEED_ROOT` | when enabled | empty | repo/root where `seed/import_{YEAR}.json` should be merged by slug |
-| `HELIOS_PRE_LUMOS_OPENAI_BASE_URL` | no | `http://127.0.0.1:10631/v1` | OpenAI-compatible API proxy for the Agent SDK runner |
-| `HELIOS_PRE_LUMOS_PYTHON_BIN` | no | `python3` | Python executable used to run `scripts/pre_lumos_agent.py` |
-| `HELIOS_PRE_LUMOS_AGENT_SCRIPT` | no | `scripts/pre_lumos_agent.py` | Pre-Lumos Agent SDK runner script |
-| `HELIOS_PRE_LUMOS_SKILL_DIR` | no | `skills/pre-lumos` | vendored skill bundle; copied as-is from `BackwardLabs/skills-pre-lumos` |
-| `HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOT` / `HELIOS_PRE_LUMOS_CASE_OUTPUT_ROOTS` | no | empty | standalone runner input roots; Backlight worker passes the case output root automatically |
-| `HELIOS_PRE_LUMOS_YEAR` | no | inferred | optional forced target year for `seed/import_{YEAR}.json` |
-| `HELIOS_PRE_LUMOS_MODEL` / `OPENAI_MODEL` | no | SDK default | optional model override for the Agent SDK runner |
-| `HELIOS_PRE_LUMOS_WEB_SEARCH` | no | `false` | enables the hosted `WebSearchTool` when installed/supported |
+| `BACKLIGHT_PRE_LUMOS_ENABLED` | no | `false` | enables the Pre-Lumos Codex SDK sidecar for verified cases |
+| `BACKLIGHT_PRE_LUMOS_SEED_ROOT` | when enabled | empty | repo/root where `seed/import_{YEAR}.json` should be merged by slug |
+| `BACKLIGHT_PRE_LUMOS_PYTHON_BIN` | no | `python3` | Python executable used to run `scripts/pre_lumos_agent.py` |
+| `BACKLIGHT_PRE_LUMOS_AGENT_SCRIPT` | no | `scripts/pre_lumos_agent.py` | Pre-Lumos Codex SDK runner script |
+| `BACKLIGHT_PRE_LUMOS_CODEX_BIN` | no | discovered from `PATH` | local Codex CLI used by the Python SDK; keep it current with the configured model |
+| `BACKLIGHT_PRE_LUMOS_SKILL_DIR` | no | `skills/pre-lumos` | vendored skill bundle; copied as-is from `BackwardLabs/skills-pre-lumos` |
+| `BACKLIGHT_PRE_LUMOS_CASE_OUTPUT_ROOT` / `BACKLIGHT_PRE_LUMOS_CASE_OUTPUT_ROOTS` | no | empty | standalone runner input roots; Backlight worker passes the case output root automatically |
+| `BACKLIGHT_PRE_LUMOS_YEAR` | no | inferred | optional forced target year for `seed/import_{YEAR}.json` |
+| `BACKLIGHT_PRE_LUMOS_MODEL` | no | Codex default | optional model override for the Codex SDK runner |
+| `BACKLIGHT_PRE_LUMOS_WEB_SEARCH` | no | `false` | selects Codex live web search when true; otherwise web search is disabled |
 
 Plus any RPC env vars (`CEFG_LIVE_RPC_URL`, `RPC_URL`, `ETH_RPC_URL`,
 `ALCHEMY_API_KEY`); Backlight passes these through unchanged to the spawned
@@ -120,13 +134,15 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   product artifacts for `verified` and final `partial` cases to
   `test/{YYYY-MM}/{Protocol}/` in the configured Q1 repo. The publish step
   requires `PoC.t.sol` and `Report.md`; `Report.md` becomes `README.md`.
-- **Pre-Lumos incident JSON.** When `HELIOS_PRE_LUMOS_ENABLED=true` and
-  `HELIOS_PRE_LUMOS_SEED_ROOT` is set, verified cases also run
+- **Pre-Lumos incident JSON.** When `BACKLIGHT_PRE_LUMOS_ENABLED=true` and
+  `BACKLIGHT_PRE_LUMOS_SEED_ROOT` is set, verified cases also run
   `scripts/pre_lumos_agent.py`, write `<case output root>/pre-lumos.json`, and
   merge rows into `seed/import_{YEAR}.json` by `slug`. The auto-report Backlight
   workflow also writes `artifacts/pre_lumos_result.json` and
-  `artifacts/pre_lumos_result.md` for site/API display.
-- **ECW export.** When `HELIOS_ECW_EXPORT_TOKEN` is set, `GET /ecw/cases/{case_id}/export`
+  `artifacts/pre_lumos_result.md` for site/API display. The sidecar uses the
+  service user's existing Codex login under `HOME` / `CODEX_HOME`; it does not
+  require `OPENAI_API_KEY` or an OpenAI-compatible proxy.
+- **ECW export.** When `BACKLIGHT_ECW_EXPORT_TOKEN` is set, `GET /ecw/cases/{case_id}/export`
   returns an `ecw-internal-complete` bundle for internal PoC replay/adaptation.
   It uses exact file allowlisting, reports absent profile files in `missing`, and
   does not expand the MCP/product artifact profile.
@@ -134,7 +150,7 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   `analysis_stage`, `rerun_decision`, `rerun_reason`, `auto_rerun_resume_stage`,
   and eligibility fields. Attempts with `rerun_decision=auto_rerun` and
   `auto_rerun_eligible=true` are retried as linked child cases until
-  `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` is reached. `reachable_poc` resumes
+  `BACKLIGHT_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` is reached. `reachable_poc` resumes
   at `agent_poc_repair` to strengthen economic proof while preserving the RCA
   result; `poc_blocked` resumes at `agent_poc` and then runs `rca` if the
   replay becomes non-failing; `rca_blocked` resumes at `rca` only;
@@ -161,17 +177,17 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   Backlight can persist rotated refresh tokens with `0600` permissions. SQLite
   events record only `refresh_returned` / `refresh_token_updated`; token
   material is never stored in case events.
-- **x-feed publish sequence.** When `HELIOS_X_FEED_ENABLED=true`, Backlight waits
+- **x-feed publish sequence.** When `BACKLIGHT_X_FEED_ENABLED=true`, Backlight waits
   for GitHub artifact publish to succeed, drafts `x-feed-main-post.txt`,
   `x-feed-reply-post.txt`, `x-feed-telegram-post.txt`, and `x-feed-status.json`,
   then publishes the X main post and reply. `ready_to_publish=false` blocks X
   posting when required public URLs or the vendored format file are missing.
-- **Exploit-flow card generation.** With `HELIOS_X_FEED_CARD_ENABLED=true`,
+- **Exploit-flow card generation.** With `BACKLIGHT_X_FEED_CARD_ENABLED=true`,
   Backlight writes a public-safe `x-feed-card-brief.md`, runs the vendored
   `skills/exploit-flow-card/scripts/render_card.py`, and records SVG/PNG paths in
   `x-feed-status.json`. The renderer always attempts SVG output; PNG output
   requires `requirements-x-feed.txt` installed in
-  `HELIOS_X_FEED_CARD_PYTHON_BIN`'s environment.
+  `BACKLIGHT_X_FEED_CARD_PYTHON_BIN`'s environment.
 - **X media upload.** If the x-feed draft supplies `image_path`, Backlight uploads
   it through X API v2 media upload before creating the main post, then attaches
   the returned media id to `POST /2/tweets`. The exploit-flow card PNG becomes
@@ -182,6 +198,17 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   returned/fetched post text matches the requested text. If X truncates or
   mutates the body, Backlight keeps the post and records
   `post_text_verified=false` or `reply_text_verified=false` in `x_publish`.
+- **Victim mention verification.** With `BACKLIGHT_X_MCP_ENABLED=true`, the
+  local mention DB is treated as a candidate cache. Backlight first calls
+  `getUsersByUsername`; if the immutable `x_id` no longer matches or the handle
+  is missing, it calls `searchUsers`. Only a unique high-confidence identity is
+  tagged. Verified/replaced identities are persisted, while ambiguous results
+  remain plain text. MCP failure never blocks the incident post; only a DB row
+  verified within `BACKLIGHT_X_MENTION_CACHE_MAX_AGE_HOURS` may be used.
+  A shared OAuth user-context token calls hosted MCP directly and supports both
+  operations. Without it, an app-only MCP Bearer can still perform exact lookup
+  but X rejects user search; when neither token source is configured, Backlight
+  uses the configured `xurl mcp` stdio bridge and its user OAuth token store.
 - **Telegram publish.** With `TELEGRAM_PUBLISH_ENABLED=true`, Telegram receives
   the main X body exactly plus `GitHub:\n<target directory URL>` and
   `X:\n<main post URL>` after live X publishing succeeds. X dry runs do not send

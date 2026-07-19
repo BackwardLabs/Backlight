@@ -10,10 +10,12 @@
 *.rej
 
 # --- runtime data ------------------------------------------------------------
-# helios writes its SQLite DB and per-case lumoskit output roots under
-# whatever HELIOS_DB_PATH / HELIOS_OUTPUT_ROOT point at. Conventionally
-# those land in ./var/ during local development.
+# Backlight writes its SQLite DB, per-case LumosKit outputs, and optional
+# Pre-Lumos seed data under
+# whatever BACKLIGHT_DB_PATH / BACKLIGHT_OUTPUT_ROOT point at. Conventionally
+# those land in ./var/ or ./data/ during local development.
 /var/
+/data/
 /outputs/
 *.db
 *.db-shm

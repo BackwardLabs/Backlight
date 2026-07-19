@@ -1,5 +1,5 @@
 // Package handoff dispatches a "case is done" event to every URL configured
-// in HELIOS_DOWNSTREAM_WEBHOOK_URLS, with bounded exponential backoff per URL.
+// in BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS, with bounded exponential backoff per URL.
 //
 // Aggregation rules per seeds/v1.yaml:
 //   - handoff_status=succeeded iff every URL gets at least one 2xx response.

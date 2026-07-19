@@ -28,17 +28,17 @@ type Client struct {
 // New constructs a client for a Backlight base URL such as http://127.0.0.1:8080.
 func New(baseURL, apiToken string, httpClient *http.Client) (*Client, error) {
 	if strings.TrimSpace(baseURL) == "" {
-		return nil, fmt.Errorf("HELIOS_BASE_URL is required")
+		return nil, fmt.Errorf("BACKLIGHT_BASE_URL is required")
 	}
 	if strings.TrimSpace(apiToken) == "" {
-		return nil, fmt.Errorf("HELIOS_API_TOKEN is required")
+		return nil, fmt.Errorf("BACKLIGHT_API_TOKEN is required")
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse HELIOS_BASE_URL: %w", err)
+		return nil, fmt.Errorf("parse BACKLIGHT_BASE_URL: %w", err)
 	}
 	if parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("HELIOS_BASE_URL must include scheme and host")
+		return nil, fmt.Errorf("BACKLIGHT_BASE_URL must include scheme and host")
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultTimeout}

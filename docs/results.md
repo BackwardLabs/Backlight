@@ -28,7 +28,7 @@ terminal `state_transition` event. For queued rerun decisions (`auto_rerun` or
 `auto_rerun_blocked_reason`. The queued child stores the same resume intent in
 metadata under `helios_auto_rerun`. When the child runs, terminal payloads include
 `resume_stage`, `resume_source_case_id`, and `lumoskit_stage`. Automatic reruns
-are bounded by `HELIOS_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS`; manual review can still
+are bounded by `BACKLIGHT_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS`; manual review can still
 create a new linked attempt with `force_rerun=true`.
 
 ## Result payload example
@@ -78,15 +78,15 @@ available in the Events table.
   `analysis_stage`, `rerun_decision`, `rerun_reason`, `auto_rerun_eligible`,
   `poc`, `rca`, `failure`, `handoff_status`, and the terminal
   `state_transition` event.
-- **Downstream agents:** set `HELIOS_DOWNSTREAM_WEBHOOK_URLS`. Backlight sends
+- **Downstream agents:** set `BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS`. Backlight sends
   completed non-engine-error cases (`verified`, `partial`, `unverified`) and
   records per-target retry attempts. `engine_error` cases skip downstream
   fan-out.
 - **Product publishing:** configure GitHub env vars. Backlight can publish
   `PoC.t.sol` and `Report.md` as a product README for `outcome=verified` and
   final `outcome=partial` cases when publishable artifacts exist.
-- **Importer-ready incident JSON:** enable `HELIOS_PRE_LUMOS_ENABLED=true` and
-  set `HELIOS_PRE_LUMOS_SEED_ROOT`. Verified cases run the Pre-Lumos Agent SDK
+- **Importer-ready incident JSON:** enable `BACKLIGHT_PRE_LUMOS_ENABLED=true` and
+  set `BACKLIGHT_PRE_LUMOS_SEED_ROOT`. Verified cases run the Pre-Lumos Codex SDK
   sidecar and write `<output_root>/pre-lumos.json` plus merged
   `seed/import_{YEAR}.json` rows.
 - **MCP-assisted review:** run `backlight-mcp` in direct API mode or bridge-index
@@ -104,11 +104,11 @@ webhooks, or expose arbitrary shell/filesystem access.
 Two source modes are supported:
 
 - **Direct mode:** `backlight-mcp` reads case metadata from the Backlight API using
-  `HELIOS_BASE_URL` + `HELIOS_API_TOKEN`; Backlight serves allowlisted artifacts
+  `BACKLIGHT_BASE_URL` + `BACKLIGHT_API_TOKEN`; Backlight serves allowlisted artifacts
   from its configured output root.
 - **Bridge-index mode:** Backlight posts completed handoff payloads to
   `backlight-mcp-bridge`; `backlight-mcp` reads the bridge SQLite index using
-  `HELIOS_MCP_BRIDGE_DB_PATH` and derives the output directory from the bridge
+  `BACKLIGHT_MCP_BRIDGE_DB_PATH` and derives the output directory from the bridge
   DB location unless explicitly overridden.
 
 Exposed tools:
@@ -144,10 +144,10 @@ expanding the MCP/product artifact profile:
 
 ```text
 GET /ecw/cases/{case_id}/export
-Authorization: Bearer $HELIOS_ECW_EXPORT_TOKEN
+Authorization: Bearer $BACKLIGHT_ECW_EXPORT_TOKEN
 ```
 
-The endpoint is disabled when `HELIOS_ECW_EXPORT_TOKEN` is unset. It returns an
+The endpoint is disabled when `BACKLIGHT_ECW_EXPORT_TOKEN` is unset. It returns an
 `ecw-internal-complete` JSON bundle with minimal case metadata, the sorted ECW
 allowlist, exported text artifacts, and a `missing` list for allowlisted files
 that were not produced by the selected run.
@@ -171,8 +171,8 @@ go build -o dist/backlight-mcp-bridge ./cmd/helios-mcp-bridge
 Then configure a local stdio MCP client from
 `deploy/mcp/client-config.example.json` or
 `deploy/mcp/client-config.bridge.example.json`. For remote clients, run
-`backlight-mcp` in HTTP mode behind TLS by setting `HELIOS_MCP_LISTEN_ADDR`; the
+`backlight-mcp` in HTTP mode behind TLS by setting `BACKLIGHT_MCP_LISTEN_ADDR`; the
 endpoint defaults to `/mcp`, should be exposed from `api.backwardlabs.io`, and
 uses bearer auth from
-`HELIOS_MCP_HTTP_TOKEN`, or `HELIOS_API_TOKEN` when the MCP-specific token is
+`BACKLIGHT_MCP_HTTP_TOKEN`, or `BACKLIGHT_API_TOKEN` when the MCP-specific token is
 unset.

@@ -45,12 +45,11 @@ printf 'ok'
 	}
 
 	r := &Runner{
-		Enabled:       true,
-		PythonBin:     "/bin/sh",
-		Script:        script,
-		SkillDir:      filepath.Join(dir, "skill"),
-		SeedRoot:      filepath.Join(dir, "seed-root"),
-		OpenAIBaseURL: "http://127.0.0.1:10631/v1",
+		Enabled:   true,
+		PythonBin: "/bin/sh",
+		Script:    script,
+		SkillDir:  filepath.Join(dir, "skill"),
+		SeedRoot:  filepath.Join(dir, "seed-root"),
 	}
 	res, err := r.Run(context.Background(), Case{
 		CaseID:     "case_123",

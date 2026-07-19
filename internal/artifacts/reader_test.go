@@ -180,7 +180,7 @@ func TestReaderRejectsOutputRootOutsideBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := reader.Read(caseWithRoot(outside), "RCA.md", 0); err == nil {
-		t.Fatal("read outside HELIOS_OUTPUT_BASE succeeded; want rejected")
+		t.Fatal("read outside BACKLIGHT_OUTPUT_BASE succeeded; want rejected")
 	}
 }
 

@@ -17,8 +17,9 @@ Backlight v1 is a single-process orchestrator. Do not run multiple Backlight rep
 against the same SQLite database.
 
 Current production templates still use the legacy `helios` Unix user, systemd
-unit names, binary names, paths, MCP tool namespace, and `HELIOS_*` env vars.
-Those identifiers are intentionally kept stable until a separate host migration.
+unit names, binary names, paths, and MCP tool namespace. Those identifiers are
+intentionally kept stable until a separate host migration. Environment variables
+use the canonical `BACKLIGHT_*` namespace; legacy `HELIOS_*` names are not read.
 
 ## What is already wired in Backlight
 
@@ -29,24 +30,24 @@ Those identifiers are intentionally kept stable until a separate host migration.
 - RPC env pass-through to lumoskit; Backlight does not choose RPC URLs.
 - Outcome mapping from lumoskit exit code + `summary.json`.
 - Downstream webhook fan-out with bounded retry.
-- Optional downstream Bearer token via `HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN`.
+- Optional downstream Bearer token via `BACKLIGHT_DOWNSTREAM_WEBHOOK_BEARER_TOKEN`.
 - Optional verified-case GitHub publish for `PoC.t.sol` and `Report.md` as `README.md`.
-- Optional verified-case Pre-Lumos Agent SDK sidecar for `pre-lumos.json` and `seed/import_{YEAR}.json`.
+- Optional verified-case Pre-Lumos Codex SDK sidecar for `pre-lumos.json` and `seed/import_{YEAR}.json`.
 - Optional internal ECW export endpoint for complete PoC/RCA replay bundles.
 - Operator webhook / Telegram notifications with bounded retry.
 - `/metrics` for Prometheus and `/ui` for the browser console.
 
 ## What production still must provide
 
-- A real `lumoskit` executable at `HELIOS_LUMOSKIT_BIN`.
-- Persistent storage for `HELIOS_DB_PATH` and `HELIOS_OUTPUT_ROOT`.
+- A real `lumoskit` executable at `BACKLIGHT_LUMOSKIT_BIN`.
+- Persistent storage for `BACKLIGHT_DB_PATH` and `BACKLIGHT_OUTPUT_ROOT`.
 - Strong secret values in `/srv/backlight/env/backlight.env` and
   `/srv/backlight/env/lumoskit.env`.
 - TLS termination and optional network/basic-auth gating in Nginx.
 - A hack-detector or other producer calling `POST /signals` with the Bearer token.
-- Downstream webhook receivers if `HELIOS_DOWNSTREAM_WEBHOOK_URLS` is non-empty.
+- Downstream webhook receivers if `BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS` is non-empty.
 - A repo-write GitHub token if verified artifact publishing is enabled.
-- Python Agent SDK dependencies plus an OpenAI-compatible API endpoint if Pre-Lumos JSON generation is enabled.
+- Python Codex SDK dependencies and a Codex-authenticated service user if Pre-Lumos JSON generation is enabled.
 
 ## Server layout
 
@@ -71,7 +72,7 @@ VM
   -> pull /home/ubuntu/lumos/lumoskit to a pinned ref
   -> build Backlight and install /srv/backlight/bin/backlight
   -> build LumosKit and install /home/ubuntu/lumos/lumoskit/bin/lumoskit
-  -> set HELIOS_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit
+  -> set BACKLIGHT_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit
   -> reload/restart systemd
 ```
 
@@ -81,7 +82,7 @@ write, daemon-reload, and optional restart.
 
 The systemd templates in this directory use `WorkingDirectory=/srv/backlight`.
 Backlight sets the LumosKit child process working directory from
-`HELIOS_LUMOSKIT_BIN` when the binary lives under a `bin/` directory, so
+`BACKLIGHT_LUMOSKIT_BIN` when the binary lives under a `bin/` directory, so
 `/home/ubuntu/lumos/lumoskit/bin/lumoskit` can resolve its own runtime scripts
 from `/home/ubuntu/lumos/lumoskit`.
 
@@ -127,10 +128,10 @@ path defaults to LumosKit's own `.env` contract to avoid duplicating those keys 
 Optional preflight incident naming can run before LumosKit when Backlight has scan/RPC envs:
 
 ```bash
-HELIOS_INCIDENT_RESOLVER_ENABLED=true
+BACKLIGHT_INCIDENT_RESOLVER_ENABLED=true
 ETHERSCAN_API_KEY=replace-with-etherscan-v2-key
 # Optional, used for ERC20 symbol/name calls on candidate addresses:
-HELIOS_INCIDENT_RPC_URL=https://...
+BACKLIGHT_INCIDENT_RPC_URL=https://...
 ```
 
 If the resolver cannot identify a protocol, submission still proceeds with the
@@ -188,11 +189,11 @@ Bearer token.
 ```bash
 curl http://127.0.0.1:8080/healthz
 
-curl -H "Authorization: Bearer $HELIOS_API_TOKEN" \
+curl -H "Authorization: Bearer $BACKLIGHT_API_TOKEN" \
   http://127.0.0.1:8080/cases
 
 curl -X POST https://api.backwardlabs.io/cases \
-  -H "Authorization: Bearer $HELIOS_API_TOKEN" \
+  -H "Authorization: Bearer $BACKLIGHT_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "chain": "ethereum",
@@ -215,7 +216,7 @@ Then verify:
 
 - stdio, the default for local MCP clients. The MCP client starts the binary and
   talks to it over stdin/stdout.
-- stateless Streamable HTTP, enabled with `HELIOS_MCP_LISTEN_ADDR`, for remote
+- stateless Streamable HTTP, enabled with `BACKLIGHT_MCP_LISTEN_ADDR`, for remote
   MCP clients that should connect by URL. Put it behind TLS and bearer auth;
   the HTTP endpoint defaults to `/mcp`.
 
@@ -227,7 +228,7 @@ Phase 1 direct flow (stdio):
 
 ```text
 MCP client -> /srv/backlight/bin/backlight-mcp
-           -> Backlight HTTP API on HELIOS_BASE_URL
+           -> Backlight HTTP API on BACKLIGHT_BASE_URL
            -> server-side allowlisted artifact reads
 ```
 
@@ -244,7 +245,7 @@ Remote HTTP flow:
 ```text
 MCP client --url https://api.backwardlabs.io/mcp
            -> reverse proxy TLS
-           -> backlight-mcp HTTP mode on HELIOS_MCP_LISTEN_ADDR
+           -> backlight-mcp HTTP mode on BACKLIGHT_MCP_LISTEN_ADDR
            -> Backlight API or bridge index
 ```
 
@@ -276,24 +277,24 @@ The only artifact paths exposed are the text-oriented report bundle files:
 
 Required MCP env:
 
-- `HELIOS_BASE_URL`, for example `http://127.0.0.1:8080`
-- `HELIOS_API_TOKEN`
+- `BACKLIGHT_BASE_URL`, for example `http://127.0.0.1:8080`
+- `BACKLIGHT_API_TOKEN`
 
-For bridge/indexed mode, replace `HELIOS_BASE_URL` and `HELIOS_API_TOKEN` with:
+For bridge/indexed mode, replace `BACKLIGHT_BASE_URL` and `BACKLIGHT_API_TOKEN` with:
 
-- `HELIOS_MCP_BRIDGE_DB_PATH`, usually `/srv/backlight/data/backlight-mcp-bridge.db`
+- `BACKLIGHT_MCP_BRIDGE_DB_PATH`, usually `/srv/backlight/data/backlight-mcp-bridge.db`
 
 Optional MCP env:
 
-- `HELIOS_MCP_LISTEN_ADDR`, enables HTTP mode, for example `127.0.0.1:8090`.
-- `HELIOS_MCP_PATH`, HTTP endpoint path, default `/mcp`.
-- `HELIOS_MCP_HTTP_TOKEN`, bearer token for HTTP mode. Defaults to
-  `HELIOS_API_TOKEN` when unset.
-- `HELIOS_OUTPUT_ROOT` / `HELIOS_OUTPUT_BASE`, bridge-mode or legacy
+- `BACKLIGHT_MCP_LISTEN_ADDR`, enables HTTP mode, for example `127.0.0.1:8090`.
+- `BACKLIGHT_MCP_PATH`, HTTP endpoint path, default `/mcp`.
+- `BACKLIGHT_MCP_HTTP_TOKEN`, bearer token for HTTP mode. Defaults to
+  `BACKLIGHT_API_TOKEN` when unset.
+- `BACKLIGHT_OUTPUT_ROOT` / `BACKLIGHT_OUTPUT_BASE`, bridge-mode or legacy
   direct-file containment override. Usually leave unset in direct mode because
   Backlight serves artifacts server-side. `/` is rejected.
-- `HELIOS_MCP_MAX_BYTES`, default `1048576`
-- `HELIOS_MCP_HTTP_TIMEOUT_SECONDS`, default `30`
+- `BACKLIGHT_MCP_MAX_BYTES`, default `1048576`
+- `BACKLIGHT_MCP_HTTP_TIMEOUT_SECONDS`, default `30`
 
 Use `deploy/mcp/client-config.example.json` for local stdio direct mode or
 `deploy/mcp/client-config.bridge.example.json` for local stdio indexed mode.
@@ -302,7 +303,7 @@ For remote URL access with Codex:
 ```bash
 codex mcp add backlight \
   --url https://api.backwardlabs.io/mcp \
-  --bearer-token-env-var HELIOS_MCP_HTTP_TOKEN
+  --bearer-token-env-var BACKLIGHT_MCP_HTTP_TOKEN
 ```
 
 Keep the MCP binary on the same host as Backlight/output storage unless you
@@ -317,16 +318,16 @@ support contracts required by report bundles. The endpoint is disabled unless
 a separate token is configured:
 
 ```bash
-HELIOS_ECW_EXPORT_TOKEN=<separate-long-random-token>
+BACKLIGHT_ECW_EXPORT_TOKEN=<separate-long-random-token>
 # Optional; default is 16777216 bytes per exported file.
-HELIOS_ECW_EXPORT_MAX_BYTES=16777216
+BACKLIGHT_ECW_EXPORT_MAX_BYTES=16777216
 ```
 
-Fetch a bundle with the ECW token, not `HELIOS_API_TOKEN`:
+Fetch a bundle with the ECW token, not `BACKLIGHT_API_TOKEN`:
 
 ```bash
 curl -fsS \
-  -H "Authorization: Bearer $HELIOS_ECW_EXPORT_TOKEN" \
+  -H "Authorization: Bearer $BACKLIGHT_ECW_EXPORT_TOKEN" \
   "https://api.backwardlabs.io/ecw/cases/<case_id>/export"
 ```
 
@@ -343,18 +344,18 @@ To enable Phase 2 indexing, set:
 
 ```bash
 # /srv/backlight/env/backlight.env
-HELIOS_DOWNSTREAM_WEBHOOK_URLS=http://127.0.0.1:9090/handoff
-HELIOS_DOWNSTREAM_WEBHOOK_BEARER_TOKEN=<same-value-as-bridge-token>
+BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS=http://127.0.0.1:9090/handoff
+BACKLIGHT_DOWNSTREAM_WEBHOOK_BEARER_TOKEN=<same-value-as-bridge-token>
 
 # /srv/backlight/env/backlight-mcp-bridge.env
-HELIOS_MCP_BRIDGE_LISTEN_ADDR=127.0.0.1:9090
-HELIOS_MCP_BRIDGE_DB_PATH=/srv/backlight/data/backlight-mcp-bridge.db
-HELIOS_MCP_BRIDGE_TOKEN=<same-value-as-downstream-bearer-token>
-HELIOS_MCP_BRIDGE_ALLOW_INSECURE=false
+BACKLIGHT_MCP_BRIDGE_LISTEN_ADDR=127.0.0.1:9090
+BACKLIGHT_MCP_BRIDGE_DB_PATH=/srv/backlight/data/backlight-mcp-bridge.db
+BACKLIGHT_MCP_BRIDGE_TOKEN=<same-value-as-downstream-bearer-token>
+BACKLIGHT_MCP_BRIDGE_ALLOW_INSECURE=false
 ```
 
 The downstream Bearer token is sent to every URL in
-`HELIOS_DOWNSTREAM_WEBHOOK_URLS`. If the bridge token is only meant for the
+`BACKLIGHT_DOWNSTREAM_WEBHOOK_URLS`. If the bridge token is only meant for the
 local bridge, keep the bridge as the only downstream URL or use only trusted
 targets that are allowed to receive the same credential.
 
@@ -363,9 +364,9 @@ Backlight env file:
 
 ```bash
 GITHUB_TOKEN=<repo-write-token>
-HELIOS_GITHUB_PUBLISH_OWNER=BackwardLabs
-HELIOS_GITHUB_PUBLISH_REPO=Q1-2026
-HELIOS_GITHUB_PUBLISH_BRANCH=main
+BACKLIGHT_GITHUB_PUBLISH_OWNER=BackwardLabs
+BACKLIGHT_GITHUB_PUBLISH_REPO=Q1-2026
+BACKLIGHT_GITHUB_PUBLISH_BRANCH=main
 ```
 
 Backlight publishes `PoC.t.sol` and `Report.md` only after LumosKit maps the case
@@ -383,11 +384,15 @@ X_CLIENT_ID=<x-oauth-client-id>
 X_CLIENT_SECRET=<x-oauth-client-secret>
 X_REFRESH_TOKEN_FILE=/srv/backlight/data/x_refresh_token.json
 X_ACCOUNT_USERNAME=BackwardLabs
-HELIOS_X_FEED_ENABLED=true
-HELIOS_X_FEED_SKILL_DIR=skills/x-feed
-HELIOS_X_FEED_CARD_ENABLED=true
-HELIOS_X_FEED_CARD_PYTHON_BIN=python3
-HELIOS_X_FEED_CARD_TIMEOUT_SECONDS=20
+BACKLIGHT_X_FEED_ENABLED=true
+BACKLIGHT_X_FEED_SKILL_DIR=skills/x-feed
+BACKLIGHT_X_FEED_CARD_ENABLED=true
+BACKLIGHT_X_FEED_CARD_PYTHON_BIN=python3
+BACKLIGHT_X_FEED_CARD_TIMEOUT_SECONDS=20
+BACKLIGHT_VICTIM_MENTION=true
+BACKLIGHT_X_MCP_ENABLED=true
+# Optional exact-lookup fallback when user OAuth is not configured:
+# BACKLIGHT_X_MCP_BEARER_TOKEN=<x-app-only-bearer-token>
 TELEGRAM_PUBLISH_ENABLED=true
 ```
 
@@ -397,33 +402,42 @@ appended. When the card switch is enabled, Backlight also generates a public-saf
 exploit-flow card from the x-feed brief and attaches the PNG to the main X post.
 Install `requirements-x-feed.txt` in the configured Python environment to produce
 the PNG, for example a dedicated venv under `/srv/backlight/data/x-feed-venv`
-with `HELIOS_X_FEED_CARD_PYTHON_BIN=/srv/backlight/data/x-feed-venv/bin/python`.
+with `BACKLIGHT_X_FEED_CARD_PYTHON_BIN=/srv/backlight/data/x-feed-venv/bin/python`.
 If the PNG dependency is missing, Backlight records the SVG/status and publishes
 the text thread without media.
 
+When `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_REFRESH_TOKEN` or
+`X_REFRESH_TOKEN_FILE` are configured, Backlight uses one shared, cached OAuth
+user-context token for hosted MCP lookup/search and X publishing. Refreshes are
+serialized and rotated refresh tokens are persisted before either consumer
+continues. An app-only `BACKLIGHT_X_MCP_BEARER_TOKEN` is only a fallback for
+exact public-account lookup; X rejects `search_users` for app-only auth. If
+neither user OAuth nor an app Bearer is configured, install `xurl` and run
+`xurl auth oauth2 --headless` once as the service user to use the stdio bridge.
+
 To enable Pre-Lumos importer JSON generation, install `uv` or provide a Python
-environment that already has `requirements-pre-lumos.txt` installed, then add:
+environment that already has `requirements-pre-lumos.txt` installed. Confirm
+that the service user's `HOME` / `CODEX_HOME` is authenticated with Codex, then add:
 
 ```bash
-OPENAI_API_KEY=<proxy-or-openai-key>
 UV_CACHE_DIR=/srv/backlight/data/uv-cache
-HELIOS_PRE_LUMOS_ENABLED=true
-HELIOS_PRE_LUMOS_SEED_ROOT=/srv/backlight/data/pre-lumos-seed
-HELIOS_PRE_LUMOS_OPENAI_BASE_URL=http://127.0.0.1:10631/v1
-HELIOS_PRE_LUMOS_PYTHON_BIN=scripts/pre_lumos_agent_uv.sh
-HELIOS_PRE_LUMOS_AGENT_SCRIPT=scripts/pre_lumos_agent.py
-HELIOS_PRE_LUMOS_SKILL_DIR=skills/pre-lumos
-HELIOS_PRE_LUMOS_WEB_SEARCH=false
+BACKLIGHT_PRE_LUMOS_ENABLED=true
+BACKLIGHT_PRE_LUMOS_SEED_ROOT=/srv/backlight/data/pre-lumos-seed
+BACKLIGHT_PRE_LUMOS_PYTHON_BIN=scripts/pre_lumos_agent_uv.sh
+BACKLIGHT_PRE_LUMOS_AGENT_SCRIPT=scripts/pre_lumos_agent.py
+BACKLIGHT_PRE_LUMOS_CODEX_BIN=/usr/local/bin/codex
+BACKLIGHT_PRE_LUMOS_SKILL_DIR=skills/pre-lumos
+BACKLIGHT_PRE_LUMOS_WEB_SEARCH=false
 ```
 
 Backlight passes the verified case output root directly to the sidecar. The sidecar
 writes `<output_root>/pre-lumos.json`, `<output_root>/pre-lumos-status.json`,
 and merges rows by `slug` into
-`$HELIOS_PRE_LUMOS_SEED_ROOT/seed/import_{YEAR}.json`. The auto-report Backlight
+`$BACKLIGHT_PRE_LUMOS_SEED_ROOT/seed/import_{YEAR}.json`. The auto-report Backlight
 workflow additionally writes `artifacts/pre_lumos_result.json` and
 `artifacts/pre_lumos_result.md` for site/API display. Because the example
 systemd unit only grants writes under `/srv/backlight/data` and `/srv/backlight/logs`,
-keep `HELIOS_PRE_LUMOS_SEED_ROOT` under `/srv/backlight/data` or extend
+keep `BACKLIGHT_PRE_LUMOS_SEED_ROOT` under `/srv/backlight/data` or extend
 `ReadWritePaths=`.
 
 ### MCP filesystem permissions

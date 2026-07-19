@@ -154,7 +154,7 @@ func NewECWReader(outputBase string, maxBytes int64) (*Reader, error) {
 
 func newReader(outputBase string, maxBytes int64, specs []artifactSpec, defaultMaxBytes int64) (*Reader, error) {
 	if strings.TrimSpace(outputBase) == "" {
-		return nil, fmt.Errorf("HELIOS_OUTPUT_BASE or HELIOS_OUTPUT_ROOT is required")
+		return nil, fmt.Errorf("BACKLIGHT_OUTPUT_BASE or BACKLIGHT_OUTPUT_ROOT is required")
 	}
 	outputBase, err := filepath.Abs(outputBase)
 	if err != nil {
@@ -242,14 +242,14 @@ func (r *Reader) validOutputRoot(c CaseRef) (string, error) {
 	}
 	baseReal, err := filepath.EvalSymlinks(r.OutputBase)
 	if err != nil {
-		return "", fmt.Errorf("resolve HELIOS_OUTPUT_BASE: %w", err)
+		return "", fmt.Errorf("resolve BACKLIGHT_OUTPUT_BASE: %w", err)
 	}
 	rootReal, err := filepath.EvalSymlinks(*c.OutputRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolve case output_root: %w", err)
 	}
 	if !isWithin(baseReal, rootReal) {
-		return "", fmt.Errorf("case output_root is outside HELIOS_OUTPUT_BASE")
+		return "", fmt.Errorf("case output_root is outside BACKLIGHT_OUTPUT_BASE")
 	}
 	return rootReal, nil
 }

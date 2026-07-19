@@ -43,7 +43,7 @@ Things that belong in **Backlight**:
 - Case tracking metadata store and search
 - Routing of `outputs/<case>/summary.json` to downstream consumers
 - Verified-only GitHub product publish for `PoC.t.sol` and `Report.md` as `README.md`
-- Verified-only Pre-Lumos Agent SDK sidecar orchestration using the vendored `skills/pre-lumos` bundle
+- Verified-only Pre-Lumos Codex SDK sidecar orchestration using the vendored `skills/pre-lumos` bundle
 
 Things that belong in **lumoskit** (do not duplicate here):
 

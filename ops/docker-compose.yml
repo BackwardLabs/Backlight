@@ -1,19 +1,19 @@
 # Local observability stack for Backlight.
 #
 # Usage (Linux, default):
-#   export HELIOS_API_TOKEN=<the token Backlight is running with>
+#   export BACKLIGHT_API_TOKEN=<the token Backlight is running with>
 #   docker compose -f ops/docker-compose.yml up
 #
 # Both containers run on `network_mode: host` — they share the host's network
 # namespace, so Prometheus can scrape Backlight on 127.0.0.1:18080 (or whatever
-# HELIOS_HOST you set) without crossing the docker bridge. This sidesteps
+# BACKLIGHT_HOST you set) without crossing the docker bridge. This sidesteps
 # host firewalls (UFW / iptables FORWARD) that often block container ->
 # host-port traffic on Linux.
 #
 # macOS / Windows users: host networking is not host-equivalent on Docker
 # Desktop. Drop `network_mode: host` from both services, restore
 # `extra_hosts: [host.docker.internal:host-gateway]` on prometheus, and set
-# HELIOS_HOST=host.docker.internal:8080. Add the published `ports:` blocks
+# BACKLIGHT_HOST=host.docker.internal:8080. Add the published `ports:` blocks
 # back so Grafana / Prometheus are reachable from the host browser.
 
 services:
@@ -23,21 +23,21 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      HELIOS_API_TOKEN: ${HELIOS_API_TOKEN:?HELIOS_API_TOKEN must be exported in the shell before running docker compose up}
+      BACKLIGHT_API_TOKEN: ${BACKLIGHT_API_TOKEN:?BACKLIGHT_API_TOKEN must be exported in the shell before running docker compose up}
       # 127.0.0.1 (loopback) reaches the host process directly under host networking.
-      HELIOS_HOST: ${HELIOS_HOST:-127.0.0.1:8080}
+      BACKLIGHT_HOST: ${BACKLIGHT_HOST:-127.0.0.1:8080}
     volumes:
       # Mount as a TEMPLATE (read-only). The entrypoint resolves
-      # __HELIOS_HOST__ into a writable copy at the runtime config path.
+      # __BACKLIGHT_HOST__ into a writable copy at the runtime config path.
       - ./prometheus.yml:/etc/prometheus/prometheus.yml.tmpl:ro
       - prometheus-data:/prometheus
     entrypoint: [/bin/sh, -c]
     command:
       - |
         set -e
-        printf '%s' "$$HELIOS_API_TOKEN" > /etc/prometheus/token
-        printf 'backlight scrape target: %s\n' "$$HELIOS_HOST"
-        sed "s|__HELIOS_HOST__|$$HELIOS_HOST|g" \
+        printf '%s' "$$BACKLIGHT_API_TOKEN" > /etc/prometheus/token
+        printf 'backlight scrape target: %s\n' "$$BACKLIGHT_HOST"
+        sed "s|__BACKLIGHT_HOST__|$$BACKLIGHT_HOST|g" \
           /etc/prometheus/prometheus.yml.tmpl > /etc/prometheus/prometheus.yml
         exec /bin/prometheus \
           --config.file=/etc/prometheus/prometheus.yml \

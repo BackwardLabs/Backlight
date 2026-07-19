@@ -18,6 +18,10 @@ This repository is for editorial workflows around public-facing posts derived fr
 
 ## Operating Rule
 
-Do not draft public posts or visual cards directly from private reports. First produce a sanitized brief, then write the feed draft or render the social card from that public-safe material.
+Do not draft public posts or visual cards directly from private reports. Produce a public-safe brief and a separate internal redaction ledger; never pass the ledger downstream. Create an explicit public card packet before rendering a visual.
+
+Use this order: source inventory -> disclosure gate -> public-safe brief/card packet -> draft and visual -> package validation -> human approval -> Backlight publish handoff.
+
+This skill bundle does not own X credentials or X API side effects. The Backlight runtime owns OAuth refresh, media upload, main/reply creation, post verification, event recording, and deployment feature flags.
 
 Render a visual only when it carries real reasoning value: a causal hinge, state-consumer boundary, false-lead split, broken invariant, numeric gap, money-realization path, or selected asset movement. Do not render a visual whose only message is "a hack happened," the protocol name, or an unsupported loss number.

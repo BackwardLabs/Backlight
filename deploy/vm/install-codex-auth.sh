@@ -9,13 +9,13 @@ Usage:
   sudo deploy/vm/install-codex-auth.sh /path/to/auth.json
 
 Defaults:
-  HELIOS_BASE_DIR=/srv/backlight
-  HELIOS_SERVICE_USER=backlight
+  BACKLIGHT_BASE_DIR=/srv/backlight
+  BACKLIGHT_SERVICE_USER=backlight
 
 The Codex SDK uses Path.home()/.codex by default. Backlight runs as the
-HELIOS_SERVICE_USER with HOME=$HELIOS_BASE_DIR, so service runs read:
+BACKLIGHT_SERVICE_USER with HOME=$BACKLIGHT_BASE_DIR, so service runs read:
 
-  $HELIOS_BASE_DIR/.codex/auth.json
+  $BACKLIGHT_BASE_DIR/.codex/auth.json
 
 This script copies the explicitly supplied auth file there with service-only
 permissions. Do not make the service depend on /home/ubuntu/.codex/auth.json.
@@ -33,8 +33,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 source_auth="${1:-${SOURCE_AUTH_JSON:-}}"
-base_dir="${HELIOS_BASE_DIR:-/srv/backlight}"
-service_user="${HELIOS_SERVICE_USER:-backlight}"
+base_dir="${BACKLIGHT_BASE_DIR:-/srv/backlight}"
+service_user="${BACKLIGHT_SERVICE_USER:-backlight}"
 dest_dir="${base_dir}/.codex"
 dest_auth="${dest_dir}/auth.json"
 

@@ -23,6 +23,7 @@ import (
 	"github.com/UPside-Lumos-V2/helios/internal/store"
 	"github.com/UPside-Lumos-V2/helios/internal/telegrambot"
 	"github.com/UPside-Lumos-V2/helios/internal/worker"
+	"github.com/UPside-Lumos-V2/helios/internal/xauth"
 	"github.com/UPside-Lumos-V2/helios/internal/xfeed"
 	"github.com/UPside-Lumos-V2/helios/internal/xpublish"
 )
@@ -59,6 +60,17 @@ func main() {
 	}
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
+	oauthTokenSource := xauth.NewTokenSource(xauth.Config{
+		APIBase:          cfg.XAPIBase,
+		ClientID:         cfg.XClientID,
+		ClientSecret:     cfg.XClientSecret,
+		RefreshToken:     cfg.XRefreshToken,
+		RefreshTokenFile: cfg.XRefreshTokenFile,
+		Client:           httpClient,
+	})
+	if !oauthTokenSource.Configured() {
+		oauthTokenSource = nil
+	}
 
 	channels := buildChannels(cfg, httpClient)
 	notifier := &notify.Notifier{
@@ -100,6 +112,7 @@ func main() {
 		"branch", cfg.GitHubBranch,
 	)
 	var mentionIndex *mention.Index
+	var mentionResolver mention.Resolver
 	if cfg.VictimMentionEnabled {
 		entities, err := st.AllMentionEntities(ctx)
 		if err != nil {
@@ -107,9 +120,56 @@ func main() {
 			os.Exit(2)
 		}
 		mentionIndex = mention.BuildIndex(entities)
+		mentionResolver = mentionIndex
 		logger.Info("victim mention enabled", "entities", len(entities))
 	} else {
 		logger.Info("victim mention disabled")
+	}
+	if cfg.XMCPEnabled && mentionIndex != nil {
+		var xDirectory mention.Directory
+		transport := "hosted_http_app"
+		if oauthTokenSource != nil {
+			transport = "hosted_http_user"
+			xDirectory = mention.NewHTTPMCPDirectory(mention.HTTPMCPConfig{
+				URL:               cfg.XMCPURL,
+				BearerTokenSource: oauthTokenSource,
+				Client:            httpClient,
+			})
+		} else if cfg.XMCPBearerToken != "" {
+			xDirectory = mention.NewHTTPMCPDirectory(mention.HTTPMCPConfig{
+				URL:         cfg.XMCPURL,
+				BearerToken: cfg.XMCPBearerToken,
+				Client:      httpClient,
+			})
+		} else {
+			transport = "xurl_stdio"
+			bridge := mention.NewMCPDirectory(mention.MCPConfig{
+				Command: cfg.XMCPCommand,
+				Args:    cfg.XMCPArgs,
+				Env: map[string]string{
+					"CLIENT_ID":     cfg.XClientID,
+					"CLIENT_SECRET": cfg.XClientSecret,
+				},
+			})
+			defer bridge.Close()
+			xDirectory = bridge
+		}
+		mentionResolver = &mention.VerifiedResolver{
+			Index:         mentionIndex,
+			Directory:     xDirectory,
+			Recorder:      st,
+			Timeout:       time.Duration(cfg.XMCPTimeoutSeconds) * time.Second,
+			CachedMaxAge:  time.Duration(cfg.XMentionCachedMaxAgeHours) * time.Hour,
+			ReverifyAfter: time.Duration(cfg.XMentionReverifyHours) * time.Hour,
+			Logger:        logger,
+		}
+		logger.Info("x mcp mention verification enabled",
+			"transport", transport,
+			"timeout_seconds", cfg.XMCPTimeoutSeconds,
+			"cache_max_age_hours", cfg.XMentionCachedMaxAgeHours,
+		)
+	} else if cfg.XMCPEnabled {
+		logger.Warn("x mcp mention verification requested while victim mentions are disabled")
 	}
 	xPublisher := xpublish.New(xpublish.Config{
 		Enabled:          cfg.XPublishEnabled,
@@ -122,40 +182,40 @@ func main() {
 		Username:         cfg.XUsername,
 		DryRun:           cfg.XDryRun,
 		Mentions:         mentionIndex,
+		MentionResolver:  mentionResolver,
 	})
 	xPublisher.Client = httpClient
+	xPublisher.TokenSource = oauthTokenSource
 	logger.Info("x publisher configured",
 		"enabled", xPublisher.Configured(),
 		"dry_run", cfg.XDryRun,
 		"username_set", cfg.XUsername != "",
 	)
 	xFeedRunner := &xfeed.Runner{
-		Enabled:           cfg.XFeedEnabled,
-		SkillDir:          cfg.XFeedSkillDir,
-		IncludeAttackerCA: cfg.XFeedIncludeAttackerCA,
-		CardEnabled:       cfg.XFeedCardEnabled,
-		CardPythonBin:     cfg.XFeedCardPythonBin,
-		CardTimeout:       time.Duration(cfg.XFeedCardTimeoutSeconds) * time.Second,
-		Mentions:          mentionIndex,
+		Enabled:         cfg.XFeedEnabled,
+		SkillDir:        cfg.XFeedSkillDir,
+		CardEnabled:     cfg.XFeedCardEnabled,
+		CardPythonBin:   cfg.XFeedCardPythonBin,
+		CardTimeout:     time.Duration(cfg.XFeedCardTimeoutSeconds) * time.Second,
+		Mentions:        mentionIndex,
+		MentionResolver: mentionResolver,
 	}
 	logger.Info("x feed runner configured",
 		"enabled", xFeedRunner.Configured(),
 		"skill_dir", cfg.XFeedSkillDir,
-		"include_attacker_ca", cfg.XFeedIncludeAttackerCA,
 		"card_enabled", cfg.XFeedCardEnabled,
 		"card_python_bin", cfg.XFeedCardPythonBin,
 		"telegram_publish_enabled", cfg.TelegramPublishEnabled,
 	)
 	preLumosRunner := &prelumos.Runner{
-		Enabled:       cfg.PreLumosEnabled,
-		PythonBin:     cfg.PreLumosPythonBin,
-		Script:        cfg.PreLumosAgentScript,
-		SkillDir:      cfg.PreLumosSkillDir,
-		SeedRoot:      cfg.PreLumosSeedRoot,
-		Year:          cfg.PreLumosYear,
-		Model:         cfg.PreLumosModel,
-		OpenAIBaseURL: cfg.PreLumosOpenAIBaseURL,
-		WebSearch:     cfg.PreLumosWebSearch,
+		Enabled:   cfg.PreLumosEnabled,
+		PythonBin: cfg.PreLumosPythonBin,
+		Script:    cfg.PreLumosAgentScript,
+		SkillDir:  cfg.PreLumosSkillDir,
+		SeedRoot:  cfg.PreLumosSeedRoot,
+		Year:      cfg.PreLumosYear,
+		Model:     cfg.PreLumosModel,
+		WebSearch: cfg.PreLumosWebSearch,
 	}
 	incidentResolver := &incidentresolver.Resolver{
 		Enabled:          cfg.IncidentResolverEnabled,
@@ -167,7 +227,6 @@ func main() {
 	logger.Info("pre-lumos agent configured",
 		"enabled", preLumosRunner.Configured(),
 		"seed_root_set", cfg.PreLumosSeedRoot != "",
-		"openai_base_url", cfg.PreLumosOpenAIBaseURL,
 		"web_search", cfg.PreLumosWebSearch,
 	)
 	logger.Info("incident resolver configured",

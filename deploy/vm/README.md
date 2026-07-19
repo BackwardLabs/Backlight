@@ -5,8 +5,8 @@ service state, env files, logs, data, and the Backlight service binary under
 `/srv/backlight`.
 
 Backlight runs under the `backlight` service account with runtime state under
-`/srv/backlight`. The application still reads `HELIOS_*` env vars for backward
-compatibility.
+`/srv/backlight`. The application reads the canonical `BACKLIGHT_*` environment
+variable namespace; legacy `HELIOS_*` names are not supported.
 
 ```text
 VM
@@ -30,10 +30,10 @@ WorkingDirectory=/srv/backlight
 EnvironmentFile=/srv/backlight/env/backlight.env
 ```
 
-`HELIOS_LUMOSKIT_BIN` should point to the LumosKit checkout binary:
+`BACKLIGHT_LUMOSKIT_BIN` should point to the LumosKit checkout binary:
 
 ```dotenv
-HELIOS_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit
+BACKLIGHT_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit
 ```
 
 Backlight starts LumosKit with the LumosKit repo root as the child process working
@@ -49,18 +49,18 @@ optionally restarts the service.
 
 ```bash
 cd /home/ubuntu/lumos/backlight
-sudo HELIOS_REF=main \
+sudo BACKLIGHT_REF=main \
   LUMOSKIT_REF=main \
-  HELIOS_RESTART_SERVICE=true \
+  BACKLIGHT_RESTART_SERVICE=true \
   deploy/vm/sync-git-runtime.sh
 ```
 
 For production, prefer immutable commit SHAs or tags:
 
 ```bash
-sudo HELIOS_REF=<helios-sha-or-tag> \
+sudo BACKLIGHT_REF=<helios-sha-or-tag> \
   LUMOSKIT_REF=<lumoskit-sha-or-tag> \
-  HELIOS_RESTART_SERVICE=true \
+  BACKLIGHT_RESTART_SERVICE=true \
   deploy/vm/sync-git-runtime.sh
 ```
 
@@ -68,12 +68,12 @@ Defaults:
 
 ```text
 WORKSPACE_DIR=/home/ubuntu/lumos
-HELIOS_WORKTREE=$WORKSPACE_DIR/backlight
+BACKLIGHT_WORKTREE=$WORKSPACE_DIR/backlight
 LUMOSKIT_WORKTREE=$WORKSPACE_DIR/lumoskit
-HELIOS_BASE_DIR=/srv/backlight
-HELIOS_SERVICE_USER=backlight
-HELIOS_SERVICE_NAME=backlight.service
-HELIOS_RESTART_SERVICE=false
+BACKLIGHT_BASE_DIR=/srv/backlight
+BACKLIGHT_SERVICE_USER=backlight
+BACKLIGHT_SERVICE_NAME=backlight.service
+BACKLIGHT_RESTART_SERVICE=false
 ```
 
 The script expects both checkouts to already exist. It does not clone into
@@ -142,10 +142,10 @@ sudo systemctl restart backlight
 
 Required Backlight values in `/srv/backlight/env/backlight.env`:
 
-- `HELIOS_API_TOKEN`
-- `HELIOS_DB_PATH=/srv/backlight/data/backlight.db`
-- `HELIOS_OUTPUT_ROOT=/srv/backlight/data/outputs`
-- `HELIOS_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit`
+- `BACKLIGHT_API_TOKEN`
+- `BACKLIGHT_DB_PATH=/srv/backlight/data/backlight.db`
+- `BACKLIGHT_OUTPUT_ROOT=/srv/backlight/data/outputs`
+- `BACKLIGHT_LUMOSKIT_BIN=/home/ubuntu/lumos/lumoskit/bin/lumoskit`
 
 Set `GH_TOKEN` in `backlight.env` when verified-case GitHub publishing should be
 enabled.
@@ -230,7 +230,7 @@ Environment="XDG_DATA_HOME=/srv/backlight/data/.local/share"
 curl http://127.0.0.1:8080/healthz
 
 sudo bash -c 'set -a; . /srv/backlight/env/backlight.env; set +a; \
-  curl -H "Authorization: Bearer ${HELIOS_API_TOKEN}" \
+  curl -H "Authorization: Bearer ${BACKLIGHT_API_TOKEN}" \
   http://127.0.0.1:8080/cases'
 
 sudo -u helios /home/ubuntu/lumos/lumoskit/bin/lumoskit --help
