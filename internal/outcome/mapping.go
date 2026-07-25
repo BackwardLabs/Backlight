@@ -224,9 +224,14 @@ func withRerunDecision(result Result, s Summary) Result {
 		}
 	case OutcomePartial:
 		if result.PoCState == PoCStateMissing {
-			result.AnalysisStage = AnalysisStagePoCMissing
-			result.RerunDecision = RerunDecisionManualReview
 			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, "poc_missing")
+			if isRecoverablePoCFailure(result.RerunReason) {
+				result.AnalysisStage = AnalysisStagePoCBlocked
+				result.RerunDecision = RerunDecisionAutoRerun
+			} else {
+				result.AnalysisStage = AnalysisStagePoCMissing
+				result.RerunDecision = RerunDecisionManualReview
+			}
 		} else if result.PoCState == PoCStateReachable {
 			result.AnalysisStage = AnalysisStageReachablePoC
 			result.RerunDecision = RerunDecisionGuidedRepair
@@ -251,9 +256,14 @@ func withRerunDecision(result Result, s Summary) Result {
 		}
 	case OutcomeUnverified:
 		if result.PoCState == PoCStateMissing {
-			result.AnalysisStage = AnalysisStagePoCMissing
 			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, "poc_missing")
-			result.RerunDecision = RerunDecisionManualReview
+			if isRecoverablePoCFailure(result.RerunReason) {
+				result.AnalysisStage = AnalysisStagePoCBlocked
+				result.RerunDecision = RerunDecisionAutoRerun
+			} else {
+				result.AnalysisStage = AnalysisStagePoCMissing
+				result.RerunDecision = RerunDecisionManualReview
+			}
 		} else {
 			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, s.PoC.Status, "poc_failed")
 			if isRecoverablePoCFailure(result.RerunReason) {
@@ -424,7 +434,8 @@ func isRecoverablePoCFailure(reason string) bool {
 		"forge_fmt_failed",
 		"forge_build_failed",
 		"forge_test_failed",
-		"abi_selector_compatibility_failed":
+		"abi_selector_compatibility_failed",
+		"protocol_revert_with_oracle_gap":
 		return true
 	default:
 		return false

@@ -384,6 +384,17 @@ func TestMapClassifiesAnalysisStageAndRerunDecision(t *testing.T) {
 			wantReason:   "forge_test_failed",
 		},
 		{
+			name:         "protocol revert with oracle gap is recoverable even when product poc is missing",
+			summary:      `{"status":"blocked","poc":{"status":"missing","execution_state":"no_working_poc","failure_kind":"protocol_revert_with_oracle_gap","forge_build_status":"pass","forge_test_status":"fail"},"failure":{"kind":"protocol_revert_with_oracle_gap"},"rca":{"status":"blocked","blocker_reason":"PoC blocked after safe source restoration"}}`,
+			wantOutcome:  OutcomeUnverified,
+			wantStage:    AnalysisStagePoCBlocked,
+			wantPoC:      PoCStateMissing,
+			wantRCA:      RCAStatePoCDependent,
+			wantTier:     PublishTierNoPublish,
+			wantDecision: RerunDecisionAutoRerun,
+			wantReason:   "protocol_revert_with_oracle_gap",
+		},
+		{
 			name:         "static validation failure queues bounded agent repair",
 			summary:      `{"status":"fail","poc":{"status":"invalid","execution_state":"no_working_poc","failure_kind":"static_validation_failed"},"failure":{"kind":"static_validation_failed"}}`,
 			wantOutcome:  OutcomeUnverified,
