@@ -646,7 +646,7 @@ func TestWorkerStageResumesRCABlockedChild(t *testing.T) {
 	}
 }
 
-func TestWorkerDoesNotAutoRerunPoCFailed(t *testing.T) {
+func TestWorkerAutoRerunsRecoverablePoCFailureWithoutIntermediateNotification(t *testing.T) {
 	ctx := context.Background()
 	outputParent := t.TempDir()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
@@ -664,11 +664,27 @@ func TestWorkerDoesNotAutoRerunPoCFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var telegramMu sync.Mutex
+	telegramCalls := 0
+	telegramServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		telegramMu.Lock()
+		telegramCalls++
+		telegramMu.Unlock()
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer telegramServer.Close()
+
 	w := &Worker{
 		Store:                       st,
 		Runner:                      &lumoskit.Runner{Binary: writePoCFailedLumoskit(t, t.TempDir())},
 		PartialAutoRerunMaxAttempts: 3,
-		Logger:                      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Notifier: &notify.Notifier{
+			Store:       st,
+			Channels:    []notify.Channel{&notify.TelegramChannel{BotToken: "token", ChatID: "chat", APIBase: telegramServer.URL, Client: telegramServer.Client()}},
+			MaxAttempts: 1,
+			Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	w.process(ctx, c)
 
@@ -680,18 +696,40 @@ func TestWorkerDoesNotAutoRerunPoCFailed(t *testing.T) {
 		t.Fatalf("case outcome = %+v, want unverified", updated)
 	}
 	payload := terminalStatePayload(t, ctx, st, c.CaseID)
-	if payload["analysis_stage"] != outcome.AnalysisStagePoCFailed {
-		t.Fatalf("analysis_stage = %v, want %s", payload["analysis_stage"], outcome.AnalysisStagePoCFailed)
+	if payload["analysis_stage"] != outcome.AnalysisStagePoCBlocked {
+		t.Fatalf("analysis_stage = %v, want %s", payload["analysis_stage"], outcome.AnalysisStagePoCBlocked)
 	}
-	if payload["rerun_decision"] != outcome.RerunDecisionManualReview {
-		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], outcome.RerunDecisionManualReview)
+	if payload["rerun_decision"] != outcome.RerunDecisionAutoRerun {
+		t.Fatalf("rerun_decision = %v, want %s", payload["rerun_decision"], outcome.RerunDecisionAutoRerun)
+	}
+	if payload["rerun_eligible"] != true || payload["rerun_resume_stage"] != "agent_poc" {
+		t.Fatalf("rerun eligibility payload = %#v", payload)
 	}
 	items, total, err := st.ListCases(ctx, store.CaseListFilter{TxHash: &c.TxHash, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != 1 {
-		t.Fatalf("total cases = %d, want no auto-rerun child; items=%+v", total, items)
+	if total != 2 {
+		t.Fatalf("total cases = %d, want one auto-rerun child; items=%+v", total, items)
+	}
+	var child *store.Case
+	for i := range items {
+		if items[i].ParentCaseID != nil && *items[i].ParentCaseID == c.CaseID {
+			child = &items[i]
+		}
+	}
+	if child == nil || child.State != store.StateQueued || child.AttemptNumber != 2 {
+		t.Fatalf("auto-rerun child = %+v", child)
+	}
+	auto := autoRerunMetadata(t, child)
+	if auto["resume_stage"] != "agent_poc" || auto["decision"] != outcome.RerunDecisionAutoRerun {
+		t.Fatalf("child auto-rerun metadata=%#v", auto)
+	}
+	w.Notifier.Wait()
+	telegramMu.Lock()
+	defer telegramMu.Unlock()
+	if telegramCalls != 0 {
+		t.Fatalf("intermediate auto-rerun parent sent %d Telegram alerts, want 0", telegramCalls)
 	}
 }
 

@@ -336,6 +336,41 @@ func (s *Store) GetCase(ctx context.Context, caseID string) (*Case, error) {
 	return c, err
 }
 
+// LatestPriorSuccessfullyNotifiedCase returns the newest earlier attempt for
+// the same incident whose operator notification for event completed
+// successfully.
+func (s *Store) LatestPriorSuccessfullyNotifiedCase(ctx context.Context, chain, txHash, event string, attemptNumber int) (*Case, error) {
+	if attemptNumber <= 1 {
+		return nil, nil
+	}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT case_id, chain, tx_hash, source, detected_at, metadata,
+		       state, outcome, failure_kind, output_root, summary_json_path,
+		       attempt_number, parent_case_id, force_rerun,
+		       handoff_status, notification_status, created_at, updated_at
+		FROM cases
+		WHERE chain = ?
+		  AND tx_hash = ?
+		  AND attempt_number < ?
+		  AND notification_status = 'succeeded'
+		  AND EXISTS (
+		      SELECT 1
+		      FROM notification_attempts
+		      WHERE notification_attempts.case_id = cases.case_id
+		        AND notification_attempts.event = ?
+		        AND notification_attempts.result = 'success'
+		  )
+		ORDER BY attempt_number DESC
+		LIMIT 1`,
+		chain, txHash, attemptNumber, event,
+	)
+	c, err := scanCase(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return c, err
+}
+
 func (s *Store) CaseEvents(ctx context.Context, caseID string) ([]CaseEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT event_id, case_id, from_state, to_state, event_type, payload, occurred_at

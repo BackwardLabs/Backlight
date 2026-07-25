@@ -148,12 +148,14 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
   does not expand the MCP/product artifact profile.
 - **Decision-based auto-rerun.** Terminal event payloads include
   `analysis_stage`, `rerun_decision`, `rerun_reason`, `auto_rerun_resume_stage`,
-  and eligibility fields. Attempts with `rerun_decision=auto_rerun` and
+  and eligibility fields. Eligible partial or unverified attempts with
+  `rerun_decision=auto_rerun` and
   `auto_rerun_eligible=true` are retried as linked child cases until
   `BACKLIGHT_PARTIAL_AUTO_RERUN_MAX_ATTEMPTS` is reached. `reachable_poc` resumes
   at `agent_poc_repair` to strengthen economic proof while preserving the RCA
-  result; `poc_blocked` resumes at `agent_poc` and then runs `rca` if the
-  replay becomes non-failing; `rca_blocked` resumes at `rca` only;
+  result; recoverable Forge, static, and ABI failures map to `poc_blocked`,
+  resume at `agent_poc`, and then run `rca` if the replay becomes non-failing;
+  `rca_blocked` resumes at `rca` only;
   generic partial results rerun the full pipeline. Intermediate attempts skip
   downstream handoff and operator notification; the final attempt follows the
   normal terminal flow.
@@ -171,7 +173,13 @@ lumoskit child process per ADR-0018 in the `lumoskit` repo.
 - **Notification status.** Reflects the latest event delivery: `pending`,
   `retrying`, `succeeded`, `failed`, or `disabled` (no channels at all).
   Telegram messages include case identity, concise result, optional reason,
-  GitHub report link, and completion time when available.
+  GitHub report link, and completion time when available. `poc_missing` is
+  labeled **PoC incomplete**; **PoC failed** is reserved for actual failures.
+  A manually linked non-engine attempt whose semantic result exactly matches
+  the latest successfully notified attempt skips duplicate delivery, records
+  `notification_status=succeeded`, and appends `notification_suppressed` with
+  `reason=identical_terminal_result`. Changed results, prior delivery failures,
+  and `engine_error` attempts are never suppressed.
 - **X refresh tokens.** Live X publishing refreshes an access token before
   posting. Set `X_REFRESH_TOKEN_FILE=/srv/backlight/data/x_refresh_token.json` so
   Backlight can persist rotated refresh tokens with `0600` permissions. SQLite

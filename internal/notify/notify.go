@@ -395,14 +395,21 @@ func (n *Notifier) Notify(ctx context.Context, c *store.Case, event string) {
 
 	log := n.Logger.With("case_id", c.CaseID, "event", event)
 
-	if err := n.Store.SetNotificationStatus(ctx, c.CaseID, "retrying"); err != nil {
-		log.Warn("set notification_status=retrying failed", "err", err)
-	}
-
 	payload := PayloadFromCase(c, event)
 	if err := n.enrichWithAnalysisPayload(ctx, &payload); err != nil {
 		log.Warn("notification analysis enrichment failed", "err", err)
 	}
+	if n.suppressIdenticalPriorNotification(ctx, c, event, payload, log) {
+		if err := n.Store.SetNotificationStatus(ctx, c.CaseID, "succeeded"); err != nil {
+			log.Warn("set suppressed notification_status=succeeded failed", "err", err)
+		}
+		return
+	}
+
+	if err := n.Store.SetNotificationStatus(ctx, c.CaseID, "retrying"); err != nil {
+		log.Warn("set notification_status=retrying failed", "err", err)
+	}
+
 	allOK := true
 	for _, ch := range n.Channels {
 		if !n.deliverChannel(ctx, ch, payload, log) {
@@ -420,6 +427,100 @@ func (n *Notifier) Notify(ctx context.Context, c *store.Case, event string) {
 	}
 	if err := n.Store.SetNotificationStatus(ctx, c.CaseID, final); err != nil {
 		log.Warn("set notification_status final failed", "err", err, "final", final)
+	}
+}
+
+type semanticNotificationFingerprint struct {
+	Outcome          string
+	SummaryStatus    string
+	AnalysisStage    string
+	PoCState         string
+	RCAState         string
+	RerunDecision    string
+	RerunReason      string
+	FailureKind      string
+	PoCFailureKind   string
+	RCABlockerCode   string
+	RCABlockerReason string
+}
+
+func (n *Notifier) suppressIdenticalPriorNotification(
+	ctx context.Context,
+	c *store.Case,
+	event string,
+	current Payload,
+	log *slog.Logger,
+) bool {
+	if n.Store == nil ||
+		c == nil ||
+		!c.ForceRerun ||
+		c.AttemptNumber <= 1 ||
+		current.Outcome == "engine_error" ||
+		!isSuppressibleTerminalEvent(event) {
+		return false
+	}
+	previous, err := n.Store.LatestPriorSuccessfullyNotifiedCase(ctx, c.Chain, c.TxHash, event, c.AttemptNumber)
+	if err != nil {
+		log.Warn("load prior notified attempt failed", "err", err)
+		return false
+	}
+	if previous == nil {
+		return false
+	}
+	priorPayload := PayloadFromCase(previous, event)
+	if err := n.enrichWithAnalysisPayload(ctx, &priorPayload); err != nil {
+		log.Warn("prior notification analysis enrichment failed", "err", err, "prior_case_id", previous.CaseID)
+		return false
+	}
+	currentFingerprint := notificationFingerprint(current)
+	if currentFingerprint != notificationFingerprint(priorPayload) {
+		return false
+	}
+	if err := n.Store.AppendCaseEvent(ctx, c.CaseID, "notification_suppressed", map[string]any{
+		"reason":                  "identical_terminal_result",
+		"previous_case_id":        previous.CaseID,
+		"previous_attempt_number": previous.AttemptNumber,
+		"outcome":                 currentFingerprint.Outcome,
+		"analysis_stage":          currentFingerprint.AnalysisStage,
+		"poc_state":               currentFingerprint.PoCState,
+		"rca_state":               currentFingerprint.RCAState,
+		"rerun_decision":          currentFingerprint.RerunDecision,
+		"rerun_reason":            currentFingerprint.RerunReason,
+		"failure_kind":            currentFingerprint.FailureKind,
+	}); err != nil {
+		log.Warn("record notification suppression failed", "err", err, "prior_case_id", previous.CaseID)
+		return false
+	}
+	log.Info("suppressed duplicate terminal notification", "prior_case_id", previous.CaseID)
+	return true
+}
+
+func isSuppressibleTerminalEvent(event string) bool {
+	switch event {
+	case EventVerified, EventPartial, EventUnverified:
+		return true
+	default:
+		return false
+	}
+}
+
+func notificationFingerprint(p Payload) semanticNotificationFingerprint {
+	failureKind := ""
+	if p.FailureKind != nil {
+		failureKind = *p.FailureKind
+	}
+	return semanticNotificationFingerprint{
+		Outcome:          p.Outcome,
+		SummaryStatus:    p.SummaryStatus,
+		AnalysisStage:    p.AnalysisStage,
+		PoCState:         p.PoCState,
+		RCAState:         p.RCAState,
+		RerunDecision:    p.RerunDecision,
+		RerunReason:      p.RerunReason,
+		FailureKind:      failureKind,
+		PoCFailureKind:   p.PoCFailureKind,
+		RCABlockerCode:   p.RCABlockerCode,
+		RCABlockerReason: p.RCABlockerReason,
 	}
 }
 

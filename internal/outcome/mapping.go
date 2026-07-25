@@ -232,9 +232,14 @@ func withRerunDecision(result Result, s Summary) Result {
 			result.RerunDecision = RerunDecisionGuidedRepair
 			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, s.PoC.ProofKind, "economic_proof_missing")
 		} else if result.PoCState != PoCStateEconomic {
-			result.AnalysisStage = AnalysisStagePoCFailed
-			result.RerunDecision = RerunDecisionManualReview
 			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, s.PoC.Status, "poc_failed")
+			if isRecoverablePoCFailure(result.RerunReason) {
+				result.AnalysisStage = AnalysisStagePoCBlocked
+				result.RerunDecision = RerunDecisionAutoRerun
+			} else {
+				result.AnalysisStage = AnalysisStagePoCFailed
+				result.RerunDecision = RerunDecisionManualReview
+			}
 		} else if isRCAIncompleteState(result.RCAState) {
 			result.AnalysisStage = AnalysisStageRCABlocked
 			result.RerunDecision = rerunDecisionForRCAState(result.RCAState)
@@ -248,11 +253,17 @@ func withRerunDecision(result Result, s Summary) Result {
 		if result.PoCState == PoCStateMissing {
 			result.AnalysisStage = AnalysisStagePoCMissing
 			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, "poc_missing")
+			result.RerunDecision = RerunDecisionManualReview
 		} else {
-			result.AnalysisStage = AnalysisStagePoCFailed
 			result.RerunReason = firstNonEmpty(s.PoC.FailureKind, s.Failure.Kind, s.PoC.Status, "poc_failed")
+			if isRecoverablePoCFailure(result.RerunReason) {
+				result.AnalysisStage = AnalysisStagePoCBlocked
+				result.RerunDecision = RerunDecisionAutoRerun
+			} else {
+				result.AnalysisStage = AnalysisStagePoCFailed
+				result.RerunDecision = RerunDecisionManualReview
+			}
 		}
-		result.RerunDecision = RerunDecisionManualReview
 	default:
 		result.AnalysisStage = AnalysisStageUnknown
 		result.RerunDecision = RerunDecisionManualReview
@@ -404,6 +415,19 @@ func rerunDecisionForRCAState(state string) string {
 		return RerunDecisionManualReview
 	default:
 		return RerunDecisionNoRerun
+	}
+}
+
+func isRecoverablePoCFailure(reason string) bool {
+	switch strings.TrimSpace(strings.ToLower(reason)) {
+	case "static_validation_failed",
+		"forge_fmt_failed",
+		"forge_build_failed",
+		"forge_test_failed",
+		"abi_selector_compatibility_failed":
+		return true
+	default:
+		return false
 	}
 }
 

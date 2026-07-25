@@ -125,6 +125,8 @@ func telegramDiagnosis(p Payload) (key, title, reason string) {
 		return "rca_blocked", "RCA blocked", firstText(rcaReason(p), reason)
 	case "poc_blocked":
 		return "poc_blocked", "PoC blocked", reason
+	case "poc_missing":
+		return "poc_incomplete", "PoC incomplete", firstText(reason, p.PoCFailureKind, "required_evidence_unavailable")
 	case "poc_failed":
 		return "poc_failed", "PoC failed", reason
 	case "engine_error":
@@ -135,6 +137,9 @@ func telegramDiagnosis(p Payload) (key, title, reason string) {
 			return "rca_agent_runtime_error", "RCA agent runtime error", engineErrorReason(p)
 		}
 		return "engine_error", "Engine error", firstText(reason, failureKindText(p))
+	}
+	if strings.EqualFold(p.PoCState, "poc_missing") || strings.EqualFold(p.PoCStatus, "missing") {
+		return "poc_incomplete", "PoC incomplete", firstText(reason, p.PoCFailureKind, failureKindText(p), "required_evidence_unavailable")
 	}
 	switch p.Outcome {
 	case "verified":
@@ -187,6 +192,8 @@ func resultSummary(p Payload, diagnosis string) string {
 		return joinTelegramParts("RCA blocked", decision)
 	case "poc_blocked":
 		return joinTelegramParts("PoC blocked", decision)
+	case "poc_incomplete":
+		return joinTelegramParts("PoC incomplete", decision)
 	case "poc_failed":
 		return joinTelegramParts("PoC failed", decision)
 	case "agent_poc_agent_runtime_error":

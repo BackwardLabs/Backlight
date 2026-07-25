@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -163,6 +165,214 @@ func TestRenderTelegramText_OmitsEmptyOptionalFields(t *testing.T) {
 		if strings.Contains(text, removed) {
 			t.Errorf("expected no noisy field %q, got:\n%s", removed, text)
 		}
+	}
+}
+
+func TestRenderTelegramText_PoCMissingIsIncompleteNotFailed(t *testing.T) {
+	failure := "localize_reconstruction_blocked"
+	p := Payload{
+		Event:          EventUnverified,
+		CaseID:         "case_missing",
+		IncidentSlug:   "260725_eth_missing",
+		Chain:          "ethereum",
+		TxHash:         "0x" + strings.Repeat("a", 64),
+		State:          "handed-off",
+		Outcome:        "unverified",
+		FailureKind:    &failure,
+		AnalysisStage:  "poc_missing",
+		PoCState:       "poc_missing",
+		PoCStatus:      "missing",
+		PoCFailureKind: failure,
+		RerunDecision:  "manual_review",
+		RerunReason:    failure,
+	}
+
+	text := renderTelegramText(p)
+
+	for _, marker := range []string{
+		"[Backlight] PoC incomplete",
+		"Result: PoC missing (localize reconstruction blocked) · manual review",
+		"Reason: localize_reconstruction_blocked",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("telegram text missing %q:\n%s", marker, text)
+		}
+	}
+	if strings.Contains(text, "PoC failed") {
+		t.Fatalf("missing evidence was mislabeled as a failed PoC:\n%s", text)
+	}
+}
+
+func TestRenderTelegramText_ForgeFailureRemainsPoCFailed(t *testing.T) {
+	failure := "forge_test_failed"
+	p := Payload{
+		Event:          EventUnverified,
+		CaseID:         "case_failed",
+		IncidentSlug:   "260725_eth_failed",
+		Chain:          "ethereum",
+		TxHash:         "0x" + strings.Repeat("b", 64),
+		State:          "handed-off",
+		Outcome:        "unverified",
+		FailureKind:    &failure,
+		AnalysisStage:  "poc_failed",
+		PoCState:       "poc_failed",
+		PoCStatus:      "unverified",
+		PoCFailureKind: failure,
+		RerunDecision:  "manual_review",
+		RerunReason:    failure,
+	}
+
+	text := renderTelegramText(p)
+
+	if !strings.Contains(text, "[Backlight] PoC failed") {
+		t.Fatalf("real Forge failure was not preserved:\n%s", text)
+	}
+	if strings.Contains(text, "[Backlight] PoC incomplete") {
+		t.Fatalf("real Forge failure was mislabeled as incomplete:\n%s", text)
+	}
+}
+
+func TestNotifierSuppressesOnlyIdenticalSuccessfulManualRerunOutcome(t *testing.T) {
+	tests := []struct {
+		name           string
+		previousStatus string
+		currentReason  string
+		currentEvent   string
+		wantDeliveries int
+		wantSuppressed bool
+	}{
+		{
+			name:           "identical successful prior notification is suppressed",
+			previousStatus: "succeeded",
+			currentReason:  "localize_reconstruction_blocked",
+			wantDeliveries: 0,
+			wantSuppressed: true,
+		},
+		{
+			name:           "changed diagnosis is delivered",
+			previousStatus: "succeeded",
+			currentReason:  "downstream_position_not_reproduced",
+			wantDeliveries: 1,
+		},
+		{
+			name:           "failed prior notification is retried",
+			previousStatus: "failed",
+			currentReason:  "localize_reconstruction_blocked",
+			wantDeliveries: 1,
+		},
+		{
+			name:           "handoff failure is never suppressed",
+			previousStatus: "succeeded",
+			currentReason:  "localize_reconstruction_blocked",
+			currentEvent:   EventHandoffFailed,
+			wantDeliveries: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, err := store.Open(ctx, filepath.Join(t.TempDir(), "helios.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+
+			txHash := "0x" + strings.Repeat("c", 64)
+			terminalPayload := func(reason string) map[string]any {
+				return map[string]any{
+					"outcome":        "unverified",
+					"summary_status": "fail",
+					"analysis_stage": "poc_missing",
+					"rerun_decision": "manual_review",
+					"rerun_reason":   reason,
+					"poc_state":      "poc_missing",
+					"rca_state":      "rca_poc_dependent",
+					"poc": map[string]any{
+						"state":        "poc_missing",
+						"status":       "missing",
+						"failure_kind": reason,
+					},
+					"rca": map[string]any{
+						"state":  "rca_poc_dependent",
+						"status": "blocked",
+					},
+				}
+			}
+			complete := func(force bool, reason string) *store.Case {
+				c, _, err := st.SubmitCase(ctx, "ethereum", txHash, nil, nil, nil, force)
+				if err != nil {
+					t.Fatal(err)
+				}
+				c, err = st.ClaimNextQueued(ctx, t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := st.MarkDoneWithPayload(ctx, c.CaseID, "unverified", false, terminalPayload(reason)); err != nil {
+					t.Fatal(err)
+				}
+				c, err = st.GetCase(ctx, c.CaseID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return c
+			}
+
+			previous := complete(false, "localize_reconstruction_blocked")
+			if err := st.SetNotificationStatus(ctx, previous.CaseID, tc.previousStatus); err != nil {
+				t.Fatal(err)
+			}
+			if tc.previousStatus == "succeeded" {
+				if err := st.RecordNotificationAttempt(ctx, store.NotificationAttempt{
+					AttemptID:    store.NewID("noa"),
+					CaseID:       previous.CaseID,
+					Channel:      "telegram",
+					Event:        EventUnverified,
+					AttemptedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+					Result:       "success",
+					AttemptIndex: 1,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			current := complete(true, tc.currentReason)
+
+			deliveries := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				deliveries++
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			defer server.Close()
+			notifier := &Notifier{
+				Store:       st,
+				Channels:    []Channel{&TelegramChannel{BotToken: "token", ChatID: "chat", APIBase: server.URL, Client: server.Client()}},
+				MaxAttempts: 1,
+				Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+
+			currentEvent := tc.currentEvent
+			if currentEvent == "" {
+				currentEvent = EventUnverified
+			}
+			notifier.Notify(ctx, current, currentEvent)
+
+			if deliveries != tc.wantDeliveries {
+				t.Fatalf("deliveries = %d, want %d", deliveries, tc.wantDeliveries)
+			}
+			events, err := st.CaseEvents(ctx, current.CaseID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			suppressed := false
+			for _, event := range events {
+				if event.EventType == "notification_suppressed" {
+					suppressed = true
+				}
+			}
+			if suppressed != tc.wantSuppressed {
+				t.Fatalf("notification_suppressed event = %v, want %v", suppressed, tc.wantSuppressed)
+			}
+		})
 	}
 }
 
