@@ -292,9 +292,10 @@ func TestWorkerXFeedPublishesXThreadThenTelegram(t *testing.T) {
 			case 1:
 				text := body["text"].(string)
 				for _, want := range []string{
-					"🚨 yETH — Under review",
+					"🚨 yETH — Settlement Accounting Exploit",
 					"Key info",
 					"TL;DR",
+					"RCA points to yETH accounting path accepted an inconsistent value release.",
 					"Why it matters",
 					"Builder takeaway",
 				} {
@@ -899,9 +900,12 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-mkdir -p "$out"
+mkdir -p "$out/artifacts/rca"
 cat > "$out/summary.json" <<'JSON'
 {"status":"partial","poc":{"status":"verified","execution_state":"economic_poc","proof_kind":"economic_proof"},"rca":{"status":"partial","blocker_code":"scope_limited"}}
+JSON
+cat > "$out/artifacts/rca/report.json" <<'JSON'
+{"analysis_status":"partial","vulnerability":{"title":"yETH accounting path accepted an inconsistent value release","root_cause":"The affected accounting path released value using state that was not reconciled against the state changed by the same action.","violated_invariant":"Value release must use fresh, conserved accounting state."}}
 JSON
 printf '%s\n' '// SPDX-License-Identifier: UNLICENSED' 'contract PoC {}' > "$out/PoC.t.sol"
 printf '%s\n' '# yETH Incident Report' 'Protocol: yETH' 'Date: 2026-01-25' > "$out/Report.md"

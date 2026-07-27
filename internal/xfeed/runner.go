@@ -230,13 +230,16 @@ func buildFacts(c Case) incidentFacts {
 	if explorer == "" {
 		blockers = append(blockers, "explorer_url_missing")
 	}
-	if !outcome.ShouldPublishX(outcome.Result{
+	xPublishEligible := outcome.ShouldPublishX(outcome.Result{
 		Outcome:     c.Outcome,
 		PublishTier: c.PublishTier,
 		PoCState:    c.PoCState,
 		RCAState:    c.RCAState,
-	}) {
+	})
+	if !xPublishEligible {
 		blockers = append(blockers, "x_publish_ineligible")
+	} else if !hasConcretePublicRCA(reportJSON) {
+		blockers = append(blockers, "x_draft_rca_insufficient")
 	}
 	card := buildCardFacts(protocol, summary, reportJSON, report, impact, impactUSD, reproducedUSD)
 	return incidentFacts{
@@ -2004,6 +2007,20 @@ func publishBlockers(reportURL, githubURL string) []string {
 		blockers = append(blockers, "github_public_url_missing")
 	}
 	return blockers
+}
+
+func hasConcretePublicRCA(reportJSON []byte) bool {
+	rootCause := strings.TrimSpace(jsonPathString(reportJSON, "vulnerability", "root_cause"))
+	title := strings.TrimSpace(jsonPathString(reportJSON, "vulnerability", "title"))
+	for _, candidate := range []string{rootCause, title} {
+		switch strings.ToLower(strings.TrimSpace(candidate)) {
+		case "", "under review", "root cause remains under review", "root cause remains under review.":
+			continue
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func pocLine(url string, c Case) string {

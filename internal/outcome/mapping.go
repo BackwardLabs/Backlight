@@ -383,6 +383,10 @@ func classifyRCAState(s Summary) string {
 	if containsAny(text, "confidence", "low_confidence", "below_threshold", "uncertain", "root_cause_gap") {
 		return RCAStateLowConfidence
 	}
+	if (status == "partial" || status == "blocked") &&
+		(rootCauseMode == "direct_asset_loss_logic" || rootCauseMode == "loss_enabling_state_change") {
+		return RCAStateScopeLimited
+	}
 	if containsAny(text, "missing", "insufficient", "source", "abi", "trace", "storage", "delta", "provenance", "evidence", "context") {
 		return RCAStateMissingEvidence
 	}
